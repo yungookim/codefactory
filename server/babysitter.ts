@@ -74,6 +74,19 @@ const defaultBabysitterRuntime: BabysitterRuntime = {
   runCommand,
 };
 
+const STATUS_MESSAGES = {
+  accepted: "\u23f3 **Accepted** — this comment requires code changes. Queuing fix...",
+  agentRunning: (agent: CodingAgent) => `\ud83e\uddf0 **Agent running** — \`${agent}\` is working on the fix...`,
+  agentFailed: "\u274c **Agent failed** — the coding agent exited with an error.",
+  agentCompleted: "\u2705 **Agent completed** — verifying changes...",
+  resolved: (headSha: string) => {
+    const shortSha = headSha.trim().slice(0, 7);
+    return shortSha
+      ? `\ud83c\udf89 **Resolved** — addressed in commit \`${shortSha}\`.`
+      : "\ud83c\udf89 **Resolved** — addressed in the latest babysitter run.";
+  },
+} as const;
+
 function countDecisions(items: FeedbackItem[]): {
   accepted: number;
   rejected: number;
@@ -317,6 +330,10 @@ function summarizeCommandFailure(result: Awaited<ReturnType<typeof runCommand>>)
   return result.stderr.trim() || result.stdout.trim() || "no output";
 }
 
+function summarizeUnknownError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function drainChunkLines(buffer: string, chunk: string): { lines: string[]; buffer: string } {
   const text = `${buffer}${chunk}`;
   const parts = text.split(/\r?\n/);
@@ -516,6 +533,18 @@ export class PRBabysitter {
       return logQueue;
     };
 
+    const logBestEffortFailure = async (
+      currentPrId: string,
+      phase: string,
+      message: string,
+      metadata?: Record<string, unknown>,
+    ) => {
+      await queueLog(currentPrId, "warn", message, {
+        phase,
+        metadata: metadata ?? null,
+      });
+    };
+
     const createChunkLogger = (
       currentPrId: string,
       phase: string,
@@ -641,8 +670,13 @@ export class PRBabysitter {
         try {
           const newBody = appendStatusLine(ref.body, line);
           await this.github.updateStatusReply(octokit, parsedPr, ref, newBody);
-        } catch {
-          // Status updates are best-effort; don't fail the run.
+        } catch (error) {
+          await logBestEffortFailure(
+            pr.id,
+            "github.status",
+            `Failed to update status reply for ${feedbackId}: ${summarizeUnknownError(error)}`,
+            { feedbackId },
+          );
         }
       };
 
@@ -681,8 +715,13 @@ export class PRBabysitter {
           // Add 👀 reaction to signal we've seen this comment.
           try {
             await this.github.addReactionToComment(octokit, parsedPr, item, "eyes");
-          } catch {
-            // Best-effort — don't fail the run for a reaction.
+          } catch (error) {
+            await logBestEffortFailure(
+              pr.id,
+              "github.reaction",
+              `Failed to add reaction for ${item.id}: ${summarizeUnknownError(error)}`,
+              { feedbackId: item.id },
+            );
           }
 
           // Post an initial status reply so the reviewer sees progress.
@@ -691,13 +730,18 @@ export class PRBabysitter {
               octokit,
               parsedPr,
               item,
-              `\u23f3 **Accepted** — this comment requires code changes. Queuing fix...`,
+              STATUS_MESSAGES.accepted,
             );
             if (ref) {
               statusReplies.set(item.id, ref);
             }
-          } catch {
-            // Best-effort status reply.
+          } catch (error) {
+            await logBestEffortFailure(
+              pr.id,
+              "github.status",
+              `Failed to post status reply for ${item.id}: ${summarizeUnknownError(error)}`,
+              { feedbackId: item.id },
+            );
           }
         } else {
           commentDecisions.set(item.id, { decision: "reject", reason: evaluation.reason });
@@ -854,9 +898,8 @@ export class PRBabysitter {
           });
 
           // Update status replies: agent is starting.
-          for (const task of commentTasks) {
-            await updateItemStatus(task.id, `\ud83e\uddf0 **Agent running** — \`${agent}\` is working on the fix...`);
-          }
+          const agentRunningStatus = STATUS_MESSAGES.agentRunning(agent);
+          await Promise.all(commentTasks.map((task) => updateItemStatus(task.id, agentRunningStatus)));
 
           const applyResult = await this.runtime.applyFixesWithAgent({
             agent,
@@ -877,16 +920,12 @@ export class PRBabysitter {
 
           if (applyResult.code !== 0) {
             // Update status replies on failure.
-            for (const task of commentTasks) {
-              await updateItemStatus(task.id, `\u274c **Agent failed** — the coding agent exited with an error.`);
-            }
+            await Promise.all(commentTasks.map((task) => updateItemStatus(task.id, STATUS_MESSAGES.agentFailed)));
             throw new Error(`Agent apply failed (${applyResult.code}): ${applyResult.stderr || applyResult.stdout}`);
           }
 
           // Update status replies: agent succeeded.
-          for (const task of commentTasks) {
-            await updateItemStatus(task.id, `\u2705 **Agent completed** — verifying changes...`);
-          }
+          await Promise.all(commentTasks.map((task) => updateItemStatus(task.id, STATUS_MESSAGES.agentCompleted)));
 
           await queueLog(pr.id, "info", `${agent} completed successfully`, {
             phase: "agent",
@@ -1047,11 +1086,7 @@ export class PRBabysitter {
         });
 
         // Final status update on the progress reply.
-        const shortSha = headShaForFollowUp.trim().slice(0, 7);
-        const resolvedMsg = shortSha
-          ? `\ud83c\udf89 **Resolved** — addressed in commit \`${shortSha}\`.`
-          : `\ud83c\udf89 **Resolved** — addressed in the latest babysitter run.`;
-        await updateItemStatus(item.id, resolvedMsg);
+        await updateItemStatus(item.id, STATUS_MESSAGES.resolved(headShaForFollowUp));
       }
 
       pr = await this.syncFeedbackForPR(pr.id, {

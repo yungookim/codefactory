@@ -1,5 +1,6 @@
 import { Octokit } from "@octokit/rest";
 import type { Config, FeedbackItem } from "@shared/schema";
+import { z } from "zod";
 import { runCommand } from "./agentRunner";
 import { renderGitHubMarkdown } from "./markdown";
 
@@ -102,6 +103,14 @@ const RESOLVE_REVIEW_THREAD_MUTATION = `
     }
   }
 `;
+
+const statusReplyMutationSchema = z.object({
+  addPullRequestReviewThreadReply: z.object({
+    comment: z.object({
+      databaseId: z.number().nullable().optional(),
+    }).nullable().optional(),
+  }).nullable().optional(),
+});
 
 let cachedGhAuthToken: { token: string; expiresAt: number } | null = null;
 let ghAuthFailureCooldownUntil = 0;
@@ -765,10 +774,15 @@ export async function postStatusReplyForFeedbackItem(
       }),
     );
 
-    const commentData = (result.data as {
-      addPullRequestReviewThreadReply?: { comment?: { databaseId?: number | null } };
-    })?.addPullRequestReviewThreadReply?.comment;
-    const databaseId = commentData?.databaseId;
+    const parsedResult = statusReplyMutationSchema.safeParse(result.data);
+    if (!parsedResult.success) {
+      throw new GitHubIntegrationError(
+        `GitHub returned an unexpected payload while creating a status reply for feedback item ${item.id} on ${formatGitHubTarget(parsed)}.`,
+        502,
+      );
+    }
+
+    const databaseId = parsedResult.data.addPullRequestReviewThreadReply?.comment?.databaseId;
     if (typeof databaseId !== "number") return null;
 
     return { commentDatabaseId: databaseId, replyKind: item.replyKind, body };
@@ -787,6 +801,15 @@ export async function postStatusReplyForFeedbackItem(
   return { commentDatabaseId: result.data.id, replyKind: item.replyKind, body };
 }
 
+/**
+ * Updates a status reply comment on GitHub and mutates the local reference object.
+ *
+ * @param octokit The Octokit instance for API calls.
+ * @param parsed The parsed information about the pull request.
+ * @param ref The reference to the status reply comment. This object's `body`
+ *   property is mutated to reflect the latest GitHub state after a successful update.
+ * @param newBody The new content for the comment body.
+ */
 export async function updateStatusReply(
   octokit: Octokit,
   parsed: ParsedPRUrl,
