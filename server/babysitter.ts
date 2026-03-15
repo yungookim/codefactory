@@ -25,6 +25,7 @@ import { preparePrWorktree, removePrWorktree } from "./repoWorkspace";
 
 const DEFAULT_GIT_USER_NAME = "PR Babysitter";
 const DEFAULT_GIT_USER_EMAIL = "pr-babysitter@local";
+const AUDIT_TOKEN_PATTERN = /\bcodefactory-feedback:[^\s<>()\[\]{}"']+/g;
 
 type GitHubService = {
   buildOctokit: typeof buildOctokit;
@@ -197,6 +198,10 @@ function buildAgentFixPrompt(params: {
     "Do not rewrite unrelated files.",
     "Use the available git and GitHub tooling in this environment.",
     "If GitHub authentication is available via GITHUB_TOKEN or GH_TOKEN, use it for any required GitHub follow-up.",
+    "Only after the relevant verification succeeds, leave the GitHub reply/comment for that feedback item.",
+    "For threaded review comments, reply on the same thread as the source comment, then resolve that thread after the reply is posted.",
+    "If verification fails or you cannot prove the issue is fixed, do not leave a success comment or resolve the thread; leave a short blocker explanation with the audit token instead.",
+    "Prefer GitHub CLI/API commands that target the exact sourceId/threadId provided for each item.",
     "If a task is invalid after inspection, leave a short GitHub explanation with the audit token and explain it in your final response.",
     "",
     "Approved review-comment tasks:",
@@ -207,18 +212,58 @@ function buildAgentFixPrompt(params: {
     "",
     "When done:",
     "1) Run the relevant verification for your changes.",
-    `2) If you changed code, commit it and push it to ${remoteName} HEAD:${pullSummary.headRef}.`,
-    "3) Reply with a short GitHub summary for every addressed feedback item and include the exact audit token for that item.",
-    "4) Resolve threaded review comments after replying to them.",
-    "5) If an item cannot be fixed safely, leave a short explanatory GitHub reply/comment with the audit token.",
-    "6) Summarize the code changes, verification, git actions, and GitHub follow-up you completed.",
+    "2) Confirm each addressed comment is actually resolved before any GitHub follow-up.",
+    `3) If you changed code, commit it and push it to ${remoteName} HEAD:${pullSummary.headRef}.`,
+    "4) Only after the relevant verification succeeds, reply with a short GitHub summary for every addressed feedback item and include the exact audit token for that item.",
+    "5) Resolve threaded review comments after replying to them on the same thread as the source comment.",
+    "6) If an item cannot be fixed safely or verification does not pass, leave a short explanatory GitHub reply/comment with the audit token instead of a success note.",
+    "7) Summarize the code changes, verification, git actions, and GitHub follow-up you completed.",
   ].join("\n");
+}
+
+function extractMentionedAuditTokens(body: string): string[] {
+  const matches = body.match(AUDIT_TOKEN_PATTERN);
+  if (!matches) {
+    return [];
+  }
+
+  return Array.from(new Set(matches));
+}
+
+function isAutomationAuditTrailFollowUp(item: FeedbackItem, feedbackItems: FeedbackItem[]): boolean {
+  const mentionedTokens = extractMentionedAuditTokens(item.body).filter((token) => token !== item.auditToken);
+  if (mentionedTokens.length === 0) {
+    return false;
+  }
+
+  const itemCreatedAtMs = new Date(item.createdAt).getTime();
+
+  return mentionedTokens.some((token) =>
+    feedbackItems.some((candidate) => {
+      if (candidate.id === item.id || candidate.auditToken !== token) {
+        return false;
+      }
+
+      const candidateCreatedAtMs = new Date(candidate.createdAt).getTime();
+      if (Number.isNaN(itemCreatedAtMs) || Number.isNaN(candidateCreatedAtMs)) {
+        return true;
+      }
+
+      return candidateCreatedAtMs <= itemCreatedAtMs;
+    })
+  );
 }
 
 function hasRecentAuditTrail(item: FeedbackItem, feedbackItems: FeedbackItem[], runStartedAtMs: number): boolean {
   return feedbackItems.some((candidate) => {
     if (candidate.id === item.id || !candidate.body.includes(item.auditToken)) {
       return false;
+    }
+
+    if (item.replyKind === "review_thread") {
+      if (!item.threadId || candidate.threadId !== item.threadId) {
+        return false;
+      }
     }
 
     const createdAtMs = new Date(candidate.createdAt).getTime();
@@ -595,6 +640,19 @@ export class PRBabysitter {
             line: item.line,
           },
         });
+
+        if (isAutomationAuditTrailFollowUp(item, pr.feedbackItems)) {
+          const reason = "Automation audit trail follow-up; no code change required";
+          commentDecisions.set(item.id, { decision: "reject", reason });
+          await queueLog(pr.id, "info", `Ignored audit-trail follow-up comment ${item.id}`, {
+            phase: "evaluate.comments",
+            metadata: {
+              feedbackId: item.id,
+              decision: "reject",
+            },
+          });
+          continue;
+        }
 
         const evaluation = await this.runtime.evaluateFixNecessityWithAgent({
           agent,
