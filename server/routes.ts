@@ -105,7 +105,7 @@ export async function registerRoutes(
 
   app.post("/api/repos/sync", async (_req, res) => {
     try {
-      await runWatcher();
+      await watcherScheduler.runAndReportErrors();
       res.json({ ok: true });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
