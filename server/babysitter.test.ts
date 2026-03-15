@@ -13,6 +13,13 @@ function makeFeedbackItem(overrides: Partial<FeedbackItem> = {}): FeedbackItem {
     author: "reviewer",
     body: "Please rename this variable.",
     bodyHtml: "<p>Please rename this variable.</p>",
+    replyKind: "review_thread",
+    sourceId: "1",
+    sourceNodeId: "PRRC_kwDO_example",
+    sourceUrl: "https://github.com/octo/example/pull/42#discussion_r1",
+    threadId: "PRRT_kwDO_example",
+    threadResolved: false,
+    auditToken: "codefactory-feedback:gh-review-comment-1",
     file: "src/example.ts",
     line: 12,
     type: "review_comment",
@@ -21,6 +28,90 @@ function makeFeedbackItem(overrides: Partial<FeedbackItem> = {}): FeedbackItem {
     decisionReason: null,
     action: null,
     ...overrides,
+  };
+}
+
+function makePullSummary(pr: { url: string }) {
+  return {
+    number: 106,
+    title: "Verbose PR",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: pr.url,
+    repoFullName: "alex-morgan-o/lolodex",
+    repoCloneUrl: "https://github.com/alex-morgan-o/lolodex.git",
+    headSha: "abc123",
+    headRef: "feature/verbose",
+    headRepoFullName: "alex-morgan-o/lolodex",
+    headRepoCloneUrl: "https://github.com/alex-morgan-o/lolodex.git",
+  };
+}
+
+function makeGitRunCommand(params?: {
+  localHeadSha?: string;
+  remoteHeadSha?: string;
+}) {
+  const localHeadSha = params?.localHeadSha || "def456";
+  const remoteHeadSha = params?.remoteHeadSha || localHeadSha;
+  let cloned = false;
+
+  return async (command: string, args: string[]) => {
+    if (command !== "git") {
+      return { code: 1, stdout: "", stderr: `unexpected command: ${command}` };
+    }
+
+    if (args[0] === "-C" && args[2] === "rev-parse" && args[3] === "--is-inside-work-tree") {
+      return cloned ? { code: 0, stdout: "true\n", stderr: "" } : { code: 1, stdout: "", stderr: "" };
+    }
+
+    if (args[0] === "clone") {
+      cloned = true;
+      await mkdir(args[2], { recursive: true });
+      return { code: 0, stdout: "cloned\n", stderr: "" };
+    }
+
+    if (args[0] === "-C" && args[2] === "config" && args[3] === "--get" && args[4] === "remote.origin.url") {
+      return { code: 0, stdout: "https://github.com/alex-morgan-o/lolodex.git\n", stderr: "" };
+    }
+
+    if (args[0] === "-C" && args[2] === "status") {
+      return { code: 0, stdout: "", stderr: "" };
+    }
+
+    if (args[0] === "-C" && args[2] === "fetch") {
+      return { code: 0, stdout: "fetched\n", stderr: "" };
+    }
+
+    if (args[0] === "-C" && args[2] === "worktree" && args[3] === "add") {
+      await mkdir(args[5], { recursive: true });
+      return { code: 0, stdout: "worktree added\n", stderr: "" };
+    }
+
+    if (args[0] === "config" && args[1] === "--get") {
+      return { code: 1, stdout: "", stderr: "" };
+    }
+
+    if (args[0] === "config") {
+      return { code: 0, stdout: "", stderr: "" };
+    }
+
+    if (args[0] === "status") {
+      return { code: 0, stdout: "", stderr: "" };
+    }
+
+    if (args[0] === "rev-parse" && args[1] === "HEAD") {
+      return { code: 0, stdout: `${localHeadSha}\n`, stderr: "" };
+    }
+
+    if (args[0] === "-C" && args[2] === "rev-parse" && args[3] === "FETCH_HEAD") {
+      return { code: 0, stdout: `${remoteHeadSha}\n`, stderr: "" };
+    }
+
+    if (args[0] === "-C" && args[2] === "worktree" && args[3] === "remove") {
+      return { code: 0, stdout: "worktree removed\n", stderr: "" };
+    }
+
+    return { code: 0, stdout: "", stderr: "" };
   };
 }
 
@@ -57,6 +148,7 @@ test("syncFeedbackForPR logs completion even when no new feedback items arrive",
     listOpenPullsForRepo: async () => {
       throw new Error("unused in this test");
     },
+    resolveGitHubAuthToken: async () => undefined,
   });
 
   const updated = await babysitter.syncFeedbackForPR(pr.id);
@@ -66,7 +158,7 @@ test("syncFeedbackForPR logs completion even when no new feedback items arrive",
   assert.equal(logs.at(-1)?.message, "GitHub sync complete: 1 feedback item (0 new)");
 });
 
-test("babysitPR emits verbose run logs and returns to watching after push", async () => {
+test("babysitPR uses a CODEFACTORY_HOME worktree, passes GitHub context, and verifies audit trail", async () => {
   const storage = new MemStorage();
   const existingItem = makeFeedbackItem();
   const pr = await storage.addPR({
@@ -86,27 +178,133 @@ test("babysitPR emits verbose run logs and returns to watching after push", asyn
     lastChecked: null,
   });
 
-  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "pr-babysitter-test-"));
-  process.env.PR_BABYSITTER_ROOT = worktreeRoot;
+  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "codefactory-home-"));
+  process.env.CODEFACTORY_HOME = worktreeRoot;
+  let receivedPrompt = "";
+  let receivedEnv: NodeJS.ProcessEnv | undefined;
+  let feedbackFetchCount = 0;
+  const pullSummary = makePullSummary(pr);
+  const followUp = makeFeedbackItem({
+    id: "gh-review-comment-2",
+    author: "code-factory",
+    body: `Implemented the requested rename.\n\n${existingItem.auditToken}`,
+    bodyHtml: `<p>Implemented the requested rename.</p><p>${existingItem.auditToken}</p>`,
+    sourceId: "2",
+    sourceNodeId: "PRRC_kwDO_followup",
+    sourceUrl: "https://github.com/alex-morgan-o/lolodex/pull/106#discussion_r2",
+    threadId: existingItem.threadId,
+    threadResolved: true,
+    createdAt: new Date().toISOString(),
+    decision: null,
+    decisionReason: null,
+    action: null,
+  });
 
   const babysitter = new PRBabysitter(
     storage,
     {
       buildOctokit: async () => ({}) as never,
-      fetchFeedbackItemsForPR: async () => [existingItem],
-      fetchPullSummary: async () => ({
-        number: 106,
-        title: "Verbose PR",
-        branch: "feature/verbose",
-        author: "octocat",
-        url: pr.url,
-        headSha: "abc123",
-        headRef: "feature/verbose",
-        headRepoFullName: "alex-morgan-o/lolodex",
-        headRepoCloneUrl: "https://github.com/alex-morgan-o/lolodex.git",
-      }),
+      fetchFeedbackItemsForPR: async () => {
+        feedbackFetchCount += 1;
+        if (feedbackFetchCount === 1) {
+          return [existingItem];
+        }
+
+        return [
+          { ...existingItem, threadResolved: true },
+          followUp,
+        ];
+      },
+      fetchPullSummary: async () => pullSummary,
       listFailingStatuses: async () => [],
       listOpenPullsForRepo: async () => [],
+      resolveGitHubAuthToken: async () => "test-token",
+    },
+    {
+      resolveAgent: async () => "codex",
+      evaluateFixNecessityWithAgent: async () => ({
+        needsFix: true,
+        reason: "Comment requires a code change",
+      }),
+      applyFixesWithAgent: async ({ prompt, env, onStdoutChunk, onStderrChunk }) => {
+        receivedPrompt = prompt;
+        receivedEnv = env;
+        onStdoutChunk?.("agent stdout line\n");
+        onStderrChunk?.("agent stderr line\n");
+        return {
+          code: 0,
+          stdout: "agent stdout line\n",
+          stderr: "agent stderr line\n",
+        };
+      },
+      runCommand: makeGitRunCommand({
+        localHeadSha: "def456",
+        remoteHeadSha: "def456",
+      }),
+    },
+  );
+
+  await babysitter.babysitPR(pr.id, "codex");
+
+  const updated = await storage.getPR(pr.id);
+  const logs = await storage.getLogs(pr.id);
+
+  assert.equal(updated?.status, "watching");
+  assert.equal(updated?.accepted, 1);
+  assert.ok(logs.some((log) => log.phase === "worktree" && log.message.includes(`Preparing worktree in ${worktreeRoot}`)));
+  assert.ok(logs.some((log) => log.phase === "verify.github" && log.message.includes("GitHub audit trail verified")));
+  assert.ok(logs.some((log) => log.phase === "run" && log.message.includes("Babysitter run complete")));
+  assert.match(receivedPrompt, /commit it and push it to origin HEAD:feature\/verbose/i);
+  assert.match(receivedPrompt, /Reply with a short GitHub summary for every addressed feedback item/i);
+  assert.match(receivedPrompt, /Resolve threaded review comments after replying to them/i);
+  assert.match(receivedPrompt, /auditToken=codefactory-feedback:gh-review-comment-1/);
+  assert.equal(receivedEnv?.GITHUB_TOKEN, "test-token");
+  assert.equal(receivedEnv?.GH_TOKEN, "test-token");
+
+  delete process.env.CODEFACTORY_HOME;
+});
+
+test("babysitPR marks the run as error when the agent does not leave the required audit trail", async () => {
+  const storage = new MemStorage();
+  const existingItem = makeFeedbackItem();
+  const pr = await storage.addPR({
+    number: 106,
+    title: "Verbose PR",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "watching",
+    feedbackItems: [existingItem],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "codefactory-home-"));
+  process.env.CODEFACTORY_HOME = worktreeRoot;
+  let feedbackFetchCount = 0;
+  const pullSummary = makePullSummary(pr);
+
+  const babysitter = new PRBabysitter(
+    storage,
+    {
+      buildOctokit: async () => ({}) as never,
+      fetchFeedbackItemsForPR: async () => {
+        feedbackFetchCount += 1;
+        if (feedbackFetchCount === 1) {
+          return [existingItem];
+        }
+
+        return [existingItem];
+      },
+      fetchPullSummary: async () => pullSummary,
+      listFailingStatuses: async () => [],
+      listOpenPullsForRepo: async () => [],
+      resolveGitHubAuthToken: async () => "test-token",
     },
     {
       resolveAgent: async () => "codex",
@@ -123,51 +321,10 @@ test("babysitPR emits verbose run logs and returns to watching after push", asyn
           stderr: "agent stderr line\n",
         };
       },
-      runCommand: async (command, args) => {
-        if (command !== "git") {
-          return { code: 1, stdout: "", stderr: `unexpected command: ${command}` };
-        }
-
-        if (args[0] === "-C" && args[2] === "rev-parse") {
-          return { code: 1, stdout: "", stderr: "" };
-        }
-
-        if (args[0] === "clone") {
-          await mkdir(args[2], { recursive: true });
-          return { code: 0, stdout: "cloned\n", stderr: "" };
-        }
-
-        if (args[0] === "-C" && args[2] === "fetch") {
-          return { code: 0, stdout: "fetched\n", stderr: "" };
-        }
-
-        if (args[0] === "-C" && args[2] === "worktree" && args[3] === "add") {
-          await mkdir(args[5], { recursive: true });
-          return { code: 0, stdout: "worktree added\n", stderr: "" };
-        }
-
-        if (args[0] === "config" && args[1] === "--get") {
-          return { code: 1, stdout: "", stderr: "" };
-        }
-
-        if (args[0] === "config") {
-          return { code: 0, stdout: "", stderr: "" };
-        }
-
-        if (args[0] === "status") {
-          return { code: 0, stdout: " M server/example.ts\n", stderr: "" };
-        }
-
-        if (args[0] === "add" || args[0] === "commit" || args[0] === "push") {
-          return { code: 0, stdout: `${args[0]} ok\n`, stderr: "" };
-        }
-
-        if (args[0] === "-C" && args[2] === "worktree" && args[3] === "remove") {
-          return { code: 0, stdout: "worktree removed\n", stderr: "" };
-        }
-
-        return { code: 0, stdout: "", stderr: "" };
-      },
+      runCommand: makeGitRunCommand({
+        localHeadSha: "def456",
+        remoteHeadSha: "def456",
+      }),
     },
   );
 
@@ -175,15 +332,10 @@ test("babysitPR emits verbose run logs and returns to watching after push", asyn
 
   const updated = await storage.getPR(pr.id);
   const logs = await storage.getLogs(pr.id);
-  const runIds = new Set(logs.map((log) => log.runId).filter((runId): runId is string => Boolean(runId)));
 
-  assert.equal(updated?.status, "watching");
-  assert.equal(updated?.accepted, 1);
-  assert.equal(runIds.size, 1);
-  assert.ok(logs.some((log) => log.phase === "agent" && log.message.includes("[stdout] agent stdout line")));
-  assert.ok(logs.some((log) => log.phase === "agent" && log.message.includes("[stderr] agent stderr line")));
-  assert.ok(logs.some((log) => log.phase === "git.push" && log.message.includes("Pushed automated fixes")));
-  assert.ok(logs.some((log) => log.phase === "run" && log.message.includes("Babysitter run complete")));
+  assert.equal(updated?.status, "error");
+  assert.ok(logs.some((log) => log.phase === "run" && log.message.includes("GitHub audit trail verification failed")));
+  assert.ok(logs.some((log) => log.phase === "cleanup" && log.message.includes("Worktree cleanup complete")));
 
-  delete process.env.PR_BABYSITTER_ROOT;
+  delete process.env.CODEFACTORY_HOME;
 });

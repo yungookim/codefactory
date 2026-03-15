@@ -43,6 +43,13 @@ type FeedbackItemRow = {
   author: string;
   body: string;
   body_html: string;
+  reply_kind: FeedbackItem["replyKind"];
+  source_id: string;
+  source_node_id: string | null;
+  source_url: string | null;
+  thread_id: string | null;
+  thread_resolved: number | null;
+  audit_token: string;
   file: string | null;
   line: number | null;
   type: FeedbackItem["type"];
@@ -125,6 +132,13 @@ export class SqliteStorage implements IStorage {
         author TEXT NOT NULL,
         body TEXT NOT NULL,
         body_html TEXT NOT NULL,
+        reply_kind TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        source_node_id TEXT,
+        source_url TEXT,
+        thread_id TEXT,
+        thread_resolved INTEGER,
+        audit_token TEXT NOT NULL,
         file TEXT,
         line INTEGER,
         type TEXT NOT NULL,
@@ -151,10 +165,27 @@ export class SqliteStorage implements IStorage {
       CREATE INDEX IF NOT EXISTS idx_logs_pr_id_timestamp ON logs(pr_id, timestamp);
     `);
 
+    this.ensureColumn("feedback_items", "reply_kind", "TEXT NOT NULL DEFAULT 'general_comment'");
+    this.ensureColumn("feedback_items", "source_id", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("feedback_items", "source_node_id", "TEXT");
+    this.ensureColumn("feedback_items", "source_url", "TEXT");
+    this.ensureColumn("feedback_items", "thread_id", "TEXT");
+    this.ensureColumn("feedback_items", "thread_resolved", "INTEGER");
+    this.ensureColumn("feedback_items", "audit_token", "TEXT NOT NULL DEFAULT ''");
+
     const configExists = this.db.prepare("SELECT 1 AS present FROM config WHERE id = 1").get() as { present: number } | undefined;
     if (!configExists) {
       this.writeConfig(DEFAULT_CONFIG);
     }
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const rows = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (rows.some((row) => row.name === column)) {
+      return;
+    }
+
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 
   private parseConfigRow(row: ConfigRow, watchedRepos: string[]): Config {
@@ -250,7 +281,9 @@ export class SqliteStorage implements IStorage {
 
     const placeholders = prIds.map(() => "?").join(", ");
     const rows = this.db.prepare(`
-      SELECT id, pr_id, author, body, body_html, file, line, type, created_at, decision, decision_reason, action
+      SELECT id, pr_id, author, body, body_html, reply_kind, source_id, source_node_id, source_url,
+             thread_id, thread_resolved, audit_token, file, line, type, created_at, decision,
+             decision_reason, action
       FROM feedback_items
       WHERE pr_id IN (${placeholders})
       ORDER BY created_at ASC
@@ -262,6 +295,13 @@ export class SqliteStorage implements IStorage {
         author: row.author,
         body: row.body,
         bodyHtml: row.body_html,
+        replyKind: row.reply_kind,
+        sourceId: row.source_id || row.id,
+        sourceNodeId: row.source_node_id,
+        sourceUrl: row.source_url,
+        threadId: row.thread_id,
+        threadResolved: row.thread_resolved === null ? null : Boolean(row.thread_resolved),
+        auditToken: row.audit_token || `codefactory-feedback:${row.id}`,
         file: row.file,
         line: row.line,
         type: row.type,
@@ -283,8 +323,9 @@ export class SqliteStorage implements IStorage {
     this.db.prepare("DELETE FROM feedback_items WHERE pr_id = ?").run(prId);
     const insert = this.db.prepare(`
       INSERT INTO feedback_items (
-        id, pr_id, author, body, body_html, file, line, type, created_at, decision, decision_reason, action
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, pr_id, author, body, body_html, reply_kind, source_id, source_node_id, source_url,
+        thread_id, thread_resolved, audit_token, file, line, type, created_at, decision, decision_reason, action
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     for (const item of items) {
@@ -294,6 +335,13 @@ export class SqliteStorage implements IStorage {
         item.author,
         item.body,
         item.bodyHtml,
+        item.replyKind,
+        item.sourceId,
+        item.sourceNodeId,
+        item.sourceUrl,
+        item.threadId,
+        item.threadResolved === null ? null : Number(item.threadResolved),
+        item.auditToken,
         item.file,
         item.line,
         item.type,

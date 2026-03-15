@@ -36,6 +36,13 @@ test("SqliteStorage reloads config and PR state from the same root", async () =>
         author: "octocat",
         body: "Please fix `thing`",
         bodyHtml: "<p>Please fix <code>thing</code></p>",
+        replyKind: "review_thread",
+        sourceId: "101",
+        sourceNodeId: "PRRC_kwDO_test",
+        sourceUrl: "https://github.com/alex-morgan-o/lolodex/pull/106#discussion_r101",
+        threadId: "PRRT_kwDO_thread",
+        threadResolved: false,
+        auditToken: "codefactory-feedback:feedback-1",
         file: "src/app.ts",
         line: 42,
         type: "review_comment",
@@ -67,6 +74,9 @@ test("SqliteStorage reloads config and PR state from the same root", async () =>
   assert.equal(reloadedPr?.repo, "alex-morgan-o/lolodex");
   assert.equal(reloadedPr?.feedbackItems.length, 1);
   assert.equal(reloadedPr?.feedbackItems[0]?.bodyHtml, "<p>Please fix <code>thing</code></p>");
+  assert.equal(reloadedPr?.feedbackItems[0]?.replyKind, "review_thread");
+  assert.equal(reloadedPr?.feedbackItems[0]?.threadId, "PRRT_kwDO_thread");
+  assert.equal(reloadedPr?.feedbackItems[0]?.auditToken, "codefactory-feedback:feedback-1");
   assert.equal(reloadedPr?.accepted, 1);
   assert.equal(logs.length, 1);
   assert.equal(logs[0]?.phase, "agent");

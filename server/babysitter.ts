@@ -1,6 +1,4 @@
 import { randomUUID } from "crypto";
-import { mkdir, rm } from "fs/promises";
-import path from "path";
 import type { Config, FeedbackItem, PR } from "@shared/schema";
 import type { IStorage } from "./storage";
 import {
@@ -18,8 +16,12 @@ import {
   listFailingStatuses,
   listOpenPullsForRepo,
   parseRepoSlug,
+  resolveGitHubAuthToken,
+  type GitHubPullSummary,
   type ParsedPRUrl,
 } from "./github";
+import { getCodeFactoryPaths } from "./paths";
+import { preparePrWorktree, removePrWorktree } from "./repoWorkspace";
 
 const DEFAULT_GIT_USER_NAME = "PR Babysitter";
 const DEFAULT_GIT_USER_EMAIL = "pr-babysitter@local";
@@ -30,6 +32,7 @@ type GitHubService = {
   fetchPullSummary: typeof fetchPullSummary;
   listFailingStatuses: typeof listFailingStatuses;
   listOpenPullsForRepo: typeof listOpenPullsForRepo;
+  resolveGitHubAuthToken: typeof resolveGitHubAuthToken;
 };
 
 type BabysitterRuntime = {
@@ -45,6 +48,7 @@ const defaultGitHubService: GitHubService = {
   fetchPullSummary,
   listFailingStatuses,
   listOpenPullsForRepo,
+  resolveGitHubAuthToken,
 };
 
 const defaultBabysitterRuntime: BabysitterRuntime = {
@@ -150,10 +154,12 @@ function buildStatusEvaluationPrompt(params: {
 
 function buildAgentFixPrompt(params: {
   pr: PR;
+  pullSummary: GitHubPullSummary;
+  remoteName: string;
   commentTasks: FeedbackItem[];
   statusTasks: { context: string; description: string; targetUrl: string | null }[];
 }): string {
-  const { pr, commentTasks, statusTasks } = params;
+  const { pr, pullSummary, remoteName, commentTasks, statusTasks } = params;
 
   const commentSection = commentTasks.length
     ? commentTasks
@@ -161,6 +167,9 @@ function buildAgentFixPrompt(params: {
           return [
             `${index + 1}. [${item.type}] ${item.author}`,
             `   file=${item.file || "n/a"} line=${item.line ?? "n/a"}`,
+            `   sourceId=${item.sourceId} sourceUrl=${item.sourceUrl || "n/a"}`,
+            `   replyKind=${item.replyKind} threadId=${item.threadId || "n/a"} threadResolved=${item.threadResolved ?? "n/a"}`,
+            `   auditToken=${item.auditToken}`,
             `   ${item.body}`,
           ].join("\n");
         })
@@ -177,11 +186,18 @@ function buildAgentFixPrompt(params: {
 
   return [
     `You are acting as an autonomous PR babysitter for ${pr.repo} PR #${pr.number}.`,
+    `PR URL: ${pr.url}`,
+    `Base repository: ${pullSummary.repoFullName}`,
+    `Head repository: ${pullSummary.headRepoFullName}`,
+    `Head branch: ${pullSummary.headRef}`,
+    `Head remote: ${remoteName}`,
+    "You are running inside an isolated app-owned worktree under ~/.codefactory.",
     "Make only targeted changes that resolve the approved tasks.",
     "Do not wait for user input, confirmation, or approval at any point.",
     "Do not rewrite unrelated files.",
-    "If a task is invalid after inspection, skip it and explain briefly in your final response.",
-    "Do not push changes yourself; the outer babysitter will commit and push directly to the PR branch once your edits are ready.",
+    "Use the available git and GitHub tooling in this environment.",
+    "If GitHub authentication is available via GITHUB_TOKEN or GH_TOKEN, use it for any required GitHub follow-up.",
+    "If a task is invalid after inspection, leave a short GitHub explanation with the audit token and explain it in your final response.",
     "",
     "Approved review-comment tasks:",
     commentSection,
@@ -190,9 +206,52 @@ function buildAgentFixPrompt(params: {
     statusSection,
     "",
     "When done:",
-    "1) Ensure the repository is left in a clean commit-ready state.",
-    "2) Summarize what changed and what could not be fixed.",
+    "1) Run the relevant verification for your changes.",
+    `2) If you changed code, commit it and push it to ${remoteName} HEAD:${pullSummary.headRef}.`,
+    "3) Reply with a short GitHub summary for every addressed feedback item and include the exact audit token for that item.",
+    "4) Resolve threaded review comments after replying to them.",
+    "5) If an item cannot be fixed safely, leave a short explanatory GitHub reply/comment with the audit token.",
+    "6) Summarize the code changes, verification, git actions, and GitHub follow-up you completed.",
   ].join("\n");
+}
+
+function hasRecentAuditTrail(item: FeedbackItem, feedbackItems: FeedbackItem[], runStartedAtMs: number): boolean {
+  return feedbackItems.some((candidate) => {
+    if (candidate.id === item.id || !candidate.body.includes(item.auditToken)) {
+      return false;
+    }
+
+    const createdAtMs = new Date(candidate.createdAt).getTime();
+    if (Number.isNaN(createdAtMs)) {
+      return false;
+    }
+
+    return createdAtMs >= runStartedAtMs;
+  });
+}
+
+function collectAuditTrailErrors(params: {
+  pr: PR;
+  commentTasks: FeedbackItem[];
+  runStartedAtMs: number;
+}): string[] {
+  const { pr, commentTasks, runStartedAtMs } = params;
+  const errors: string[] = [];
+
+  for (const item of commentTasks) {
+    if (!hasRecentAuditTrail(item, pr.feedbackItems, runStartedAtMs)) {
+      errors.push(`missing audit trail for ${item.id}`);
+    }
+
+    if (item.replyKind === "review_thread") {
+      const refreshed = pr.feedbackItems.find((candidate) => candidate.id === item.id);
+      if (!refreshed?.threadResolved) {
+        errors.push(`review thread not resolved for ${item.id}`);
+      }
+    }
+  }
+
+  return errors;
 }
 
 function formatCommand(command: string, args: string[]): string {
@@ -212,14 +271,6 @@ function drainChunkLines(buffer: string, chunk: string): { lines: string[]; buff
   };
 }
 
-async function ensureDirectory(dirPath: string): Promise<void> {
-  await mkdir(dirPath, { recursive: true });
-}
-
-function sanitizeRepoName(repoFullName: string): string {
-  return repoFullName.replace(/[^a-zA-Z0-9_.-]+/g, "__");
-}
-
 async function ensureGitIdentity(worktreePath: string, run: typeof runCommand): Promise<void> {
   const name = await run("git", ["config", "--get", "user.name"], { cwd: worktreePath, timeoutMs: 3000 });
   if (name.code !== 0 || !name.stdout.trim()) {
@@ -230,82 +281,6 @@ async function ensureGitIdentity(worktreePath: string, run: typeof runCommand): 
   if (email.code !== 0 || !email.stdout.trim()) {
     await run("git", ["config", "user.email", DEFAULT_GIT_USER_EMAIL], { cwd: worktreePath, timeoutMs: 3000 });
   }
-}
-
-async function createWorktree(params: {
-  cloneUrl: string;
-  repoFullName: string;
-  headRef: string;
-  prNumber: number;
-  workspaceRoot: string;
-  runCommand: typeof runCommand;
-}): Promise<{
-  repoCacheDir: string;
-  worktreePath: string;
-}> {
-  const { cloneUrl, repoFullName, headRef, prNumber, workspaceRoot, runCommand: run } = params;
-
-  const cacheRoot = path.join(workspaceRoot, "repos");
-  const worktreeRoot = path.join(workspaceRoot, "worktrees");
-  await ensureDirectory(cacheRoot);
-  await ensureDirectory(worktreeRoot);
-
-  const safeRepoName = sanitizeRepoName(repoFullName);
-  const repoCacheDir = path.join(cacheRoot, safeRepoName);
-
-  const cloneCheck = await run("git", ["-C", repoCacheDir, "rev-parse", "--is-inside-work-tree"], {
-    timeoutMs: 4000,
-  });
-
-  if (cloneCheck.code !== 0) {
-    const cloneResult = await run("git", ["clone", cloneUrl, repoCacheDir], {
-      timeoutMs: 180000,
-    });
-
-    if (cloneResult.code !== 0) {
-      throw new Error(`git clone failed: ${cloneResult.stderr || cloneResult.stdout}`);
-    }
-  } else {
-    const fetchResult = await run("git", ["-C", repoCacheDir, "fetch", "origin"], {
-      timeoutMs: 120000,
-    });
-
-    if (fetchResult.code !== 0) {
-      throw new Error(`git fetch failed: ${fetchResult.stderr || fetchResult.stdout}`);
-    }
-  }
-
-  const fetchBranch = await run("git", ["-C", repoCacheDir, "fetch", "origin", headRef], {
-    timeoutMs: 120000,
-  });
-
-  if (fetchBranch.code !== 0) {
-    throw new Error(`git fetch origin ${headRef} failed: ${fetchBranch.stderr || fetchBranch.stdout}`);
-  }
-
-  const worktreePath = path.join(
-    worktreeRoot,
-    `${safeRepoName}-pr-${prNumber}-${Date.now()}`,
-  );
-
-  const worktreeCreate = await run(
-    "git",
-    ["-C", repoCacheDir, "worktree", "add", "--detach", worktreePath, "FETCH_HEAD"],
-    { timeoutMs: 60000 },
-  );
-
-  if (worktreeCreate.code !== 0) {
-    throw new Error(`git worktree add failed: ${worktreeCreate.stderr || worktreeCreate.stdout}`);
-  }
-
-  return { repoCacheDir, worktreePath };
-}
-
-async function removeWorktree(repoCacheDir: string, worktreePath: string, run: typeof runCommand): Promise<void> {
-  await run("git", ["-C", repoCacheDir, "worktree", "remove", "--force", worktreePath], {
-    timeoutMs: 30000,
-  });
-  await rm(worktreePath, { recursive: true, force: true });
 }
 
 export class PRBabysitter {
@@ -365,7 +340,7 @@ export class PRBabysitter {
 
     const updated = await this.storage.updatePR(pr.id, {
       title: pr.title,
-      status: "watching",
+      status: pr.status,
       lastChecked: new Date().toISOString(),
       feedbackItems: merged,
       accepted: counters.accepted,
@@ -459,6 +434,7 @@ export class PRBabysitter {
 
     this.inProgress.add(prId);
     const runId = randomUUID();
+    const auditWindowStartMs = Math.floor(Date.now() / 1000) * 1000 - 1000;
     let logQueue = Promise.resolve();
 
     const queueLog = (
@@ -723,22 +699,36 @@ export class PRBabysitter {
         },
       );
 
-      const workspaceRoot = process.env.PR_BABYSITTER_ROOT || path.join("/tmp", "pr-babysitter");
-      await queueLog(pr.id, "info", `Preparing worktree in ${workspaceRoot}`, {
+      const codeFactoryPaths = getCodeFactoryPaths();
+      await queueLog(pr.id, "info", `Preparing worktree in ${codeFactoryPaths.rootDir}`, {
         phase: "worktree",
       });
-      const { repoCacheDir, worktreePath } = await createWorktree({
-        cloneUrl: pullSummary.headRepoCloneUrl,
-        repoFullName: pullSummary.headRepoFullName,
+      const { repoCacheDir, worktreePath, healed, remoteName } = await preparePrWorktree({
+        rootDir: codeFactoryPaths.rootDir,
+        repoFullName: pullSummary.repoFullName,
+        repoCloneUrl: pullSummary.repoCloneUrl,
+        headRepoFullName: pullSummary.headRepoFullName,
+        headRepoCloneUrl: pullSummary.headRepoCloneUrl,
         headRef: pullSummary.headRef,
         prNumber: pr.number,
-        workspaceRoot,
+        runId,
         runCommand: this.runtime.runCommand,
       });
 
       try {
         await queueLog(pr.id, "info", `Worktree ready at ${worktreePath}`, {
           phase: "worktree",
+          metadata: { remoteName, healed },
+        });
+        if (healed) {
+          await queueLog(pr.id, "info", "Repo cache required auto-heal before the worktree was created", {
+            phase: "worktree",
+            metadata: { repoCacheDir },
+          });
+        }
+        await queueLog(pr.id, "info", `Prepared PR head from remote ${remoteName}`, {
+          phase: "worktree",
+          metadata: { remoteName, headRef: pullSummary.headRef },
         });
         await queueLog(pr.id, "info", "Ensuring git identity", {
           phase: "git.identity",
@@ -750,8 +740,17 @@ export class PRBabysitter {
 
         const agentStdout = createChunkLogger(pr.id, "agent", "stdout", "info");
         const agentStderr = createChunkLogger(pr.id, "agent", "stderr", "warn");
+        const githubToken = await this.github.resolveGitHubAuthToken(config);
+        const agentEnv = githubToken
+          ? {
+              ...process.env,
+              GITHUB_TOKEN: githubToken,
+              GH_TOKEN: githubToken,
+            }
+          : undefined;
         await queueLog(pr.id, "info", `Launching ${agent} in autonomous mode`, {
           phase: "agent",
+          metadata: { githubAuth: Boolean(githubToken) },
         });
 
         const applyResult = await this.runtime.applyFixesWithAgent({
@@ -759,9 +758,12 @@ export class PRBabysitter {
           cwd: worktreePath,
           prompt: buildAgentFixPrompt({
             pr,
+            pullSummary,
+            remoteName,
             commentTasks,
             statusTasks,
           }),
+          env: agentEnv,
           onStdoutChunk: agentStdout.onChunk,
           onStderrChunk: agentStderr.onChunk,
         });
@@ -782,71 +784,105 @@ export class PRBabysitter {
           args: ["status", "--porcelain"],
           cwd: worktreePath,
           timeoutMs: 5000,
-          phase: "git.status",
-          successMessage: "Collected git status",
+          phase: "verify.git.status",
+          successMessage: "Collected worktree git status",
         });
         if (status.code !== 0) {
           throw new Error(`git status failed: ${status.stderr || status.stdout}`);
         }
 
-        if (!status.stdout.trim()) {
-          await queueLog(pr.id, "info", "Babysitter run completed but no file changes were produced", {
-            phase: "run",
-          });
-          await this.storage.updatePR(pr.id, {
-            status: "watching",
-            lastChecked: new Date().toISOString(),
-          });
-          return;
+        if (status.stdout.trim()) {
+          throw new Error(`Agent left uncommitted changes in the worktree: ${status.stdout.trim()}`);
         }
-
-        const changedPaths = status.stdout.trim().split(/\r?\n/).filter(Boolean).length;
-        await queueLog(pr.id, "info", `Detected ${changedPaths} changed path(s)`, {
-          phase: "git.status",
-          metadata: { changedPaths },
+        await queueLog(pr.id, "info", "Worktree is clean after agent run", {
+          phase: "verify.git.status",
         });
 
-        const addResult = await runLoggedCommand({
+        const localHead = await runLoggedCommand({
           currentPrId: pr.id,
           command: "git",
-          args: ["add", "-A"],
+          args: ["rev-parse", "HEAD"],
           cwd: worktreePath,
-          timeoutMs: 30000,
-          phase: "git.add",
-          successMessage: "Staged automated changes",
+          timeoutMs: 5000,
+          phase: "verify.git.local-head",
+          successMessage: "Collected worktree HEAD",
         });
-        if (addResult.code !== 0) {
-          throw new Error(`git add failed: ${addResult.stderr || addResult.stdout}`);
+        if (localHead.code !== 0) {
+          throw new Error(`git rev-parse HEAD failed: ${localHead.stderr || localHead.stdout}`);
         }
 
-        const commitMessage = `chore: apply automated babysitter fixes for PR #${pr.number}`;
-        const commitResult = await runLoggedCommand({
+        const remoteFetch = await runLoggedCommand({
           currentPrId: pr.id,
           command: "git",
-          args: ["commit", "-m", commitMessage],
-          cwd: worktreePath,
-          timeoutMs: 30000,
-          phase: "git.commit",
-          successMessage: `Committed automated fixes with message: ${commitMessage}`,
-        });
-
-        if (commitResult.code !== 0) {
-          throw new Error(`git commit failed: ${commitResult.stderr || commitResult.stdout}`);
-        }
-
-        const pushResult = await runLoggedCommand({
-          currentPrId: pr.id,
-          command: "git",
-          args: ["push", "origin", `HEAD:${pullSummary.headRef}`],
-          cwd: worktreePath,
+          args: ["-C", repoCacheDir, "fetch", remoteName, pullSummary.headRef],
           timeoutMs: 120000,
-          phase: "git.push",
-          successMessage: `Pushed automated fixes to ${pullSummary.headRef}`,
+          phase: "verify.git.fetch-head",
+          successMessage: `Fetched ${remoteName}/${pullSummary.headRef} for verification`,
+        });
+        if (remoteFetch.code !== 0) {
+          throw new Error(`git fetch ${remoteName} ${pullSummary.headRef} failed: ${remoteFetch.stderr || remoteFetch.stdout}`);
+        }
+
+        const remoteHead = await runLoggedCommand({
+          currentPrId: pr.id,
+          command: "git",
+          args: ["-C", repoCacheDir, "rev-parse", "FETCH_HEAD"],
+          timeoutMs: 5000,
+          phase: "verify.git.remote-head",
+          successMessage: "Collected remote PR head SHA",
+        });
+        if (remoteHead.code !== 0) {
+          throw new Error(`git rev-parse FETCH_HEAD failed: ${remoteHead.stderr || remoteHead.stdout}`);
+        }
+
+        const localHeadSha = localHead.stdout.trim();
+        const remoteHeadSha = remoteHead.stdout.trim();
+        const branchMoved = remoteHeadSha !== pullSummary.headSha;
+        const localCommitCreated = localHeadSha !== pullSummary.headSha;
+
+        if (localCommitCreated && remoteHeadSha !== localHeadSha) {
+          throw new Error("Agent created a local commit but did not push it to the PR head branch");
+        }
+
+        if (statusTasks.length > 0 && !branchMoved) {
+          throw new Error("Agent did not update the PR head branch for accepted failing status tasks");
+        }
+
+        await queueLog(pr.id, "info", "Verified git branch state after agent run", {
+          phase: "verify.git",
+          metadata: {
+            initialHeadSha: pullSummary.headSha,
+            localHeadSha,
+            remoteHeadSha,
+            branchMoved,
+            localCommitCreated,
+            remoteName,
+          },
         });
 
-        if (pushResult.code !== 0) {
-          throw new Error(`git push failed: ${pushResult.stderr || pushResult.stdout}`);
+        pr = await this.syncFeedbackForPR(pr.id, {
+          runId,
+          logStart: true,
+          phase: "verify.sync",
+        });
+
+        const auditTrailErrors = collectAuditTrailErrors({
+          pr,
+          commentTasks,
+          runStartedAtMs: auditWindowStartMs,
+        });
+        if (auditTrailErrors.length > 0) {
+          throw new Error(`GitHub audit trail verification failed: ${auditTrailErrors.join("; ")}`);
         }
+
+        await queueLog(pr.id, "info", "GitHub audit trail verified", {
+          phase: "verify.github",
+          metadata: {
+            verifiedComments: commentTasks.length,
+            remoteName,
+            branchMoved,
+          },
+        });
 
         await this.storage.updatePR(pr.id, {
           status: "watching",
@@ -854,13 +890,18 @@ export class PRBabysitter {
         });
         await queueLog(pr.id, "info", "Babysitter run complete", {
           phase: "run",
+          metadata: { remoteName, branchMoved },
         });
       } finally {
         try {
           await queueLog(pr.id, "info", "Cleaning up worktree", {
             phase: "cleanup",
           });
-          await removeWorktree(repoCacheDir, worktreePath, this.runtime.runCommand);
+          await removePrWorktree({
+            repoCacheDir,
+            worktreePath,
+            runCommand: this.runtime.runCommand,
+          });
           await queueLog(pr.id, "info", "Worktree cleanup complete", {
             phase: "cleanup",
           });
