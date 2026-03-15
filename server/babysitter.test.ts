@@ -265,9 +265,13 @@ test("babysitPR uses a CODEFACTORY_HOME worktree, passes GitHub context, and ver
 
   const updated = await storage.getPR(pr.id);
   const logs = await storage.getLogs(pr.id);
+  const fixRunLog = logs.find((log) => log.phase === "run" && log.message.includes("Babysitter preparing fix run"));
 
   assert.equal(updated?.status, "watching");
   assert.equal(updated?.accepted, 1);
+  assert.ok(fixRunLog);
+  assert.equal(fixRunLog.message, "Babysitter preparing fix run with 1 comment task(s), 0 status task(s) using codex");
+  assert.equal(fixRunLog.metadata?.followUpTasks, 1);
   assert.deepEqual(postedFollowUps, [
     {
       id: "gh-review-comment-1",

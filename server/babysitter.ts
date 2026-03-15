@@ -781,7 +781,7 @@ export class PRBabysitter {
         await queueLog(
           pr.id,
           "info",
-          `Babysitter preparing fix run with ${commentTasks.length} comment task(s), ${statusTasks.length} status task(s), ${followUpTasks.length} GitHub follow-up task(s)${hasConflicts ? ", and merge conflict resolution" : ""} using ${agent}`,
+          `Babysitter preparing fix run with ${commentTasks.length} comment task(s), ${statusTasks.length} status task(s)${hasConflicts ? ", and merge conflict resolution" : ""} using ${agent}`,
           {
             phase: "run",
             metadata: {
