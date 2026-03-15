@@ -28,10 +28,6 @@ export default tseslint.config(
           jsx: true,
         },
       },
-      globals: {
-        ...globals.browser,
-        ...globals.node,
-      },
     },
     rules: {
       "@typescript-eslint/no-unused-vars": [
@@ -41,6 +37,22 @@ export default tseslint.config(
           varsIgnorePattern: "^_",
         },
       ],
+    },
+  },
+  {
+    files: ["client/**/*.{ts,tsx}"],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+      },
+    },
+  },
+  {
+    files: ["server/**/*.ts", "script/**/*.ts", "*.config.ts"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
     },
   },
 );
