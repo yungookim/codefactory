@@ -60,7 +60,7 @@
   - When an explicit user branch target conflicts with my default safety preference, follow the explicit target.
 
 ## 2026-03-15 - Confirm which docs already shipped before opening a follow-up PR
-- Pattern: I was about to open a second PR from a mixed commit that bundled code changes with planning docs the user had already sent in another PR.
+- Pattern: I was about to open a second PR from a mixed commit that bundled code changes with planning docs that had already shipped in another PR.
 - Rule: Before creating a follow-up PR from a mixed commit, verify which files already belong to existing PRs and split the new branch so it contains only the remaining intended changes.
 - Prevention checklist:
   - Inspect the full mixed commit, not just the code paths I care about.
