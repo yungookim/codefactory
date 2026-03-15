@@ -84,3 +84,18 @@
   - Before opening a PR, inspect staged and unstaged diffs for pending lesson updates.
   - If lessons should be isolated from product changes, create a docs-only branch from fresh `main` and open that PR in the same session.
   - Call out any intentionally unshipped lesson updates in the final handoff.
+## 2026-03-15 - Confirm workspace isolation requirements before editing repo automation
+- Pattern: I started investigating a CI change in the user's current checkout before the user clarified they wanted the work done from a clean worktree off `main`.
+- Rule: For CI/CD, repository automation, or branch-sensitive changes, confirm the required git starting point and isolation model before editing files.
+- Prevention checklist:
+  - Ask whether the user wants changes in the current checkout, a fresh branch from `main`, or an isolated worktree when the request affects shared automation.
+  - Create the requested branch/worktree before installing dependencies or editing tracked files.
+  - Restate the chosen branch/worktree path in the first execution update so the working context is explicit.
+
+## 2026-03-15 - Re-verify lockfile completeness with `npm ci`
+- Pattern: I updated dependencies and committed a lockfile that still omitted the optional `bufferutil` package, so GitHub Actions failed at `npm ci` even though the branch looked healthy locally.
+- Rule: After any dependency or lockfile change, prove the committed state with a clean `npm ci`, not just `npm install`, `npm run`, or a warm existing `node_modules`.
+- Prevention checklist:
+  - Check that every declared dependency bucket, including `optionalDependencies`, appears in `package-lock.json`.
+  - Run `npm ci` in the branch before opening or updating a PR when dependency metadata changes.
+  - If CI reports a manifest-lock mismatch, inspect the exact missing package from the log instead of assuming the root dependency lists are sufficient.
