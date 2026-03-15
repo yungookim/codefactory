@@ -623,6 +623,8 @@ export async function fetchFeedbackItemsForPR(
         decision: null,
         decisionReason: null,
         action: null,
+        status: "pending" as const,
+        statusReason: null,
       };
     })
     .filter((item) => item.body.trim().length > 0);
@@ -651,6 +653,8 @@ export async function fetchFeedbackItemsForPR(
         decision: null,
         decisionReason: null,
         action: null,
+        status: "pending" as const,
+        statusReason: null,
       };
     })
     .filter((item) => item.body.trim().length > 0);
@@ -679,6 +683,8 @@ export async function fetchFeedbackItemsForPR(
         decision: null,
         decisionReason: null,
         action: null,
+        status: "pending" as const,
+        statusReason: null,
       };
     })
     .filter((item) => item.body.trim().length > 0);

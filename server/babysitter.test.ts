@@ -27,6 +27,8 @@ function makeFeedbackItem(overrides: Partial<FeedbackItem> = {}): FeedbackItem {
     decision: null,
     decisionReason: null,
     action: null,
+    status: "pending",
+    statusReason: null,
     ...overrides,
   };
 }
@@ -479,7 +481,6 @@ test("babysitPR marks the run as error when app-owned GitHub follow-up fails", a
 
   const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "codefactory-home-"));
   process.env.CODEFACTORY_HOME = worktreeRoot;
-  let feedbackFetchCount = 0;
   const pullSummary = makePullSummary(pr);
   let applyCalled = false;
 
@@ -487,14 +488,7 @@ test("babysitPR marks the run as error when app-owned GitHub follow-up fails", a
     storage,
     {
       buildOctokit: async () => ({}) as never,
-      fetchFeedbackItemsForPR: async () => {
-        feedbackFetchCount += 1;
-        if (feedbackFetchCount === 1) {
-          return [existingItem];
-        }
-
-        return [existingItem];
-      },
+      fetchFeedbackItemsForPR: async () => [existingItem],
       fetchPullSummary: async () => pullSummary,
       listFailingStatuses: async () => [],
       listOpenPullsForRepo: async () => [],
@@ -550,6 +544,7 @@ test("babysitPR treats audit-trail replies as non-actionable follow-up comments"
     decisionReason: "Previously addressed",
     action: "Please rename this variable.",
     threadResolved: true,
+    status: "resolved",
   });
   const auditReply = makeFeedbackItem({
     id: "gh-review-comment-2",
@@ -563,6 +558,7 @@ test("babysitPR treats audit-trail replies as non-actionable follow-up comments"
     threadResolved: true,
     createdAt: "2026-03-15T10:05:00.000Z",
     auditToken: "codefactory-feedback:gh-review-comment-2",
+    status: "pending",
   });
 
   const pr = await storage.addPR({
@@ -600,10 +596,10 @@ test("babysitPR treats audit-trail replies as non-actionable follow-up comments"
     {
       resolveAgent: async () => "codex",
       evaluateFixNecessityWithAgent: async () => {
-        throw new Error("audit-trail replies should not be sent back to the coding agent");
+        throw new Error("automation audit-trail follow-up should not be sent back to the coding agent");
       },
       applyFixesWithAgent: async () => {
-        throw new Error("audit-trail replies should not trigger a fix run");
+        throw new Error("automation audit-trail follow-up should not trigger a fix run");
       },
       runCommand: makeGitRunCommand(),
     },
@@ -613,21 +609,489 @@ test("babysitPR treats audit-trail replies as non-actionable follow-up comments"
 
   const updated = await storage.getPR(pr.id);
   const logs = await storage.getLogs(pr.id);
+  const updatedReply = updated?.feedbackItems.find((item) => item.id === auditReply.id);
 
   assert.equal(updated?.status, "watching");
   assert.equal(updated?.rejected, 1);
-  assert.equal(updated?.feedbackItems[1]?.decision, "reject");
-  assert.match(updated?.feedbackItems[1]?.decisionReason || "", /audit trail/i);
+  assert.equal(updatedReply?.decision, "reject");
+  assert.equal(updatedReply?.status, "rejected");
+  assert.match(updatedReply?.statusReason || "", /audit trail/i);
   assert.ok(logs.some((log) => log.phase === "evaluate.comments" && log.message.includes("Ignored audit-trail follow-up comment")));
   assert.ok(logs.some((log) => log.phase === "run" && log.message.includes("no necessary fixes identified")));
 });
 
-test("babysitPR retries accepted feedback items that still need GitHub follow-up without rerunning the agent", async () => {
+test("babysitPR does not auto-ignore audit-trail replies when referenced timestamps are invalid", async () => {
+  const storage = new MemStorage();
+  const originalItem = makeFeedbackItem({
+    decision: "accept",
+    decisionReason: "Previously addressed",
+    action: "Please rename this variable.",
+    threadResolved: true,
+    createdAt: "not-a-date",
+    status: "resolved",
+  });
+  const auditReply = makeFeedbackItem({
+    id: "gh-review-comment-2",
+    author: "code-factory",
+    body: `Implemented the rename and verified the failing test now passes.\n\n${originalItem.auditToken}`,
+    bodyHtml: "<p>Implemented the rename and verified the failing test now passes.</p>",
+    sourceId: "2",
+    sourceNodeId: "PRRC_kwDO_followup",
+    sourceUrl: "https://github.com/octo/example/pull/42#discussion_r2",
+    threadId: originalItem.threadId,
+    threadResolved: true,
+    createdAt: "2026-03-15T10:05:00.000Z",
+    auditToken: "codefactory-feedback:gh-review-comment-2",
+    status: "pending",
+  });
+
+  const pr = await storage.addPR({
+    number: 42,
+    title: "Example PR",
+    repo: "octo/example",
+    branch: "feature/example",
+    author: "octocat",
+    url: "https://github.com/octo/example/pull/42",
+    status: "watching",
+    feedbackItems: [originalItem, auditReply],
+    accepted: 1,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  let evaluateCallCount = 0;
+  const babysitter = new PRBabysitter(
+    storage,
+    {
+      buildOctokit: async () => ({}) as never,
+      fetchFeedbackItemsForPR: async () => [originalItem, auditReply],
+      fetchPullSummary: async () => makePullSummary(pr),
+      listFailingStatuses: async () => [],
+      listOpenPullsForRepo: async () => [],
+      postFollowUpForFeedbackItem: async () => undefined,
+      resolveReviewThread: async () => undefined,
+      resolveGitHubAuthToken: async () => undefined,
+      addReactionToComment: async () => undefined,
+      postStatusReplyForFeedbackItem: async () => null,
+      updateStatusReply: async () => undefined,
+    },
+    {
+      resolveAgent: async () => "codex",
+      evaluateFixNecessityWithAgent: async () => {
+        evaluateCallCount += 1;
+        return {
+          needsFix: false,
+          reason: "Need a reliable timestamp before classifying this as automation follow-up",
+        };
+      },
+      applyFixesWithAgent: async () => {
+        throw new Error("malformed audit-trail timestamps should not trigger a fix run");
+      },
+      runCommand: makeGitRunCommand(),
+    },
+  );
+
+  await babysitter.babysitPR(pr.id, "codex");
+
+  const updated = await storage.getPR(pr.id);
+  const logs = await storage.getLogs(pr.id);
+  const updatedReply = updated?.feedbackItems.find((item) => item.id === auditReply.id);
+
+  assert.equal(evaluateCallCount, 1);
+  assert.equal(updated?.status, "watching");
+  assert.equal(updatedReply?.decision, "reject");
+  assert.equal(updatedReply?.status, "rejected");
+  assert.match(updatedReply?.statusReason || "", /reliable timestamp/i);
+  assert.equal(logs.some((log) => log.phase === "evaluate.comments" && log.message.includes("Ignored audit-trail follow-up comment")), false);
+});
+
+test("babysitPR marks accepted pending items as resolved after a successful run", async () => {
+  const storage = new MemStorage();
+  const existingItem = makeFeedbackItem({ status: "pending", decision: null });
+  const pr = await storage.addPR({
+    number: 106,
+    title: "Verbose PR",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "watching",
+    feedbackItems: [existingItem],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "codefactory-home-"));
+  process.env.CODEFACTORY_HOME = worktreeRoot;
+  let feedbackFetchCount = 0;
+  const pullSummary = makePullSummary(pr);
+  const followUp = makeFeedbackItem({
+    id: "gh-review-comment-2",
+    author: "code-factory",
+    body: `Implemented the fix.\n\n${existingItem.auditToken}`,
+    bodyHtml: `<p>Implemented the fix.</p><p>${existingItem.auditToken}</p>`,
+    sourceId: "2",
+    sourceNodeId: "PRRC_kwDO_followup",
+    sourceUrl: "https://github.com/alex-morgan-o/lolodex/pull/106#discussion_r2",
+    threadId: existingItem.threadId,
+    threadResolved: true,
+    createdAt: new Date().toISOString(),
+    auditToken: "codefactory-feedback:gh-review-comment-2",
+    decision: null,
+    decisionReason: null,
+    action: null,
+    status: "pending",
+    statusReason: null,
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    {
+      buildOctokit: async () => ({}) as never,
+      fetchFeedbackItemsForPR: async () => {
+        feedbackFetchCount += 1;
+        if (feedbackFetchCount === 1) return [existingItem];
+        return [{ ...existingItem, threadResolved: true }, followUp];
+      },
+      fetchPullSummary: async () => pullSummary,
+      listFailingStatuses: async () => [],
+      listOpenPullsForRepo: async () => [],
+      postFollowUpForFeedbackItem: async () => undefined,
+      resolveReviewThread: async () => undefined,
+      resolveGitHubAuthToken: async () => "test-token",
+      addReactionToComment: async () => {},
+      postStatusReplyForFeedbackItem: async () => null,
+      updateStatusReply: async () => {},
+    },
+    {
+      resolveAgent: async () => "codex",
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: true, reason: "Code change needed" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: makeGitRunCommand({ localHeadSha: "def456", remoteHeadSha: "def456" }),
+    },
+  );
+
+  await babysitter.babysitPR(pr.id, "codex");
+
+  const updated = await storage.getPR(pr.id);
+  const resolvedItem = updated?.feedbackItems.find((i) => i.id === existingItem.id);
+  assert.equal(resolvedItem?.status, "resolved");
+
+  delete process.env.CODEFACTORY_HOME;
+});
+
+test("babysitPR marks claimed items as failed when audit trail verification fails", async () => {
+  const storage = new MemStorage();
+  const existingItem = makeFeedbackItem({ status: "pending", decision: null });
+  const pr = await storage.addPR({
+    number: 106,
+    title: "Verbose PR",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "watching",
+    feedbackItems: [existingItem],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "codefactory-home-"));
+  process.env.CODEFACTORY_HOME = worktreeRoot;
+  const pullSummary = makePullSummary(pr);
+
+  const babysitter = new PRBabysitter(
+    storage,
+    {
+      buildOctokit: async () => ({}) as never,
+      fetchFeedbackItemsForPR: async () => [existingItem],
+      fetchPullSummary: async () => pullSummary,
+      listFailingStatuses: async () => [],
+      listOpenPullsForRepo: async () => [],
+      postFollowUpForFeedbackItem: async () => undefined,
+      resolveReviewThread: async () => undefined,
+      resolveGitHubAuthToken: async () => "test-token",
+      addReactionToComment: async () => {},
+      postStatusReplyForFeedbackItem: async () => null,
+      updateStatusReply: async () => {},
+    },
+    {
+      resolveAgent: async () => "codex",
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: true, reason: "Code change needed" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: makeGitRunCommand({ localHeadSha: "def456", remoteHeadSha: "def456" }),
+    },
+  );
+
+  await babysitter.babysitPR(pr.id, "codex");
+
+  const updated = await storage.getPR(pr.id);
+  const failedItem = updated?.feedbackItems.find((i) => i.id === existingItem.id);
+  assert.equal(failedItem?.status, "failed");
+  assert.ok(failedItem?.statusReason?.includes("audit trail"));
+
+  delete process.env.CODEFACTORY_HOME;
+});
+
+test("babysitPR picks up manually-queued items and resolves them without re-evaluating", async () => {
+  const storage = new MemStorage();
+  const queuedItem = makeFeedbackItem({
+    status: "queued",
+    decision: "accept",
+    decisionReason: "Manual override",
+  });
+  const pr = await storage.addPR({
+    number: 106,
+    title: "Verbose PR",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "watching",
+    feedbackItems: [queuedItem],
+    accepted: 1,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "codefactory-home-"));
+  process.env.CODEFACTORY_HOME = worktreeRoot;
+  let feedbackFetchCount = 0;
+  const pullSummary = makePullSummary(pr);
+  let evaluateCallCount = 0;
+  const followUp = makeFeedbackItem({
+    id: "gh-review-comment-2",
+    author: "code-factory",
+    body: `Fix applied.\n\n${queuedItem.auditToken}`,
+    bodyHtml: `<p>Fix applied.</p><p>${queuedItem.auditToken}</p>`,
+    sourceId: "2",
+    sourceNodeId: "PRRC_kwDO_followup",
+    sourceUrl: "https://github.com/alex-morgan-o/lolodex/pull/106#discussion_r2",
+    threadId: queuedItem.threadId,
+    threadResolved: true,
+    createdAt: new Date().toISOString(),
+    auditToken: "codefactory-feedback:gh-review-comment-2",
+    decision: null,
+    decisionReason: null,
+    action: null,
+    status: "pending",
+    statusReason: null,
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    {
+      buildOctokit: async () => ({}) as never,
+      fetchFeedbackItemsForPR: async () => {
+        feedbackFetchCount += 1;
+        if (feedbackFetchCount === 1) return [queuedItem];
+        return [{ ...queuedItem, threadResolved: true }, followUp];
+      },
+      fetchPullSummary: async () => pullSummary,
+      listFailingStatuses: async () => [],
+      listOpenPullsForRepo: async () => [],
+      postFollowUpForFeedbackItem: async () => undefined,
+      resolveReviewThread: async () => undefined,
+      resolveGitHubAuthToken: async () => "test-token",
+      addReactionToComment: async () => {},
+      postStatusReplyForFeedbackItem: async () => null,
+      updateStatusReply: async () => {},
+    },
+    {
+      resolveAgent: async () => "codex",
+      evaluateFixNecessityWithAgent: async () => {
+        evaluateCallCount += 1;
+        return { needsFix: true, reason: "Should not be called" };
+      },
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: makeGitRunCommand({ localHeadSha: "def456", remoteHeadSha: "def456" }),
+    },
+  );
+
+  await babysitter.babysitPR(pr.id, "codex");
+
+  const updated = await storage.getPR(pr.id);
+  const resolvedItem = updated?.feedbackItems.find((i) => i.id === queuedItem.id);
+  assert.equal(evaluateCallCount, 0, "evaluateFixNecessityWithAgent should not be called for already-queued items");
+  assert.equal(resolvedItem?.status, "resolved");
+
+  delete process.env.CODEFACTORY_HOME;
+});
+
+test("babysitPR does not pull rejected or resolved items into in_progress", async () => {
+  const storage = new MemStorage();
+  const rejectedItem = makeFeedbackItem({
+    id: "gh-review-comment-rejected",
+    status: "rejected",
+    decision: "reject",
+    decisionReason: "Not actionable",
+  });
+  const resolvedItem = makeFeedbackItem({
+    id: "gh-review-comment-resolved",
+    status: "resolved",
+    decision: "accept",
+  });
+  const pendingItem = makeFeedbackItem({
+    id: "gh-review-comment-pending",
+    status: "pending",
+    decision: null,
+  });
+  const pr = await storage.addPR({
+    number: 106,
+    title: "Verbose PR",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "watching",
+    feedbackItems: [rejectedItem, resolvedItem, pendingItem],
+    accepted: 1,
+    rejected: 1,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "codefactory-home-"));
+  process.env.CODEFACTORY_HOME = worktreeRoot;
+  let feedbackFetchCount = 0;
+  const pullSummary = makePullSummary(pr);
+  const followUp = makeFeedbackItem({
+    id: "gh-review-comment-followup",
+    author: "code-factory",
+    body: `Fix applied.\n\n${pendingItem.auditToken}`,
+    bodyHtml: `<p>Fix applied.</p><p>${pendingItem.auditToken}</p>`,
+    sourceId: "99",
+    sourceNodeId: "PRRC_kwDO_followup99",
+    sourceUrl: "https://github.com/alex-morgan-o/lolodex/pull/106#discussion_r99",
+    threadId: pendingItem.threadId,
+    threadResolved: true,
+    createdAt: new Date().toISOString(),
+    auditToken: "codefactory-feedback:gh-review-comment-followup",
+    decision: null,
+    decisionReason: null,
+    action: null,
+    status: "pending",
+    statusReason: null,
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    {
+      buildOctokit: async () => ({}) as never,
+      fetchFeedbackItemsForPR: async () => {
+        feedbackFetchCount += 1;
+        if (feedbackFetchCount === 1) return [rejectedItem, resolvedItem, pendingItem];
+        return [rejectedItem, resolvedItem, { ...pendingItem, threadResolved: true }, followUp];
+      },
+      fetchPullSummary: async () => pullSummary,
+      listFailingStatuses: async () => [],
+      listOpenPullsForRepo: async () => [],
+      postFollowUpForFeedbackItem: async () => undefined,
+      resolveReviewThread: async () => undefined,
+      resolveGitHubAuthToken: async () => "test-token",
+      addReactionToComment: async () => {},
+      postStatusReplyForFeedbackItem: async () => null,
+      updateStatusReply: async () => {},
+    },
+    {
+      resolveAgent: async () => "codex",
+      evaluateFixNecessityWithAgent: async (_params) => ({ needsFix: true, reason: "Code change needed" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: makeGitRunCommand({ localHeadSha: "def456", remoteHeadSha: "def456" }),
+    },
+  );
+
+  await babysitter.babysitPR(pr.id, "codex");
+
+  const updated = await storage.getPR(pr.id);
+  const updatedRejected = updated?.feedbackItems.find((i) => i.id === rejectedItem.id);
+  const updatedResolved = updated?.feedbackItems.find((i) => i.id === resolvedItem.id);
+  assert.equal(updatedRejected?.status, "rejected", "rejected item should keep its status");
+  assert.equal(updatedResolved?.status, "resolved", "resolved item should keep its status");
+
+  delete process.env.CODEFACTORY_HOME;
+});
+
+test("babysitPR skips run when no items are pending or queued", async () => {
+  const storage = new MemStorage();
+  const rejectedItem = makeFeedbackItem({ status: "rejected", decision: "reject" });
+  const pr = await storage.addPR({
+    number: 106,
+    title: "Verbose PR",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "watching",
+    feedbackItems: [rejectedItem],
+    accepted: 0,
+    rejected: 1,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  let evaluateCallCount = 0;
+
+  const babysitter = new PRBabysitter(
+    storage,
+    {
+      buildOctokit: async () => ({}) as never,
+      fetchFeedbackItemsForPR: async () => [rejectedItem],
+      fetchPullSummary: async () => makePullSummary(pr),
+      listFailingStatuses: async () => [],
+      listOpenPullsForRepo: async () => [],
+      postFollowUpForFeedbackItem: async () => undefined,
+      resolveReviewThread: async () => undefined,
+      resolveGitHubAuthToken: async () => undefined,
+      addReactionToComment: async () => {},
+      postStatusReplyForFeedbackItem: async () => null,
+      updateStatusReply: async () => {},
+    },
+    {
+      resolveAgent: async () => "codex",
+      evaluateFixNecessityWithAgent: async () => {
+        evaluateCallCount += 1;
+        return { needsFix: true, reason: "Should not be called" };
+      },
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: makeGitRunCommand(),
+    },
+  );
+
+  await babysitter.babysitPR(pr.id, "codex");
+
+  const updated = await storage.getPR(pr.id);
+  assert.equal(evaluateCallCount, 0, "evaluateFixNecessityWithAgent should not be called when no pending items");
+  assert.equal(updated?.status, "watching");
+
+  delete process.env.CODEFACTORY_HOME;
+});
+
+test("babysitPR retries accepted in-progress feedback items that still need GitHub follow-up without rerunning the agent", async () => {
   const storage = new MemStorage();
   const existingItem = makeFeedbackItem({
     decision: "accept",
     decisionReason: "Already fixed in a previous run",
     action: "Please rename this variable.",
+    status: "in_progress",
   });
   const pr = await storage.addPR({
     number: 106,
@@ -666,6 +1130,8 @@ test("babysitPR retries accepted feedback items that still need GitHub follow-up
     decision: null,
     decisionReason: null,
     action: null,
+    status: "pending",
+    statusReason: null,
   });
 
   const babysitter = new PRBabysitter(
@@ -719,9 +1185,11 @@ test("babysitPR retries accepted feedback items that still need GitHub follow-up
 
   const updated = await storage.getPR(pr.id);
   const logs = await storage.getLogs(pr.id);
+  const updatedItem = updated?.feedbackItems.find((item) => item.id === existingItem.id);
 
   assert.equal(applyCalled, false);
   assert.equal(updated?.status, "watching");
+  assert.equal(updatedItem?.status, "resolved");
   assert.deepEqual(postedFollowUps, [
     {
       id: "gh-review-comment-1",
@@ -738,6 +1206,7 @@ test("babysitPR resolves lingering review threads without reposting an existing 
     decision: "accept",
     decisionReason: "Already fixed in a previous run",
     action: "Please rename this variable.",
+    status: "in_progress",
   });
   const priorFollowUp = makeFeedbackItem({
     id: "gh-review-comment-2",
@@ -754,6 +1223,8 @@ test("babysitPR resolves lingering review threads without reposting an existing 
     decision: null,
     decisionReason: null,
     action: null,
+    status: "resolved",
+    statusReason: null,
   });
   const pr = await storage.addPR({
     number: 106,
@@ -828,9 +1299,11 @@ test("babysitPR resolves lingering review threads without reposting an existing 
   await babysitter.babysitPR(pr.id, "codex");
 
   const updated = await storage.getPR(pr.id);
+  const updatedItem = updated?.feedbackItems.find((item) => item.id === existingItem.id);
 
   assert.equal(applyCalled, false);
   assert.equal(updated?.status, "watching");
+  assert.equal(updatedItem?.status, "resolved");
   assert.deepEqual(postedFollowUps, []);
   assert.deepEqual(resolvedThreads, ["PRRT_kwDO_example"]);
 });
@@ -841,6 +1314,7 @@ test("babysitPR reposts GitHub follow-up when an earlier audit trail used the wr
     decision: "accept",
     decisionReason: "Already fixed in a previous run",
     action: "Please rename this variable.",
+    status: "in_progress",
   });
   const priorFollowUp = makeFeedbackItem({
     id: "gh-review-comment-2",
@@ -857,6 +1331,8 @@ test("babysitPR reposts GitHub follow-up when an earlier audit trail used the wr
     decision: null,
     decisionReason: null,
     action: null,
+    status: "resolved",
+    statusReason: null,
   });
   const correctedFollowUp = makeFeedbackItem({
     id: "gh-review-comment-3",
@@ -873,6 +1349,8 @@ test("babysitPR reposts GitHub follow-up when an earlier audit trail used the wr
     decision: null,
     decisionReason: null,
     action: null,
+    status: "pending",
+    statusReason: null,
   });
   const pr = await storage.addPR({
     number: 106,
@@ -948,9 +1426,11 @@ test("babysitPR reposts GitHub follow-up when an earlier audit trail used the wr
   await babysitter.babysitPR(pr.id, "codex");
 
   const updated = await storage.getPR(pr.id);
+  const updatedItem = updated?.feedbackItems.find((item) => item.id === existingItem.id);
 
   assert.equal(applyCalled, false);
   assert.equal(updated?.status, "watching");
+  assert.equal(updatedItem?.status, "resolved");
   assert.deepEqual(postedFollowUps, [
     {
       id: "gh-review-comment-1",
