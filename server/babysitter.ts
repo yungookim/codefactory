@@ -31,7 +31,7 @@ import { preparePrWorktree, removePrWorktree } from "./repoWorkspace";
 
 const DEFAULT_GIT_USER_NAME = "PR Babysitter";
 const DEFAULT_GIT_USER_EMAIL = "pr-babysitter@local";
-const AUDIT_TOKEN_PATTERN = /\bcodefactory-feedback:[^\s<>()\[\]{}"']+/g;
+const AUDIT_TOKEN_PATTERN = /\bcodefactory-feedback:[^\s<>()[\]{}"']+/g;
 
 type GitHubService = {
   addReactionToComment: typeof addReactionToComment;
