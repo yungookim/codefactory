@@ -2,9 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { Config, FeedbackItem } from "@shared/schema";
 import {
+  GitHubIntegrationError,
   fetchFeedbackItemsForPR,
   postFollowUpForFeedbackItem,
+  postStatusReplyForFeedbackItem,
   resolveReviewThread,
+  updateStatusReply,
 } from "./github";
 
 const config: Config = {
@@ -412,4 +415,112 @@ test("postFollowUpForFeedbackItem routes review and general comments to PR comme
       body: "General follow-up",
     },
   ]);
+});
+
+test("postStatusReplyForFeedbackItem validates review-thread replies and updateStatusReply mutates the local ref", async () => {
+  const requests: Array<{ route: string; params: Record<string, unknown> }> = [];
+  const updatedReviewComments: Array<Record<string, unknown>> = [];
+
+  const octokit = {
+    request: async (route: string, params: Record<string, unknown>) => {
+      requests.push({ route, params });
+      return {
+        data: {
+          addPullRequestReviewThreadReply: {
+            comment: {
+              databaseId: 456,
+            },
+          },
+        },
+      };
+    },
+    pulls: {
+      updateReviewComment: async (params: Record<string, unknown>) => {
+        updatedReviewComments.push(params);
+        return {
+          data: {
+            ok: true,
+          },
+        };
+      },
+    },
+    issues: {
+      createComment: async () => {
+        throw new Error("unexpected issue comment");
+      },
+      updateComment: async () => {
+        throw new Error("unexpected issue comment update");
+      },
+    },
+  };
+
+  const ref = await postStatusReplyForFeedbackItem(
+    octokit as never,
+    { owner: "octo", repo: "example", number: 42 },
+    makeFeedbackItem(),
+    "Queued for processing",
+  );
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]?.route, "POST /graphql");
+  assert.match(String(requests[0]?.params.query || ""), /addPullRequestReviewThreadReply/);
+  assert.equal(requests[0]?.params.threadId, "THREAD_node_123");
+  assert.equal(requests[0]?.params.body, "Queued for processing");
+  assert.deepEqual(ref, {
+    commentDatabaseId: 456,
+    replyKind: "review_thread",
+    body: "Queued for processing",
+  });
+
+  if (!ref) {
+    throw new Error("expected a status reply reference");
+  }
+
+  await updateStatusReply(
+    octokit as never,
+    { owner: "octo", repo: "example", number: 42 },
+    ref,
+    "Queued for processing\nVerifying changes",
+  );
+
+  assert.deepEqual(updatedReviewComments, [
+    {
+      owner: "octo",
+      repo: "example",
+      comment_id: 456,
+      body: "Queued for processing\nVerifying changes",
+    },
+  ]);
+  assert.equal(ref.body, "Queued for processing\nVerifying changes");
+});
+
+test("postStatusReplyForFeedbackItem rejects malformed review-thread reply payloads", async () => {
+  const octokit = {
+    request: async () => ({
+      data: {
+        addPullRequestReviewThreadReply: {
+          comment: {
+            databaseId: "not-a-number",
+          },
+        },
+      },
+    }),
+  };
+
+  await assert.rejects(
+    () => postStatusReplyForFeedbackItem(
+      octokit as never,
+      { owner: "octo", repo: "example", number: 42 },
+      makeFeedbackItem(),
+      "Queued for processing",
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof GitHubIntegrationError);
+      assert.match(
+        error.message,
+        /GitHub returned an unexpected payload while creating a status reply for feedback item gh-review-comment-1 on octo\/example#42/,
+      );
+      return true;
+    },
+  );
 });
