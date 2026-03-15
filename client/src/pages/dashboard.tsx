@@ -33,6 +33,15 @@ function formatPollInterval(pollIntervalMs?: number): string {
   return `${seconds}s`;
 }
 
+function getRepoHref(repo: string): string {
+  const [owner, name] = repo.split("/");
+  if (!owner || !name) {
+    return `https://github.com/${repo}`;
+  }
+
+  return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
+}
+
 function StatusDot({ status }: { status: PR["status"] }) {
   const cls =
     status === "watching" ? "bg-foreground/30" :
@@ -436,6 +445,29 @@ export default function Dashboard() {
               >
                 Watch
               </button>
+            </div>
+            <div className="mt-3">
+              <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+                Tracked repositories
+              </div>
+              {repos.length === 0 ? (
+                <div className="text-[11px] text-muted-foreground">No repositories being watched yet.</div>
+              ) : (
+                <div className="space-y-1 text-[12px]">
+                  {repos.map((repo) => (
+                    <a
+                      key={repo}
+                      href={getRepoHref(repo)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      data-testid={`tracked-repo-${repo.replace("/", "-")}`}
+                      className="block break-all text-foreground/75 underline decoration-border underline-offset-2 transition-colors hover:text-foreground"
+                    >
+                      {repo}
+                    </a>
+                  ))}
+                </div>
+              )}
             </div>
           </form>
           <div className="flex-1 overflow-y-auto">
