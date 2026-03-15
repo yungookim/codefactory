@@ -22,6 +22,7 @@ import {
 } from "./github";
 import { getCodeFactoryPaths } from "./paths";
 import { preparePrWorktree, removePrWorktree } from "./repoWorkspace";
+import { applyEvaluationDecision, markInProgress, markResolved, markFailed } from "./feedbackLifecycle";
 
 const DEFAULT_GIT_USER_NAME = "PR Babysitter";
 const DEFAULT_GIT_USER_EMAIL = "pr-babysitter@local";
@@ -543,6 +544,8 @@ export class PRBabysitter {
       return result;
     };
 
+    let commentTasks: FeedbackItem[] = [];
+
     try {
       await this.storage.updatePR(prId, {
         status: "processing",
@@ -580,13 +583,12 @@ export class PRBabysitter {
       const pullSummary = await this.github.fetchPullSummary(octokit, parsedPr);
       const failingStatuses = await this.github.listFailingStatuses(octokit, parsedRepo, pullSummary.headSha);
 
-      const pendingComments = pr.feedbackItems.filter((item) => item.decision === null);
+      const pendingComments = pr.feedbackItems.filter((item) => item.status === "pending");
       await queueLog(pr.id, "info", `Evaluating ${pendingComments.length} pending feedback item(s)`, {
         phase: "evaluate.comments",
       });
 
-      const commentTasks: FeedbackItem[] = [];
-      const commentDecisions = new Map<string, { decision: "accept" | "reject" | "flag"; reason: string }>();
+      const evaluatedItems = new Map<string, FeedbackItem>();
 
       for (const item of pendingComments) {
         await queueLog(pr.id, "info", `Inspecting feedback from ${item.author}`, {
@@ -604,15 +606,15 @@ export class PRBabysitter {
           prompt: buildCommentEvaluationPrompt({ pr, item }),
         });
 
+        const updated = applyEvaluationDecision(item, evaluation.needsFix, evaluation.reason);
+        evaluatedItems.set(item.id, updated);
+
         if (evaluation.needsFix) {
-          commentTasks.push(item);
-          commentDecisions.set(item.id, { decision: "accept", reason: evaluation.reason });
           await queueLog(pr.id, "info", `Accepted feedback ${item.id}: ${evaluation.reason}`, {
             phase: "evaluate.comments",
             metadata: { feedbackId: item.id, decision: "accept" },
           });
         } else {
-          commentDecisions.set(item.id, { decision: "reject", reason: evaluation.reason });
           await queueLog(pr.id, "info", `Rejected feedback ${item.id}: ${evaluation.reason}`, {
             phase: "evaluate.comments",
             metadata: { feedbackId: item.id, decision: "reject" },
@@ -650,18 +652,8 @@ export class PRBabysitter {
         }
       }
 
-      if (commentDecisions.size > 0) {
-        const updatedItems = pr.feedbackItems.map((item) => {
-          const decision = commentDecisions.get(item.id);
-          if (!decision) return item;
-
-          return {
-            ...item,
-            decision: decision.decision,
-            decisionReason: decision.reason,
-            action: decision.decision === "accept" ? item.body : null,
-          };
-        });
+      if (evaluatedItems.size > 0) {
+        const updatedItems = pr.feedbackItems.map((item) => evaluatedItems.get(item.id) ?? item);
 
         const counters = countDecisions(updatedItems);
         const updatedPR = await this.storage.updatePR(pr.id, {
@@ -675,6 +667,11 @@ export class PRBabysitter {
           pr = updatedPR;
         }
       }
+
+      // Collect queued items (from both evaluation and manual queuing via routes).
+      commentTasks = pr.feedbackItems.filter(
+        (item) => item.status === "queued" && item.decision === "accept",
+      );
 
       if (commentTasks.length === 0 && statusTasks.length === 0) {
         await queueLog(pr.id, "info", `Babysitter checked PR #${pr.number}; no necessary fixes identified`, {
@@ -750,6 +747,21 @@ export class PRBabysitter {
               GH_TOKEN: githubToken,
             }
           : undefined;
+        // Mark comment tasks as in_progress before launching the agent.
+        if (commentTasks.length > 0) {
+          const inProgressItems = pr.feedbackItems.map((item) =>
+            commentTasks.find((t) => t.id === item.id) ? markInProgress(item) : item,
+          );
+          const inProgressCounters = countDecisions(inProgressItems);
+          const inProgressPR = await this.storage.updatePR(pr.id, {
+            feedbackItems: inProgressItems,
+            accepted: inProgressCounters.accepted,
+            rejected: inProgressCounters.rejected,
+            flagged: inProgressCounters.flagged,
+          });
+          if (inProgressPR) pr = inProgressPR;
+        }
+
         await queueLog(pr.id, "info", `Launching ${agent} in autonomous mode`, {
           phase: "agent",
           metadata: { githubAuth: Boolean(githubToken) },
@@ -886,6 +898,21 @@ export class PRBabysitter {
           },
         });
 
+        // Mark comment tasks as resolved after successful audit verification.
+        if (commentTasks.length > 0) {
+          const resolvedItems = pr.feedbackItems.map((item) =>
+            commentTasks.find((t) => t.id === item.id) ? markResolved(item) : item,
+          );
+          const resolvedCounters = countDecisions(resolvedItems);
+          const resolvedPR = await this.storage.updatePR(pr.id, {
+            feedbackItems: resolvedItems,
+            accepted: resolvedCounters.accepted,
+            rejected: resolvedCounters.rejected,
+            flagged: resolvedCounters.flagged,
+          });
+          if (resolvedPR) pr = resolvedPR;
+        }
+
         await this.storage.updatePR(pr.id, {
           status: "watching",
           lastChecked: new Date().toISOString(),
@@ -916,12 +943,28 @@ export class PRBabysitter {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const pr = await this.storage.getPR(prId);
-      if (pr) {
-        await queueLog(pr.id, "error", `Babysitter error: ${message}`, {
+      const currentPr = await this.storage.getPR(prId);
+      if (currentPr) {
+        await queueLog(currentPr.id, "error", `Babysitter error: ${message}`, {
           phase: "run",
         });
-        await this.storage.updatePR(pr.id, { status: "error", lastChecked: new Date().toISOString() });
+
+        if (commentTasks.length > 0) {
+          const failedItems = currentPr.feedbackItems.map((item) =>
+            commentTasks.find((t) => t.id === item.id) ? markFailed(item, message) : item,
+          );
+          const failedCounters = countDecisions(failedItems);
+          await this.storage.updatePR(currentPr.id, {
+            feedbackItems: failedItems,
+            accepted: failedCounters.accepted,
+            rejected: failedCounters.rejected,
+            flagged: failedCounters.flagged,
+            status: "error",
+            lastChecked: new Date().toISOString(),
+          });
+        } else {
+          await this.storage.updatePR(currentPr.id, { status: "error", lastChecked: new Date().toISOString() });
+        }
       }
       console.error("Babysitter failure", error);
     } finally {
