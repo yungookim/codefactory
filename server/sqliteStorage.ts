@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { mkdirSync } from "fs";
 import { DatabaseSync } from "node:sqlite";
+import { feedbackStatusEnum } from "@shared/schema";
 import type { Config, FeedbackItem, LogEntry, PR } from "@shared/schema";
 import type { IStorage } from "./storage";
 import { getCodeFactoryPaths } from "./paths";
@@ -57,6 +58,8 @@ type FeedbackItemRow = {
   decision: FeedbackItem["decision"];
   decision_reason: string | null;
   action: string | null;
+  status: string;
+  status_reason: string | null;
 };
 
 type LogRow = {
@@ -146,6 +149,8 @@ export class SqliteStorage implements IStorage {
         decision TEXT,
         decision_reason TEXT,
         action TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        status_reason TEXT,
         FOREIGN KEY(pr_id) REFERENCES prs(id) ON DELETE CASCADE
       );
 
@@ -172,6 +177,8 @@ export class SqliteStorage implements IStorage {
     this.ensureColumn("feedback_items", "thread_id", "TEXT");
     this.ensureColumn("feedback_items", "thread_resolved", "INTEGER");
     this.ensureColumn("feedback_items", "audit_token", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("feedback_items", "status", "TEXT NOT NULL DEFAULT 'pending'");
+    this.ensureColumn("feedback_items", "status_reason", "TEXT");
 
     const configExists = this.db.prepare("SELECT 1 AS present FROM config WHERE id = 1").get() as { present: number } | undefined;
     if (!configExists) {
@@ -283,7 +290,7 @@ export class SqliteStorage implements IStorage {
     const rows = this.db.prepare(`
       SELECT id, pr_id, author, body, body_html, reply_kind, source_id, source_node_id, source_url,
              thread_id, thread_resolved, audit_token, file, line, type, created_at, decision,
-             decision_reason, action
+             decision_reason, action, status, status_reason
       FROM feedback_items
       WHERE pr_id IN (${placeholders})
       ORDER BY created_at ASC
@@ -309,6 +316,8 @@ export class SqliteStorage implements IStorage {
         decision: row.decision,
         decisionReason: row.decision_reason,
         action: row.action,
+        status: feedbackStatusEnum.catch("pending").parse(row.status ?? "pending"),
+        statusReason: row.status_reason ?? null,
       };
 
       const items = itemsByPrId.get(row.pr_id) || [];
@@ -324,8 +333,9 @@ export class SqliteStorage implements IStorage {
     const insert = this.db.prepare(`
       INSERT INTO feedback_items (
         id, pr_id, author, body, body_html, reply_kind, source_id, source_node_id, source_url,
-        thread_id, thread_resolved, audit_token, file, line, type, created_at, decision, decision_reason, action
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        thread_id, thread_resolved, audit_token, file, line, type, created_at, decision, decision_reason, action,
+        status, status_reason
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     for (const item of items) {
@@ -349,6 +359,8 @@ export class SqliteStorage implements IStorage {
         item.decision,
         item.decisionReason,
         item.action,
+        item.status,
+        item.statusReason,
       );
     }
   }
