@@ -23,9 +23,17 @@ export function countActiveFeedbackStatuses(items: FeedbackItem[]): {
   inProgress: number;
   failed: number;
 } {
-  return {
-    queued: items.filter((i) => i.status === "queued").length,
-    inProgress: items.filter((i) => i.status === "in_progress").length,
-    failed: items.filter((i) => i.status === "failed").length,
-  };
+  return items.reduce(
+    (counts, item) => {
+      if (item.status === "queued") counts.queued += 1;
+      else if (item.status === "in_progress") counts.inProgress += 1;
+      else if (item.status === "failed") counts.failed += 1;
+      return counts;
+    },
+    {
+      queued: 0,
+      inProgress: 0,
+      failed: 0,
+    },
+  );
 }
