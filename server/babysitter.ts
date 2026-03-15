@@ -430,6 +430,19 @@ export class PRBabysitter {
         continue;
       }
 
+      const openNumbers = new Set(openPulls.map((p) => p.number));
+
+      // Archive tracked PRs that are no longer open on GitHub
+      const trackedForRepo = tracked.filter((pr) => pr.repo === repoSlug);
+      for (const pr of trackedForRepo) {
+        if (!openNumbers.has(pr.number) && pr.status !== "archived") {
+          await this.storage.updatePR(pr.id, { status: "archived" });
+          await this.storage.addLog(pr.id, "info", `PR #${pr.number} is no longer open on GitHub — archived`, {
+            phase: "watcher",
+          });
+        }
+      }
+
       for (const pull of openPulls) {
         let local = await this.storage.getPRByRepoAndNumber(repoSlug, pull.number);
         if (!local) {

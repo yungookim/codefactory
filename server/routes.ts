@@ -108,6 +108,11 @@ export async function registerRoutes(
     res.json(prs);
   });
 
+  app.get("/api/prs/archived", async (_req, res) => {
+    const prs = await storage.getArchivedPRs();
+    res.json(prs);
+  });
+
   app.get("/api/prs/:id", async (req, res) => {
     const pr = await storage.getPR(req.params.id);
     if (!pr) return res.status(404).json({ error: "PR not found" });
