@@ -481,7 +481,6 @@ test("babysitPR marks the run as error when app-owned GitHub follow-up fails", a
 
   const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "codefactory-home-"));
   process.env.CODEFACTORY_HOME = worktreeRoot;
-  let feedbackFetchCount = 0;
   const pullSummary = makePullSummary(pr);
   let applyCalled = false;
 
