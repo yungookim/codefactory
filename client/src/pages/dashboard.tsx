@@ -94,7 +94,7 @@ function PRRow({ pr, isSelected, onSelect }: { pr: PR; isSelected: boolean; onSe
             <a
               href={pr.url}
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               onClick={(event) => event.stopPropagation()}
               className="underline decoration-border underline-offset-2 transition-colors hover:text-foreground"
             >
