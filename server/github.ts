@@ -20,6 +20,8 @@ export type GitHubPullSummary = {
   branch: string;
   author: string;
   url: string;
+  repoFullName: string;
+  repoCloneUrl: string;
   headSha: string;
   headRef: string;
   headRepoFullName: string;
@@ -34,6 +36,53 @@ export type GitHubStatusFailure = {
 
 const GITHUB_API_VERSION = "2022-11-28";
 const GH_AUTH_CACHE_TTL_MS = 15000;
+const REVIEW_THREADS_QUERY = `
+  query CodeFactoryReviewThreads($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $number) {
+        reviewThreads(first: 100, after: $cursor) {
+          nodes {
+            id
+            isResolved
+            comments(first: 100) {
+              nodes {
+                databaseId
+              }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+            }
+          }
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+        }
+      }
+    }
+  }
+`;
+
+const REVIEW_THREAD_COMMENTS_QUERY = `
+  query CodeFactoryReviewThreadComments($threadId: ID!, $cursor: String) {
+    node(id: $threadId) {
+      ... on PullRequestReviewThread {
+        id
+        isResolved
+        comments(first: 100, after: $cursor) {
+          nodes {
+            databaseId
+          }
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+        }
+      }
+    }
+  }
+`;
 
 let cachedGhAuthToken: { token: string; expiresAt: number } | null = null;
 let ghAuthFailureCooldownUntil = 0;
@@ -92,7 +141,34 @@ export function formatRepoSlug(parsed: ParsedRepoSlug): string {
   return `${parsed.owner}/${parsed.repo}`;
 }
 
-async function resolveGitHubAuthToken(config: Config): Promise<string | undefined> {
+type ReviewThreadLookup = Map<number, {
+  threadId: string;
+  threadResolved: boolean;
+}>;
+
+type ReviewThreadCommentNode = {
+  databaseId?: number | null;
+};
+
+type ReviewThreadCommentsConnection = {
+  nodes?: ReviewThreadCommentNode[];
+  pageInfo?: {
+    hasNextPage?: boolean | null;
+    endCursor?: string | null;
+  };
+};
+
+type ReviewThreadNode = {
+  id?: string | null;
+  isResolved?: boolean | null;
+  comments?: ReviewThreadCommentsConnection;
+};
+
+export function buildFeedbackAuditToken(feedbackId: string): string {
+  return `codefactory-feedback:${feedbackId}`;
+}
+
+export async function resolveGitHubAuthToken(config: Config): Promise<string | undefined> {
   const envToken = process.env.GITHUB_TOKEN?.trim();
   if (envToken) {
     return envToken;
@@ -239,6 +315,8 @@ export async function fetchPullSummary(
     branch: pull.head?.ref || "unknown",
     author: pull.user?.login || "",
     url: pull.html_url || `https://github.com/${parsed.owner}/${parsed.repo}/pull/${pull.number}`,
+    repoFullName: pull.base?.repo?.full_name || `${parsed.owner}/${parsed.repo}`,
+    repoCloneUrl: pull.base?.repo?.clone_url || `https://github.com/${parsed.owner}/${parsed.repo}.git`,
     headSha: pull.head?.sha || "",
     headRef: pull.head?.ref || "",
     headRepoFullName: pull.head?.repo?.full_name || `${parsed.owner}/${parsed.repo}`,
@@ -262,6 +340,124 @@ function shouldIgnoreAuthor(
   return false;
 }
 
+async function fetchReviewThreadLookup(
+  octokit: Octokit,
+  parsed: ParsedPRUrl,
+): Promise<ReviewThreadLookup> {
+  const lookup: ReviewThreadLookup = new Map();
+  let cursor: string | null = null;
+
+  while (true) {
+    const response = await withGitHubErrorHandling("review threads", parsed, () =>
+      octokit.request("POST /graphql", {
+        query: REVIEW_THREADS_QUERY,
+        owner: parsed.owner,
+        repo: parsed.repo,
+        number: parsed.number,
+        cursor,
+      }),
+    );
+
+    const reviewThreads = (response.data as {
+      repository?: {
+        pullRequest?: {
+          reviewThreads?: {
+            nodes?: ReviewThreadNode[];
+            pageInfo?: {
+              hasNextPage?: boolean | null;
+              endCursor?: string | null;
+            };
+          };
+        };
+      };
+    }).repository?.pullRequest?.reviewThreads;
+
+    for (const thread of reviewThreads?.nodes || []) {
+      if (!thread?.id) {
+        continue;
+      }
+
+      addReviewThreadCommentsToLookup(lookup, thread.id, Boolean(thread.isResolved), thread.comments);
+      await appendPaginatedReviewThreadComments(octokit, parsed, lookup, thread);
+    }
+
+    const pageInfo = reviewThreads?.pageInfo;
+    if (!pageInfo?.hasNextPage || !pageInfo.endCursor) {
+      break;
+    }
+
+    cursor = pageInfo.endCursor;
+  }
+
+  return lookup;
+}
+
+function addReviewThreadCommentsToLookup(
+  lookup: ReviewThreadLookup,
+  threadId: string,
+  threadResolved: boolean,
+  comments?: ReviewThreadCommentsConnection,
+): void {
+  for (const comment of comments?.nodes || []) {
+    if (typeof comment?.databaseId !== "number") {
+      continue;
+    }
+
+    lookup.set(comment.databaseId, {
+      threadId,
+      threadResolved,
+    });
+  }
+}
+
+async function appendPaginatedReviewThreadComments(
+  octokit: Octokit,
+  parsed: ParsedPRUrl,
+  lookup: ReviewThreadLookup,
+  thread: ReviewThreadNode,
+): Promise<void> {
+  if (!thread.id) {
+    return;
+  }
+
+  let cursor = thread.comments?.pageInfo?.hasNextPage && thread.comments.pageInfo.endCursor
+    ? thread.comments.pageInfo.endCursor
+    : null;
+  let threadResolved = Boolean(thread.isResolved);
+
+  while (cursor) {
+    const response = await withGitHubErrorHandling("review thread comments", parsed, () =>
+      octokit.request("POST /graphql", {
+        query: REVIEW_THREAD_COMMENTS_QUERY,
+        threadId: thread.id,
+        cursor,
+      }),
+    );
+
+    const paginatedThread = (response.data as {
+      node?: ReviewThreadNode;
+    }).node;
+
+    if (!paginatedThread?.id) {
+      break;
+    }
+
+    if (typeof paginatedThread.isResolved === "boolean") {
+      threadResolved = paginatedThread.isResolved;
+    }
+
+    addReviewThreadCommentsToLookup(
+      lookup,
+      paginatedThread.id,
+      threadResolved,
+      paginatedThread.comments,
+    );
+
+    const pageInfo = paginatedThread.comments?.pageInfo;
+    cursor = pageInfo?.hasNextPage && pageInfo.endCursor ? pageInfo.endCursor : null;
+  }
+}
+
 export async function fetchFeedbackItemsForPR(
   octokit: Octokit,
   parsed: ParsedPRUrl,
@@ -269,7 +465,7 @@ export async function fetchFeedbackItemsForPR(
 ): Promise<FeedbackItem[]> {
   const ignoredBots = new Set(config.ignoredBots.map((login) => login.toLowerCase()));
 
-  const [reviewComments, reviews, issueComments] = await Promise.all([
+  const [reviewComments, reviews, issueComments, reviewThreads] = await Promise.all([
     withGitHubErrorHandling("review comments", parsed, () => octokit.paginate(octokit.pulls.listReviewComments, {
       owner: parsed.owner,
       repo: parsed.repo,
@@ -288,57 +484,92 @@ export async function fetchFeedbackItemsForPR(
       issue_number: parsed.number,
       per_page: 100,
     })),
+    fetchReviewThreadLookup(octokit, parsed),
   ]);
 
   const reviewCommentItems: FeedbackItem[] = reviewComments
     .filter((comment) => !shouldIgnoreAuthor(comment.user?.login, ignoredBots))
-    .map((comment) => ({
-      id: `gh-review-comment-${comment.id}`,
-      author: comment.user?.login || "unknown",
-      body: comment.body || "",
-      bodyHtml: renderGitHubMarkdown(comment.body || ""),
-      file: comment.path || null,
-      line: comment.line ?? comment.original_line ?? null,
-      type: "review_comment" as const,
-      createdAt: comment.created_at || new Date().toISOString(),
-      decision: null,
-      decisionReason: null,
-      action: null,
-    }))
+    .map((comment) => {
+      const id = `gh-review-comment-${comment.id}`;
+      const thread = reviewThreads.get(comment.id);
+
+      return {
+        id,
+        author: comment.user?.login || "unknown",
+        body: comment.body || "",
+        bodyHtml: renderGitHubMarkdown(comment.body || ""),
+        replyKind: "review_thread" as const,
+        sourceId: String(comment.id),
+        sourceNodeId: comment.node_id || null,
+        sourceUrl: comment.html_url || null,
+        threadId: thread?.threadId || null,
+        threadResolved: typeof thread?.threadResolved === "boolean" ? thread.threadResolved : null,
+        auditToken: buildFeedbackAuditToken(id),
+        file: comment.path || null,
+        line: comment.line ?? comment.original_line ?? null,
+        type: "review_comment" as const,
+        createdAt: comment.created_at || new Date().toISOString(),
+        decision: null,
+        decisionReason: null,
+        action: null,
+      };
+    })
     .filter((item) => item.body.trim().length > 0);
 
   const reviewItems: FeedbackItem[] = reviews
     .filter((review) => !shouldIgnoreAuthor(review.user?.login, ignoredBots))
-    .map((review) => ({
-      id: `gh-review-${review.id}`,
-      author: review.user?.login || "unknown",
-      body: review.body || "",
-      bodyHtml: renderGitHubMarkdown(review.body || ""),
-      file: null,
-      line: null,
-      type: "review" as const,
-      createdAt: review.submitted_at || new Date().toISOString(),
-      decision: null,
-      decisionReason: null,
-      action: null,
-    }))
+    .map((review) => {
+      const id = `gh-review-${review.id}`;
+
+      return {
+        id,
+        author: review.user?.login || "unknown",
+        body: review.body || "",
+        bodyHtml: renderGitHubMarkdown(review.body || ""),
+        replyKind: "review" as const,
+        sourceId: String(review.id),
+        sourceNodeId: review.node_id || null,
+        sourceUrl: review.html_url || null,
+        threadId: null,
+        threadResolved: null,
+        auditToken: buildFeedbackAuditToken(id),
+        file: null,
+        line: null,
+        type: "review" as const,
+        createdAt: review.submitted_at || new Date().toISOString(),
+        decision: null,
+        decisionReason: null,
+        action: null,
+      };
+    })
     .filter((item) => item.body.trim().length > 0);
 
   const issueCommentItems: FeedbackItem[] = issueComments
     .filter((comment) => !shouldIgnoreAuthor(comment.user?.login, ignoredBots))
-    .map((comment) => ({
-      id: `gh-issue-comment-${comment.id}`,
-      author: comment.user?.login || "unknown",
-      body: comment.body || "",
-      bodyHtml: renderGitHubMarkdown(comment.body || ""),
-      file: null,
-      line: null,
-      type: "general_comment" as const,
-      createdAt: comment.created_at || new Date().toISOString(),
-      decision: null,
-      decisionReason: null,
-      action: null,
-    }))
+    .map((comment) => {
+      const id = `gh-issue-comment-${comment.id}`;
+
+      return {
+        id,
+        author: comment.user?.login || "unknown",
+        body: comment.body || "",
+        bodyHtml: renderGitHubMarkdown(comment.body || ""),
+        replyKind: "general_comment" as const,
+        sourceId: String(comment.id),
+        sourceNodeId: comment.node_id || null,
+        sourceUrl: comment.html_url || null,
+        threadId: null,
+        threadResolved: null,
+        auditToken: buildFeedbackAuditToken(id),
+        file: null,
+        line: null,
+        type: "general_comment" as const,
+        createdAt: comment.created_at || new Date().toISOString(),
+        decision: null,
+        decisionReason: null,
+        action: null,
+      };
+    })
     .filter((item) => item.body.trim().length > 0);
 
   const combined = [...reviewCommentItems, ...reviewItems, ...issueCommentItems];
@@ -369,6 +600,8 @@ export async function listOpenPullsForRepo(
     branch: pull.head?.ref || "unknown",
     author: pull.user?.login || "",
     url: pull.html_url || `https://github.com/${repo.owner}/${repo.repo}/pull/${pull.number}`,
+    repoFullName: pull.base?.repo?.full_name || `${repo.owner}/${repo.repo}`,
+    repoCloneUrl: pull.base?.repo?.clone_url || `https://github.com/${repo.owner}/${repo.repo}.git`,
     headSha: pull.head?.sha || "",
     headRef: pull.head?.ref || "",
     headRepoFullName: pull.head?.repo?.full_name || `${repo.owner}/${repo.repo}`,

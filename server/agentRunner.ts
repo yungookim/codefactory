@@ -108,10 +108,11 @@ export async function applyFixesWithAgent(params: {
   agent: CodingAgent;
   cwd: string;
   prompt: string;
+  env?: NodeJS.ProcessEnv;
   onStdoutChunk?: (chunk: string) => void;
   onStderrChunk?: (chunk: string) => void;
 }): Promise<CommandResult> {
-  const { agent, cwd, prompt, onStdoutChunk, onStderrChunk } = params;
+  const { agent, cwd, prompt, env, onStdoutChunk, onStderrChunk } = params;
 
   if (agent === "codex") {
     const result = await runCommand(
@@ -124,7 +125,7 @@ export async function applyFixesWithAgent(params: {
         "workspace-write",
         prompt,
       ],
-      { cwd, timeoutMs: 900000, onStdoutChunk, onStderrChunk },
+      { cwd, env, timeoutMs: 900000, onStdoutChunk, onStderrChunk },
     );
 
     return result;
@@ -138,7 +139,7 @@ export async function applyFixesWithAgent(params: {
       "auto",
       prompt,
     ],
-    { cwd, timeoutMs: 900000, onStdoutChunk, onStderrChunk },
+    { cwd, env, timeoutMs: 900000, onStdoutChunk, onStderrChunk },
   );
 }
 
