@@ -1,0 +1,191 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --button-outline: rgba(0,0,0, .10);
+  --badge-outline: rgba(0,0,0, .05);
+  --opaque-button-border-intensity: -8;
+  --elevate-1: rgba(0,0,0, .03);
+  --elevate-2: rgba(0,0,0, .08);
+  --background: 0 0% 100%;
+  --foreground: 0 0% 5%;
+  --border: 0 0% 88%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 5%;
+  --card-border: 0 0% 90%;
+  --sidebar: 0 0% 97%;
+  --sidebar-foreground: 0 0% 5%;
+  --sidebar-border: 0 0% 90%;
+  --sidebar-primary: 0 0% 5%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 0 0% 93%;
+  --sidebar-accent-foreground: 0 0% 5%;
+  --sidebar-ring: 0 0% 5%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 5%;
+  --popover-border: 0 0% 88%;
+  --primary: 0 0% 5%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 94%;
+  --secondary-foreground: 0 0% 5%;
+  --muted: 0 0% 95%;
+  --muted-foreground: 0 0% 40%;
+  --accent: 0 0% 95%;
+  --accent-foreground: 0 0% 5%;
+  --destructive: 0 0% 30%;
+  --destructive-foreground: 0 0% 100%;
+  --input: 0 0% 80%;
+  --ring: 0 0% 5%;
+  --chart-1: 0 0% 15%;
+  --chart-2: 0 0% 30%;
+  --chart-3: 0 0% 45%;
+  --chart-4: 0 0% 60%;
+  --chart-5: 0 0% 75%;
+  --font-sans: 'JetBrains Mono', 'Geist Mono', 'SF Mono', Menlo, monospace;
+  --font-serif: Georgia, serif;
+  --font-mono: 'JetBrains Mono', 'Geist Mono', 'SF Mono', Menlo, monospace;
+  --radius: 0rem;
+  --shadow-2xs: none;
+  --shadow-xs: none;
+  --shadow-sm: none;
+  --shadow: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+  --shadow-xl: none;
+  --shadow-2xl: none;
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+
+  --sidebar-primary-border: hsl(var(--sidebar-primary));
+  --sidebar-accent-border: hsl(var(--sidebar-accent));
+  --primary-border: hsl(var(--primary));
+  --secondary-border: hsl(var(--secondary));
+  --muted-border: hsl(var(--muted));
+  --accent-border: hsl(var(--accent));
+  --destructive-border: hsl(var(--destructive));
+}
+
+.dark {
+  --button-outline: rgba(255,255,255, .10);
+  --badge-outline: rgba(255,255,255, .05);
+  --opaque-button-border-intensity: 9;
+  --elevate-1: rgba(255,255,255, .04);
+  --elevate-2: rgba(255,255,255, .09);
+  --background: 0 0% 4%;
+  --foreground: 0 0% 90%;
+  --border: 0 0% 15%;
+  --card: 0 0% 6%;
+  --card-foreground: 0 0% 90%;
+  --card-border: 0 0% 12%;
+  --sidebar: 0 0% 6%;
+  --sidebar-foreground: 0 0% 90%;
+  --sidebar-border: 0 0% 14%;
+  --sidebar-primary: 0 0% 90%;
+  --sidebar-primary-foreground: 0 0% 4%;
+  --sidebar-accent: 0 0% 12%;
+  --sidebar-accent-foreground: 0 0% 90%;
+  --sidebar-ring: 0 0% 90%;
+  --popover: 0 0% 8%;
+  --popover-foreground: 0 0% 90%;
+  --popover-border: 0 0% 16%;
+  --primary: 0 0% 90%;
+  --primary-foreground: 0 0% 4%;
+  --secondary: 0 0% 14%;
+  --secondary-foreground: 0 0% 90%;
+  --muted: 0 0% 12%;
+  --muted-foreground: 0 0% 55%;
+  --accent: 0 0% 14%;
+  --accent-foreground: 0 0% 90%;
+  --destructive: 0 0% 70%;
+  --destructive-foreground: 0 0% 4%;
+  --input: 0 0% 25%;
+  --ring: 0 0% 90%;
+
+  --sidebar-primary-border: hsl(var(--sidebar-primary));
+  --sidebar-accent-border: hsl(var(--sidebar-accent));
+  --primary-border: hsl(var(--primary));
+  --secondary-border: hsl(var(--secondary));
+  --muted-border: hsl(var(--muted));
+  --accent-border: hsl(var(--accent));
+  --destructive-border: hsl(var(--destructive));
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply font-mono antialiased bg-background text-foreground;
+    font-size: 13px;
+    line-height: 1.5;
+    letter-spacing: -0.01em;
+  }
+}
+
+@layer components {
+  .feedback-markdown {
+    color: hsl(var(--foreground) / 0.82);
+    word-break: break-word;
+  }
+
+  .feedback-markdown > * + * {
+    margin-top: 0.6rem;
+  }
+
+  .feedback-markdown ul,
+  .feedback-markdown ol {
+    padding-left: 1.25rem;
+  }
+
+  .feedback-markdown li + li {
+    margin-top: 0.2rem;
+  }
+
+  .feedback-markdown a {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+  }
+
+  .feedback-markdown blockquote {
+    border-left: 1px solid hsl(var(--border));
+    color: hsl(var(--muted-foreground));
+    padding-left: 0.75rem;
+  }
+
+  .feedback-markdown code {
+    background: hsl(var(--muted));
+    border: 1px solid hsl(var(--border));
+    padding: 0.05rem 0.3rem;
+    font-size: 11px;
+  }
+
+  .feedback-markdown pre {
+    overflow-x: auto;
+    background: hsl(var(--muted));
+    border: 1px solid hsl(var(--border));
+    padding: 0.75rem;
+  }
+
+  .feedback-markdown pre code {
+    background: transparent;
+    border: 0;
+    padding: 0;
+  }
+
+  .feedback-markdown table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+
+  .feedback-markdown th,
+  .feedback-markdown td {
+    border: 1px solid hsl(var(--border));
+    padding: 0.35rem 0.45rem;
+    text-align: left;
+    vertical-align: top;
+  }
+}

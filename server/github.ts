@@ -1,0 +1,399 @@
+import { Octokit } from "@octokit/rest";
+import type { Config, FeedbackItem } from "@shared/schema";
+import { runCommand } from "./agentRunner";
+import { renderGitHubMarkdown } from "./markdown";
+
+export type ParsedPRUrl = {
+  owner: string;
+  repo: string;
+  number: number;
+};
+
+export type ParsedRepoSlug = {
+  owner: string;
+  repo: string;
+};
+
+export type GitHubPullSummary = {
+  number: number;
+  title: string;
+  branch: string;
+  author: string;
+  url: string;
+  headSha: string;
+  headRef: string;
+  headRepoFullName: string;
+  headRepoCloneUrl: string;
+};
+
+export type GitHubStatusFailure = {
+  context: string;
+  description: string;
+  targetUrl: string | null;
+};
+
+const GITHUB_API_VERSION = "2022-11-28";
+const GH_AUTH_CACHE_TTL_MS = 15000;
+
+let cachedGhAuthToken: { token: string; expiresAt: number } | null = null;
+let ghAuthFailureCooldownUntil = 0;
+
+type GitHubErrorLike = Error & {
+  status?: number;
+  response?: {
+    headers?: Record<string, string>;
+  };
+};
+
+export class GitHubIntegrationError extends Error {
+  readonly statusCode: number;
+
+  constructor(message: string, statusCode = 502) {
+    super(message);
+    this.name = "GitHubIntegrationError";
+    this.statusCode = statusCode;
+  }
+}
+
+export function parsePRUrl(url: string): ParsedPRUrl | null {
+  const match = url
+    .trim()
+    .match(/https?:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:[/?#].*)?$/i);
+
+  if (!match) return null;
+
+  return {
+    owner: match[1],
+    repo: match[2],
+    number: Number.parseInt(match[3], 10),
+  };
+}
+
+export function parseRepoSlug(input: string): ParsedRepoSlug | null {
+  const trimmed = input.trim();
+  const githubMatch = trimmed.match(/https?:\/\/github\.com\/([^/]+)\/([^/]+)(?:[/?#].*)?$/i);
+  if (githubMatch) {
+    return {
+      owner: githubMatch[1],
+      repo: githubMatch[2],
+    };
+  }
+
+  const slugMatch = trimmed.match(/^([^/]+)\/([^/]+)$/);
+  if (!slugMatch) return null;
+
+  return {
+    owner: slugMatch[1],
+    repo: slugMatch[2],
+  };
+}
+
+export function formatRepoSlug(parsed: ParsedRepoSlug): string {
+  return `${parsed.owner}/${parsed.repo}`;
+}
+
+async function resolveGitHubAuthToken(config: Config): Promise<string | undefined> {
+  const envToken = process.env.GITHUB_TOKEN?.trim();
+  if (envToken) {
+    return envToken;
+  }
+
+  const configuredToken = config.githubToken?.trim();
+  if (configuredToken) {
+    return configuredToken;
+  }
+
+  const now = Date.now();
+  if (cachedGhAuthToken && cachedGhAuthToken.expiresAt > now) {
+    return cachedGhAuthToken.token;
+  }
+
+  if (ghAuthFailureCooldownUntil > now) {
+    return undefined;
+  }
+
+  const result = await runCommand("gh", ["auth", "token"], {
+    timeoutMs: 4000,
+  });
+
+  const token = result.stdout.trim();
+  if (result.code === 0 && token) {
+    cachedGhAuthToken = {
+      token,
+      expiresAt: now + GH_AUTH_CACHE_TTL_MS,
+    };
+    ghAuthFailureCooldownUntil = 0;
+    return token;
+  }
+
+  cachedGhAuthToken = null;
+  ghAuthFailureCooldownUntil = now + GH_AUTH_CACHE_TTL_MS;
+  return undefined;
+}
+
+function formatGitHubTarget(resource: ParsedPRUrl | ParsedRepoSlug): string {
+  if ("number" in resource) {
+    return `${resource.owner}/${resource.repo}#${resource.number}`;
+  }
+
+  return `${resource.owner}/${resource.repo}`;
+}
+
+function toGitHubIntegrationError(
+  error: unknown,
+  context: string,
+  resource: ParsedPRUrl | ParsedRepoSlug,
+): GitHubIntegrationError {
+  if (error instanceof GitHubIntegrationError) {
+    return error;
+  }
+
+  const target = formatGitHubTarget(resource);
+  const status = typeof (error as GitHubErrorLike | undefined)?.status === "number"
+    ? (error as GitHubErrorLike).status!
+    : 502;
+  const authHelp = "Run `gh auth login` on this machine or set `GITHUB_TOKEN` if the repository is private.";
+
+  if (status === 401) {
+    return new GitHubIntegrationError(
+      `GitHub authentication failed while loading ${context} for ${target}. ${authHelp}`,
+      status,
+    );
+  }
+
+  if (status === 403) {
+    const headers = (error as GitHubErrorLike | undefined)?.response?.headers;
+    const rateLimitRemaining = headers?.["x-ratelimit-remaining"];
+    const lowerMessage = error instanceof Error ? error.message.toLowerCase() : "";
+    const isRateLimited = rateLimitRemaining === "0" || lowerMessage.includes("rate limit");
+
+    if (isRateLimited) {
+      return new GitHubIntegrationError(
+        `GitHub rate limit reached while loading ${context} for ${target}. Authenticate with \`gh auth login\` or set \`GITHUB_TOKEN\` to raise the limit.`,
+        status,
+      );
+    }
+
+    return new GitHubIntegrationError(
+      `GitHub denied access while loading ${context} for ${target}. ${authHelp}`,
+      status,
+    );
+  }
+
+  if (status === 404) {
+    return new GitHubIntegrationError(
+      `GitHub could not access ${target} while loading ${context}. Confirm the repository and PR exist. ${authHelp}`,
+      status,
+    );
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return new GitHubIntegrationError(
+    `GitHub request failed while loading ${context} for ${target}: ${message}`,
+    status,
+  );
+}
+
+async function withGitHubErrorHandling<T>(
+  context: string,
+  resource: ParsedPRUrl | ParsedRepoSlug,
+  request: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await request();
+  } catch (error) {
+    throw toGitHubIntegrationError(error, context, resource);
+  }
+}
+
+export async function buildOctokit(config: Config): Promise<Octokit> {
+  const auth = await resolveGitHubAuthToken(config);
+
+  return new Octokit({
+    auth,
+    request: {
+      headers: {
+        "X-GitHub-Api-Version": GITHUB_API_VERSION,
+      },
+    },
+  });
+}
+
+export async function fetchPullSummary(
+  octokit: Octokit,
+  parsed: ParsedPRUrl,
+): Promise<GitHubPullSummary> {
+  const response = await withGitHubErrorHandling("PR metadata", parsed, () =>
+    octokit.pulls.get({
+      owner: parsed.owner,
+      repo: parsed.repo,
+      pull_number: parsed.number,
+    }),
+  );
+
+  const pull = response.data;
+
+  return {
+    number: pull.number,
+    title: pull.title || `PR #${pull.number}`,
+    branch: pull.head?.ref || "unknown",
+    author: pull.user?.login || "",
+    url: pull.html_url || `https://github.com/${parsed.owner}/${parsed.repo}/pull/${pull.number}`,
+    headSha: pull.head?.sha || "",
+    headRef: pull.head?.ref || "",
+    headRepoFullName: pull.head?.repo?.full_name || `${parsed.owner}/${parsed.repo}`,
+    headRepoCloneUrl: pull.head?.repo?.clone_url || `https://github.com/${parsed.owner}/${parsed.repo}.git`,
+  };
+}
+
+function shouldIgnoreAuthor(
+  authorLogin: string | null | undefined,
+  ignoredBots: Set<string>,
+): boolean {
+  if (!authorLogin) {
+    return true;
+  }
+
+  const lowered = authorLogin.toLowerCase();
+  if (ignoredBots.has(lowered)) {
+    return true;
+  }
+
+  return false;
+}
+
+export async function fetchFeedbackItemsForPR(
+  octokit: Octokit,
+  parsed: ParsedPRUrl,
+  config: Config,
+): Promise<FeedbackItem[]> {
+  const ignoredBots = new Set(config.ignoredBots.map((login) => login.toLowerCase()));
+
+  const [reviewComments, reviews, issueComments] = await Promise.all([
+    withGitHubErrorHandling("review comments", parsed, () => octokit.paginate(octokit.pulls.listReviewComments, {
+      owner: parsed.owner,
+      repo: parsed.repo,
+      pull_number: parsed.number,
+      per_page: 100,
+    })),
+    withGitHubErrorHandling("reviews", parsed, () => octokit.paginate(octokit.pulls.listReviews, {
+      owner: parsed.owner,
+      repo: parsed.repo,
+      pull_number: parsed.number,
+      per_page: 100,
+    })),
+    withGitHubErrorHandling("issue comments", parsed, () => octokit.paginate(octokit.issues.listComments, {
+      owner: parsed.owner,
+      repo: parsed.repo,
+      issue_number: parsed.number,
+      per_page: 100,
+    })),
+  ]);
+
+  const reviewCommentItems: FeedbackItem[] = reviewComments
+    .filter((comment) => !shouldIgnoreAuthor(comment.user?.login, ignoredBots))
+    .map((comment) => ({
+      id: `gh-review-comment-${comment.id}`,
+      author: comment.user?.login || "unknown",
+      body: comment.body || "",
+      bodyHtml: renderGitHubMarkdown(comment.body || ""),
+      file: comment.path || null,
+      line: comment.line ?? comment.original_line ?? null,
+      type: "review_comment" as const,
+      createdAt: comment.created_at || new Date().toISOString(),
+      decision: null,
+      decisionReason: null,
+      action: null,
+    }))
+    .filter((item) => item.body.trim().length > 0);
+
+  const reviewItems: FeedbackItem[] = reviews
+    .filter((review) => !shouldIgnoreAuthor(review.user?.login, ignoredBots))
+    .map((review) => ({
+      id: `gh-review-${review.id}`,
+      author: review.user?.login || "unknown",
+      body: review.body || "",
+      bodyHtml: renderGitHubMarkdown(review.body || ""),
+      file: null,
+      line: null,
+      type: "review" as const,
+      createdAt: review.submitted_at || new Date().toISOString(),
+      decision: null,
+      decisionReason: null,
+      action: null,
+    }))
+    .filter((item) => item.body.trim().length > 0);
+
+  const issueCommentItems: FeedbackItem[] = issueComments
+    .filter((comment) => !shouldIgnoreAuthor(comment.user?.login, ignoredBots))
+    .map((comment) => ({
+      id: `gh-issue-comment-${comment.id}`,
+      author: comment.user?.login || "unknown",
+      body: comment.body || "",
+      bodyHtml: renderGitHubMarkdown(comment.body || ""),
+      file: null,
+      line: null,
+      type: "general_comment" as const,
+      createdAt: comment.created_at || new Date().toISOString(),
+      decision: null,
+      decisionReason: null,
+      action: null,
+    }))
+    .filter((item) => item.body.trim().length > 0);
+
+  const combined = [...reviewCommentItems, ...reviewItems, ...issueCommentItems];
+
+  combined.sort((a, b) => {
+    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  });
+
+  return combined;
+}
+
+export async function listOpenPullsForRepo(
+  octokit: Octokit,
+  repo: ParsedRepoSlug,
+): Promise<GitHubPullSummary[]> {
+  const pulls = await withGitHubErrorHandling("open pull requests", repo, () => octokit.paginate(octokit.pulls.list, {
+    owner: repo.owner,
+    repo: repo.repo,
+    state: "open",
+    sort: "updated",
+    direction: "desc",
+    per_page: 100,
+  }));
+
+  return pulls.map((pull) => ({
+    number: pull.number,
+    title: pull.title || `PR #${pull.number}`,
+    branch: pull.head?.ref || "unknown",
+    author: pull.user?.login || "",
+    url: pull.html_url || `https://github.com/${repo.owner}/${repo.repo}/pull/${pull.number}`,
+    headSha: pull.head?.sha || "",
+    headRef: pull.head?.ref || "",
+    headRepoFullName: pull.head?.repo?.full_name || `${repo.owner}/${repo.repo}`,
+    headRepoCloneUrl: pull.head?.repo?.clone_url || `https://github.com/${repo.owner}/${repo.repo}.git`,
+  }));
+}
+
+export async function listFailingStatuses(
+  octokit: Octokit,
+  repo: ParsedRepoSlug,
+  headSha: string,
+): Promise<GitHubStatusFailure[]> {
+  if (!headSha) return [];
+
+  const response = await withGitHubErrorHandling("commit statuses", repo, () => octokit.repos.getCombinedStatusForRef({
+    owner: repo.owner,
+    repo: repo.repo,
+    ref: headSha,
+  }));
+
+  return response.data.statuses
+    .filter((status) => status.state === "failure" || status.state === "error")
+    .map((status) => ({
+      context: status.context || "status-check",
+      description: status.description || "Failed status check",
+      targetUrl: status.target_url || null,
+    }));
+}
