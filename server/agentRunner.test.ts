@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -22,12 +22,20 @@ test("runCommand reports a timeout even when the child exits 0 after SIGTERM", a
 
 test("evaluateFixNecessityWithAgent throws a clear error when codex writes no output file", async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "fake-codex-bin-"));
-  const fakeCodexPath = path.join(tempRoot, "codex");
+  const fakeCodexPath = path.join(
+    tempRoot,
+    process.platform === "win32" ? "codex.exe" : "codex",
+  );
+  const exitHookPath = path.join(tempRoot, "exit-immediately.cjs");
   const originalPath = process.env.PATH;
+  const originalNodeOptions = process.env.NODE_OPTIONS;
 
   try {
-    await writeFile(fakeCodexPath, "#!/bin/sh\nexit 0\n", "utf8");
-    await chmod(fakeCodexPath, 0o755);
+    await copyFile(process.execPath, fakeCodexPath);
+    await writeFile(exitHookPath, "process.exit(0);\n", "utf8");
+    process.env.NODE_OPTIONS = [`--require=${exitHookPath}`, originalNodeOptions]
+      .filter(Boolean)
+      .join(" ");
     process.env.PATH = [tempRoot, originalPath].filter(Boolean).join(path.delimiter);
 
     await assert.rejects(
@@ -40,6 +48,11 @@ test("evaluateFixNecessityWithAgent throws a clear error when codex writes no ou
       /without writing expected output file/,
     );
   } finally {
+    if (originalNodeOptions === undefined) {
+      delete process.env.NODE_OPTIONS;
+    } else {
+      process.env.NODE_OPTIONS = originalNodeOptions;
+    }
     process.env.PATH = originalPath;
     await rm(tempRoot, { recursive: true, force: true });
   }
