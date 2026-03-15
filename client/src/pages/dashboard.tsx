@@ -359,7 +359,7 @@ export default function Dashboard() {
       queryClient.invalidateQueries({ queryKey: ["/api/repos"] });
     },
     onError: (error) => {
-      showMutationError("Could not fetch PRs", error);
+      showMutationError("Could not sync repositories", error);
     },
   });
 
