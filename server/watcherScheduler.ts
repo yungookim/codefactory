@@ -8,30 +8,32 @@ export function createWatcherScheduler(
   task: () => Promise<void>,
   onError: WatcherErrorHandler,
 ): WatcherScheduler {
-  let running = false;
+  let activeRun: Promise<void> | null = null;
   let rerunRequested = false;
 
-  const run = async (): Promise<void> => {
-    if (running) {
+  const run = (): Promise<void> => {
+    if (activeRun) {
       rerunRequested = true;
-      return;
+      return activeRun;
     }
 
-    running = true;
+    activeRun = (async () => {
+      try {
+        do {
+          rerunRequested = false;
 
-    try {
-      do {
-        rerunRequested = false;
+          try {
+            await task();
+          } catch (error) {
+            onError(error);
+          }
+        } while (rerunRequested);
+      } finally {
+        activeRun = null;
+      }
+    })();
 
-        try {
-          await task();
-        } catch (error) {
-          onError(error);
-        }
-      } while (rerunRequested);
-    } finally {
-      running = false;
-    }
+    return activeRun;
   };
 
   return { run };
