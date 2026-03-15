@@ -26,6 +26,10 @@ function formatStatusLabel(status: PR["status"]): string {
     return "attention needed";
   }
 
+  if (status === "archived") {
+    return "archived";
+  }
+
   return "watching";
 }
 
@@ -39,6 +43,7 @@ function StatusDot({ status }: { status: PR["status"] }) {
     status === "watching" ? "bg-foreground/30" :
     status === "processing" ? "bg-foreground animate-pulse" :
     status === "done" ? "bg-foreground" :
+    status === "archived" ? "bg-foreground/15" :
     "bg-destructive";
   return <span className={`inline-block h-1.5 w-1.5 shrink-0 ${cls}`} />;
 }
@@ -116,9 +121,11 @@ function PRRow({ pr, isSelected, onSelect }: { pr: PR; isSelected: boolean; onSe
 function FeedbackRow({
   item,
   prId,
+  readOnly,
 }: {
   item: FeedbackItem;
   prId: string;
+  readOnly?: boolean;
 }) {
   const overrideMutation = useMutation({
     mutationFn: async (decision: string) => {
@@ -162,20 +169,22 @@ function FeedbackRow({
             <p className="mt-2 text-[11px] text-muted-foreground">{item.decisionReason}</p>
           )}
         </div>
-        <div className="flex shrink-0 gap-1">
-          {["accept", "reject", "flag"].map((decision) => (
-            <button
-              key={decision}
-              onClick={() => overrideMutation.mutate(decision)}
-              data-testid={`override-${decision}-${item.id}`}
-              className={`px-1.5 py-0.5 text-[10px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background ${
-                item.decision === decision ? "bg-foreground text-background" : "border border-border text-muted-foreground"
-              }`}
-            >
-              {decision.charAt(0)}
-            </button>
-          ))}
-        </div>
+        {!readOnly && (
+          <div className="flex shrink-0 gap-1">
+            {["accept", "reject", "flag"].map((decision) => (
+              <button
+                key={decision}
+                onClick={() => overrideMutation.mutate(decision)}
+                data-testid={`override-${decision}-${item.id}`}
+                className={`px-1.5 py-0.5 text-[10px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background ${
+                  item.decision === decision ? "bg-foreground text-background" : "border border-border text-muted-foreground"
+                }`}
+              >
+                {decision.charAt(0)}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -276,10 +285,16 @@ export default function Dashboard() {
   const [selectedPRId, setSelectedPRId] = useState<string | null>(null);
   const [addUrl, setAddUrl] = useState("");
   const [addRepo, setAddRepo] = useState("");
+  const [viewMode, setViewMode] = useState<"active" | "archived">("active");
 
   const { data: prs = [], isLoading } = useQuery<PR[]>({
     queryKey: ["/api/prs"],
     refetchInterval: 3000,
+  });
+
+  const { data: archivedPRs = [], isLoading: isLoadingArchived } = useQuery<PR[]>({
+    queryKey: ["/api/prs/archived"],
+    refetchInterval: 10000,
   });
 
   const { data: config } = useQuery<Config>({
@@ -292,20 +307,23 @@ export default function Dashboard() {
     refetchInterval: 5000,
   });
 
+  const displayedPRs = viewMode === "active" ? prs : archivedPRs;
+  const isArchived = viewMode === "archived";
+
   useEffect(() => {
-    if (prs.length === 0) {
+    if (displayedPRs.length === 0) {
       if (selectedPRId !== null) {
         setSelectedPRId(null);
       }
       return;
     }
 
-    if (!selectedPRId || !prs.some((pr) => pr.id === selectedPRId)) {
-      setSelectedPRId(prs[0].id);
+    if (!selectedPRId || !displayedPRs.some((pr) => pr.id === selectedPRId)) {
+      setSelectedPRId(displayedPRs[0].id);
     }
-  }, [prs, selectedPRId]);
+  }, [displayedPRs, selectedPRId]);
 
-  const selectedPR = prs.find((pr) => pr.id === selectedPRId) ?? null;
+  const selectedPR = displayedPRs.find((pr) => pr.id === selectedPRId) ?? null;
 
   const addMutation = useMutation({
     mutationFn: async (url: string) => {
@@ -418,104 +436,134 @@ export default function Dashboard() {
 
       <div className="flex flex-1 overflow-hidden">
         <div className="flex w-80 shrink-0 flex-col border-r border-border">
-          <div className="border-b border-border px-3 py-2 text-[11px] text-muted-foreground">
-            Add a PR or watch a repo. Sync and babysit start automatically.
+          <div className="flex border-b border-border">
+            <button
+              onClick={() => setViewMode("active")}
+              data-testid="tab-active"
+              className={`flex-1 px-3 py-2 text-[11px] uppercase tracking-wider transition-colors ${
+                viewMode === "active"
+                  ? "bg-muted text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Active ({prs.length})
+            </button>
+            <button
+              onClick={() => setViewMode("archived")}
+              data-testid="tab-archived"
+              className={`flex-1 px-3 py-2 text-[11px] uppercase tracking-wider transition-colors ${
+                viewMode === "archived"
+                  ? "bg-muted text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Archived ({archivedPRs.length})
+            </button>
           </div>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (addUrl.trim()) addMutation.mutate(addUrl.trim());
-            }}
-            className="border-b border-border p-3"
-          >
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={addUrl}
-                onChange={(e) => setAddUrl(e.target.value)}
-                placeholder="github.com/owner/repo/pull/123"
-                data-testid="input-add-pr"
-                className="flex-1 border border-border bg-transparent px-2 py-1 text-[12px] placeholder:text-muted-foreground/50 focus:border-foreground focus:outline-none"
-              />
-              <button
-                type="submit"
-                disabled={addMutation.isPending || !addUrl.trim()}
-                data-testid="button-add-pr"
-                className="border border-border px-2 py-1 text-[11px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background disabled:opacity-30"
-              >
-                Add
-              </button>
-            </div>
-          </form>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (addRepo.trim()) addRepoMutation.mutate(addRepo.trim());
-            }}
-            className="border-b border-border p-3"
-          >
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={addRepo}
-                onChange={(e) => setAddRepo(e.target.value)}
-                placeholder="owner/repo"
-                data-testid="input-add-repo"
-                className="flex-1 border border-border bg-transparent px-2 py-1 text-[12px] placeholder:text-muted-foreground/50 focus:border-foreground focus:outline-none"
-              />
-              <button
-                type="submit"
-                disabled={addRepoMutation.isPending || !addRepo.trim()}
-                data-testid="button-add-repo"
-                className="border border-border px-2 py-1 text-[11px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background disabled:opacity-30"
-              >
-                Watch
-              </button>
-            </div>
-            <div className="mt-3">
-              <div className="mb-1 flex items-center justify-between">
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                  Tracked repositories
-                </span>
-                <button
-                  type="button"
-                  onClick={() => syncReposMutation.mutate()}
-                  disabled={syncReposMutation.isPending}
-                  data-testid="button-sync-repos"
-                  className="border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background disabled:opacity-30"
-                >
-                  {syncReposMutation.isPending ? "Fetching…" : "Fetch"}
-                </button>
+          {!isArchived && (
+            <>
+              <div className="border-b border-border px-3 py-2 text-[11px] text-muted-foreground">
+                Add a PR or watch a repo. Sync and babysit start automatically.
               </div>
-              {repos.length === 0 ? (
-                <div className="text-[11px] text-muted-foreground">No repositories being watched yet.</div>
-              ) : (
-                <div className="space-y-1 text-[12px]">
-                  {repos.map((repo) => (
-                    <a
-                      key={repo}
-                      href={getRepoHref(repo)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      data-testid={`tracked-repo-${repo.replace("/", "-")}`}
-                      className="block break-all text-foreground/75 underline decoration-border underline-offset-2 transition-colors hover:text-foreground"
-                    >
-                      {repo}
-                    </a>
-                  ))}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (addUrl.trim()) addMutation.mutate(addUrl.trim());
+                }}
+                className="border-b border-border p-3"
+              >
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={addUrl}
+                    onChange={(e) => setAddUrl(e.target.value)}
+                    placeholder="github.com/owner/repo/pull/123"
+                    data-testid="input-add-pr"
+                    className="flex-1 border border-border bg-transparent px-2 py-1 text-[12px] placeholder:text-muted-foreground/50 focus:border-foreground focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    disabled={addMutation.isPending || !addUrl.trim()}
+                    data-testid="button-add-pr"
+                    className="border border-border px-2 py-1 text-[11px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background disabled:opacity-30"
+                  >
+                    Add
+                  </button>
                 </div>
-              )}
-            </div>
-          </form>
+              </form>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (addRepo.trim()) addRepoMutation.mutate(addRepo.trim());
+                }}
+                className="border-b border-border p-3"
+              >
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={addRepo}
+                    onChange={(e) => setAddRepo(e.target.value)}
+                    placeholder="owner/repo"
+                    data-testid="input-add-repo"
+                    className="flex-1 border border-border bg-transparent px-2 py-1 text-[12px] placeholder:text-muted-foreground/50 focus:border-foreground focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    disabled={addRepoMutation.isPending || !addRepo.trim()}
+                    data-testid="button-add-repo"
+                    className="border border-border px-2 py-1 text-[11px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background disabled:opacity-30"
+                  >
+                    Watch
+                  </button>
+                </div>
+                <div className="mt-3">
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                      Tracked repositories
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => syncReposMutation.mutate()}
+                      disabled={syncReposMutation.isPending}
+                      data-testid="button-sync-repos"
+                      className="border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background disabled:opacity-30"
+                    >
+                      {syncReposMutation.isPending ? "Fetching…" : "Fetch"}
+                    </button>
+                  </div>
+                  {repos.length === 0 ? (
+                    <div className="text-[11px] text-muted-foreground">No repositories being watched yet.</div>
+                  ) : (
+                    <div className="space-y-1 text-[12px]">
+                      {repos.map((repo) => (
+                        <a
+                          key={repo}
+                          href={getRepoHref(repo)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          data-testid={`tracked-repo-${repo.replace("/", "-")}`}
+                          className="block break-all text-foreground/75 underline decoration-border underline-offset-2 transition-colors hover:text-foreground"
+                        >
+                          {repo}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </form>
+            </>
+          )}
           <div className="flex-1 overflow-y-auto">
-            {isLoading ? (
+            {(isArchived ? isLoadingArchived : isLoading) ? (
               <div className="p-4 text-[12px] text-muted-foreground">Loading...</div>
-            ) : prs.length === 0 ? (
+            ) : displayedPRs.length === 0 ? (
               <div className="p-4 text-[12px] text-muted-foreground">
-                No PRs tracked yet. Add a repository to watch or add a PR URL.
+                {isArchived
+                  ? "No archived PRs. Closed PRs are archived automatically."
+                  : "No PRs tracked yet. Add a repository to watch or add a PR URL."}
               </div>
             ) : (
-              prs.map((pr) => (
+              displayedPRs.map((pr) => (
                 <PRRow
                   key={pr.id}
                   pr={pr}
@@ -555,14 +603,16 @@ export default function Dashboard() {
                       {selectedPR.lastChecked && <span>checked {formatClock(selectedPR.lastChecked)}</span>}
                     </div>
                   </div>
-                  <button
-                    onClick={() => applyMutation.mutate(selectedPR.id)}
-                    disabled={applyMutation.isPending || selectedPR.status === "processing"}
-                    data-testid="button-apply"
-                    className="border border-border px-2 py-0.5 text-[10px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background disabled:opacity-30"
-                  >
-                    {selectedPR.status === "processing" ? "Running" : "Run now"}
-                  </button>
+                  {!isArchived && (
+                    <button
+                      onClick={() => applyMutation.mutate(selectedPR.id)}
+                      disabled={applyMutation.isPending || selectedPR.status === "processing"}
+                      data-testid="button-apply"
+                      className="border border-border px-2 py-0.5 text-[10px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background disabled:opacity-30"
+                    >
+                      {selectedPR.status === "processing" ? "Running" : "Run now"}
+                    </button>
+                  )}
                 </div>
                 <div className="text-[11px] text-muted-foreground">
                   Background watcher syncs GitHub feedback and pushes approved fixes automatically.
@@ -576,7 +626,7 @@ export default function Dashboard() {
                   </div>
                 ) : (
                   selectedPR.feedbackItems.map((item) => (
-                    <FeedbackRow key={item.id} item={item} prId={selectedPR.id} />
+                    <FeedbackRow key={item.id} item={item} prId={selectedPR.id} readOnly={isArchived} />
                   ))
                 )}
               </div>
