@@ -639,9 +639,14 @@ export default function Dashboard() {
                       <StatusDot status={selectedPR.status} />
                       <span className="truncate font-medium">{selectedPR.title}</span>
                       <AgentIndicator pr={selectedPR} />
-                      <span className="shrink-0 text-[11px] text-muted-foreground">
+                      <a
+                        href={selectedPR.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="shrink-0 text-[11px] text-muted-foreground underline decoration-border underline-offset-2 transition-colors hover:text-foreground"
+                      >
                         {selectedPR.repo}#{selectedPR.number}
-                      </span>
+                      </a>
                     </div>
                     <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
                       <span>status: {formatStatusLabel(selectedPR.status)}</span>
