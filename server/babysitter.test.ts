@@ -1546,7 +1546,7 @@ test("resumeInterruptedRuns skips prompt replay when the PR head already moved",
   delete process.env.CODEFACTORY_HOME;
 });
 
-test("babysitPR resolves lingering review threads without reposting an existing audit trail", async () => {
+test("babysitPR resolves lingering review threads and posts a reply so the reviewer knows", async () => {
   const storage = new MemStorage();
   const existingItem = makeFeedbackItem({
     decision: "accept",
@@ -1650,7 +1650,9 @@ test("babysitPR resolves lingering review threads without reposting an existing 
   assert.equal(applyCalled, false);
   assert.equal(updated?.status, "watching");
   assert.equal(updatedItem?.status, "resolved");
-  assert.deepEqual(postedFollowUps, []);
+  assert.equal(postedFollowUps.length, 1);
+  assert.equal(postedFollowUps[0].id, existingItem.id);
+  assert.ok(postedFollowUps[0].body.includes(existingItem.auditToken));
   assert.deepEqual(resolvedThreads, ["PRRT_kwDO_example"]);
 });
 

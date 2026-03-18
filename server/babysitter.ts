@@ -1685,6 +1685,21 @@ export class PRBabysitter {
 
           const body = buildFeedbackFollowUpBody(headShaForFollowUp, item.auditToken, agentSummaries.get(item.auditToken));
           await this.github.postFollowUpForFeedbackItem(octokit, parsedPr, item, body);
+        } else if (shouldResolveThread) {
+          // Audit trail comment exists from a previous run but the thread was
+          // not resolved.  Always leave a visible reply in the thread before
+          // resolving so the reviewer knows the comment was addressed without
+          // having to guess.
+          await queueLog(pr.id, "info", `Posting thread-addressed reply for ${item.id}`, {
+            phase: "github.followup",
+            metadata: {
+              feedbackId: item.id,
+              replyKind: item.replyKind,
+            },
+          });
+
+          const body = buildFeedbackFollowUpBody(headShaForFollowUp, item.auditToken, agentSummaries.get(item.auditToken));
+          await this.github.postFollowUpForFeedbackItem(octokit, parsedPr, item, body);
         }
 
         if (shouldResolveThread) {
@@ -1700,7 +1715,7 @@ export class PRBabysitter {
           metadata: {
             feedbackId: item.id,
             replyKind: item.replyKind,
-            posted: shouldPostFollowUp,
+            posted: shouldPostFollowUp || shouldResolveThread,
             resolved: shouldResolveThread,
           },
         });
