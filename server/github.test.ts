@@ -360,7 +360,7 @@ test("postFollowUpForFeedbackItem replies to review threads and resolveReviewThr
   assert.equal(requests.length, 2);
   assert.equal(requests[0]?.route, "POST /graphql");
   assert.match(String(requests[0]?.params.query || ""), /addPullRequestReviewThreadReply/);
-  const vars0 = requests[0]?.params.variables as Record<string, unknown> | undefined;
+  const vars0 = requests[0]?.params.variables as { threadId?: string; body?: string } | undefined;
   assert.equal(vars0?.threadId, "THREAD_node_123");
   assert.equal(
     vars0?.body,
@@ -368,7 +368,7 @@ test("postFollowUpForFeedbackItem replies to review threads and resolveReviewThr
   );
   assert.equal(requests[1]?.route, "POST /graphql");
   assert.match(String(requests[1]?.params.query || ""), /resolveReviewThread/);
-  const vars1 = requests[1]?.params.variables as Record<string, unknown> | undefined;
+  const vars1 = requests[1]?.params.variables as { threadId?: string } | undefined;
   assert.equal(vars1?.threadId, "THREAD_node_123");
 });
 
@@ -479,7 +479,7 @@ test("postStatusReplyForFeedbackItem validates review-thread replies and updateS
   assert.equal(requests.length, 1);
   assert.equal(requests[0]?.route, "POST /graphql");
   assert.match(String(requests[0]?.params.query || ""), /addPullRequestReviewThreadReply/);
-  const statusVars = requests[0]?.params.variables as Record<string, unknown> | undefined;
+  const statusVars = requests[0]?.params.variables as { threadId?: string; body?: string } | undefined;
   assert.equal(statusVars?.threadId, "THREAD_node_123");
   assert.equal(statusVars?.body, "Queued for processing");
   assert.deepEqual(ref, {
