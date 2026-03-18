@@ -13,7 +13,8 @@
 
 ---
 
-<img width="1944" height="692" alt="SCR-20260318-qsnq-2" src="https://github.com/user-attachments/assets/b0ac55cd-a5e0-40c8-aae3-f65f59284b08" />
+<img width="1365" height="686" alt="SCR-20260318-qsva-2" src="https://github.com/user-attachments/assets/66dfa082-c732-4989-8b05-f19aa550acb5" />
+
 
 ## Why Code Factory?
 
