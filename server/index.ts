@@ -76,8 +76,8 @@ export function log(message: string, source = "express") {
     () => {
       log(`serving on port ${port}`);
 
-      // Auto-open browser when running locally in development
-      if (process.env.NODE_ENV !== "production") {
+      // Auto-open browser when running locally in development (skip when Tauri manages the window)
+      if (process.env.NODE_ENV !== "production" && !process.env.TAURI_DEV) {
         const url = `http://localhost:${port}`;
         open(url).catch((err) => {
           log(`Could not open browser automatically: ${err.message}`);

@@ -175,13 +175,24 @@ Two viable approaches:
 
 ---
 
-## Next Steps
+## Implementation Status
 
-1. **Scaffold a Tauri v2 project** alongside the existing codebase
-2. **Start with Option A (sidecar)**: wrap the existing Express server as a Tauri sidecar
-3. **Add `tauri-plugin-single-instance`** for single-instance enforcement
-4. **Add system tray** support for background operation
-5. **Incrementally migrate** Express routes to Tauri commands if desired
+- [x] **Scaffold a Tauri v2 project** alongside the existing codebase (`src-tauri/`)
+- [x] **Option A (sidecar)**: Express server runs as a child process; Tauri webview connects to `localhost:{port}`
+- [x] **`tauri-plugin-single-instance`**: Enabled — second instance focuses the existing window
+- [x] **Browser mode preserved**: `npm run dev` / `npm start` still works without Tauri
+- [ ] **Add system tray** support for background operation
+- [ ] **Add `tauri-plugin-updater`** for auto-updates
+- [ ] **Incrementally migrate** Express routes to Tauri commands if desired
+
+### Running
+
+| Mode | Command | Description |
+|------|---------|-------------|
+| Browser (dev) | `npm run dev` | Express + Vite HMR, opens in browser |
+| Browser (prod) | `npm run build && npm start` | Built app served by Express |
+| Desktop (dev) | `npm run tauri:dev` | Tauri webview wrapping the dev server |
+| Desktop (build) | `npm run tauri:build` | Produces native installer with bundled server |
 
 ---
 
