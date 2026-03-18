@@ -124,7 +124,7 @@ app := wails.CreateApp(&wails.AppConfig{
 |---------|-------|-------|--------------|---------|
 | **Single-instance** | Built-in plugin | Built-in option | Manual only | Community package |
 | **Bundle size** | ~3-10 MB | ~5-15 MB | ~2-5 MB | ~15-30 MB |
-| **Memory** | ~50-80 MB | ~60-100 MB | ~30-50 MB | ~80-150 MB |
+| **Memory** | ~30-40 MB | ~60-100 MB | ~30-50 MB | ~80-150 MB |
 | **Frontend reuse** | Full | Full | Full | None |
 | **System API breadth** | Excellent | Good | Limited | Good |
 | **Child process spawn** | Plugin | Native Go | Supported | Supported |
@@ -160,7 +160,7 @@ Two viable approaches:
 - **Auto-update**: Push updates to users seamlessly.
 
 ### 5. Small footprint
-~3-10 MB bundle (vs. Electron's 150+ MB) means fast downloads and low disk usage. ~50-80 MB memory fits CodeFactory's "runs in the background" use case.
+~3-10 MB bundle (vs. Electron's 150+ MB) means fast downloads and low disk usage. ~30-40 MB memory fits CodeFactory's "runs in the background" use case.
 
 ---
 
