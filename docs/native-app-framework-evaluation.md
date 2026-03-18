@@ -16,14 +16,14 @@ This document evaluates frameworks as alternatives to Electron.
 
 | Aspect | Details |
 |--------|---------|
-| **Single-instance support** | Built-in via the `tauri-plugin-single-instance` plugin. Uses OS-level mutex/lock. When a second instance launches, a callback fires on the first instance (e.g., to focus the window or handle deep links). First-class, zero-effort support. |
+| **Single-instance support** | Built-in via [`tauri-plugin-single-instance`](https://v2.tauri.app/plugin/single-instance/) (latest v2.3.6). Must be registered as the first plugin. Uses DBus on Linux, platform-native mechanisms on Windows/macOS. Callback fires with CLI args and CWD when a second instance is attempted. Integrates with the deep-link plugin. Caveat: on Linux, extra config needed inside Snap/Flatpak sandboxes. |
 | **Bundle size** | ~3-10 MB (vs. Electron's ~150+ MB). Uses the OS webview (WebView2 on Windows, WebKit on macOS/Linux) instead of bundling Chromium. |
-| **Memory usage** | ~50-80 MB typical (vs. Electron's 150-300+ MB). No bundled V8 engine or Chromium. |
+| **Memory usage** | ~30-40 MB idle (vs. Electron's 200-300+ MB). No bundled V8 engine or Chromium. Startup under 500ms. |
 | **Tech stack** | Rust for backend/system APIs, any web framework for frontend. Our existing React/Vite frontend can be reused with minimal changes. |
 | **Frontend reuse** | Excellent. Tauri serves the web frontend in a webview. Our React + Tailwind + shadcn/ui frontend works as-is. |
 | **System APIs** | File system, system tray, notifications, clipboard, dialogs, shell commands, auto-start, global shortcuts, deep linking, IPC (commands + events). |
 | **Child process spawning** | Supported via `tauri-plugin-shell` (sidecar and command execution). Critical for CodeFactory's `codex`/`claude` CLI agent spawning. |
-| **Auto-update** | Built-in updater plugin with signature verification. |
+| **Auto-update** | Built-in [`tauri-plugin-updater`](https://v2.tauri.app/plugin/updater/) with cryptographic signature verification, differential updates, and flexible restart strategies. |
 | **Cross-platform** | Windows, macOS, Linux. Also supports iOS/Android (Tauri v2). |
 | **Maturity** | Tauri v2 is stable (released 2024). Large community, active development, used in production by many projects. |
 | **SQLite support** | `tauri-plugin-sql` or use the existing Node.js SQLite via a sidecar. Alternatively, can run the Express server as a sidecar process. |
@@ -54,7 +54,7 @@ fn main() {
 
 | Aspect | Details |
 |--------|---------|
-| **Single-instance support** | Built-in via `SingleInstanceLock` option in app config (Wails v2/v3). Uses named mutex on Windows and file lock on macOS/Linux. Provides a callback with the second instance's launch arguments. |
+| **Single-instance support** | Built-in via [`SingleInstanceLock`](https://wails.io/docs/guides/single-instance-lock/) in v2, and [enhanced in v3](https://v3alpha.wails.io/guides/single-instance/) with optional AES-256-GCM encryption for inter-instance communication. Uses mutex + window messages on Windows, flock + signals on Unix, DBus on Linux. Security note: Wails warns to treat data from second-instance callbacks as untrusted. |
 | **Bundle size** | ~5-15 MB. Uses OS webview like Tauri. |
 | **Memory usage** | ~60-100 MB. Similar to Tauri. |
 | **Tech stack** | Go for backend, any web framework for frontend. |
@@ -86,7 +86,7 @@ app := wails.CreateApp(&wails.AppConfig{
 
 | Aspect | Details |
 |--------|---------|
-| **Single-instance support** | **No built-in support.** Must be implemented manually using file locks, named pipes, or inter-process communication. This is a significant gap for our requirements. |
+| **Single-instance support** | **No built-in support.** [Open feature request (#901)](https://github.com/neutralinojs/neutralinojs/issues/901) filed May 2022, still unimplemented. `Neutralino.app.broadcast` can communicate between instances but does not prevent multiple from launching. Manual lock-file workaround required. **Blocker for our requirements.** |
 | **Bundle size** | ~2-5 MB. Smallest of all options. |
 | **Memory usage** | ~30-50 MB. Very lightweight. |
 | **Tech stack** | C++ runtime, JavaScript/TypeScript for both backend and frontend. |
@@ -104,7 +104,7 @@ app := wails.CreateApp(&wails.AppConfig{
 
 | Aspect | Details |
 |--------|---------|
-| **Single-instance support** | Available via community packages (`window_manager`, `single_instance` pub packages). Not built-in — requires third-party dependency. |
+| **Single-instance support** | No built-in support ([Flutter issue #90889](https://github.com/flutter/flutter/issues/90889)). Fragmented community packages: [`windows_single_instance`](https://pub.dev/packages/windows_single_instance) (Windows only), [`flutter_alone`](https://pub.dev/packages/flutter_alone) (Windows + macOS). Linux requires modifying `my_application.cc` to remove `G_APPLICATION_NON_UNIQUE` flag. Reliable cross-platform single-instance requires combining multiple packages. |
 | **Bundle size** | ~15-30 MB. Bundles the Skia rendering engine. |
 | **Memory usage** | ~80-150 MB. Higher due to custom rendering. |
 | **Tech stack** | Dart. **Cannot reuse the existing React frontend.** Full rewrite required. |
@@ -182,3 +182,17 @@ Two viable approaches:
 3. **Add `tauri-plugin-single-instance`** for single-instance enforcement
 4. **Add system tray** support for background operation
 5. **Incrementally migrate** Express routes to Tauri commands if desired
+
+---
+
+## References
+
+- [Tauri Single Instance Plugin](https://v2.tauri.app/plugin/single-instance/)
+- [Tauri Plugin Updater](https://v2.tauri.app/plugin/updater/)
+- [Tauri System Tray](https://v2.tauri.app/learn/system-tray/)
+- [Tauri v2 Stable Release](https://v2.tauri.app/blog/tauri-20/)
+- [Wails Single Instance Lock (v2)](https://wails.io/docs/guides/single-instance-lock/)
+- [Wails Single Instance (v3)](https://v3alpha.wails.io/guides/single-instance/)
+- [Neutralinojs Single Instance Feature Request (#901)](https://github.com/neutralinojs/neutralinojs/issues/901)
+- [Flutter Issue #90889 — Prevent Multiple Instances](https://github.com/flutter/flutter/issues/90889)
+- [Web-to-Desktop Framework Comparison](https://github.com/nicedoc/nicedoc.io/blob/master/README.md)
