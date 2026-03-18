@@ -41,6 +41,12 @@ All of this happens locally on your machine. No hosted service, no data leaving 
                                                                       │
                                                                       ▼
                                                                ┌──────────────┐
+                                                               │  Conflict    │
+                                                               │  Resolution  │
+                                                               └──────┬───────┘
+                                                                      │
+                                                                      ▼
+                                                               ┌──────────────┐
                                                                │ Commit & Push│
                                                                │ to PR branch │
                                                                └──────────────┘
@@ -51,7 +57,8 @@ All of this happens locally on your machine. No hosted service, no data leaving 
 3. Open PRs and their review feedback are fetched, normalized, and stored.
 4. The babysitter triages what needs action and what can be ignored.
 5. An agent run happens inside an isolated git worktree — your working copy stays untouched.
-6. Verification, commit, push, and detailed logs are recorded for the dashboard.
+6. If merge conflicts appear, the babysitter attempts conflict resolution in that worktree.
+7. Verification, commit, push, and detailed logs are recorded for the dashboard.
 
 ## Features
 
