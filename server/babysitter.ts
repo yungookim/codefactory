@@ -412,7 +412,7 @@ function formatAgentCommandGitHubComment(agent: CodingAgent, prompt: string): st
     "<details>",
     "<summary>Agent prompt (click to expand)</summary>",
     "",
-    "```",
+    "```text",
     prompt,
     "```",
     "",
@@ -797,6 +797,22 @@ export class PRBabysitter {
         }
       };
 
+      const postAgentCommandComment = async (agent: CodingAgent, prompt: string) => {
+        try {
+          await this.github.postPRComment(
+            octokit,
+            parsedPr,
+            formatAgentCommandGitHubComment(agent, prompt),
+          );
+        } catch (error) {
+          await logBestEffortFailure(
+            pr.id,
+            "github.agent-command",
+            `Failed to post agent command comment: ${summarizeUnknownError(error)}`,
+          );
+        }
+      };
+
       const pendingComments = pr.feedbackItems.filter((item) => item.status === "pending");
       await queueLog(pr.id, "info", `Evaluating ${pendingComments.length} pending feedback item(s)`, {
         phase: "evaluate.comments",
@@ -1096,19 +1112,7 @@ export class PRBabysitter {
                 metadata: { agent, prompt: conflictPrompt },
               });
 
-              try {
-                await this.github.postPRComment(
-                  octokit,
-                  parsedPr,
-                  formatAgentCommandGitHubComment(agent, conflictPrompt),
-                );
-              } catch (error) {
-                await logBestEffortFailure(
-                  pr.id,
-                  "github.agent-command",
-                  `Failed to post agent command comment: ${summarizeUnknownError(error)}`,
-                );
-              }
+              await postAgentCommandComment(agent, conflictPrompt);
 
               const conflictResult = await this.runtime.applyFixesWithAgent({
                 agent,
@@ -1204,19 +1208,7 @@ export class PRBabysitter {
             });
 
             // Post agent command to GitHub PR as a comment for debugging visibility.
-            try {
-              await this.github.postPRComment(
-                octokit,
-                parsedPr,
-                formatAgentCommandGitHubComment(agent, fixPrompt),
-              );
-            } catch (error) {
-              await logBestEffortFailure(
-                pr.id,
-                "github.agent-command",
-                `Failed to post agent command comment: ${summarizeUnknownError(error)}`,
-              );
-            }
+            await postAgentCommandComment(agent, fixPrompt);
 
             // Update status replies: agent is starting.
             const agentRunningStatus = STATUS_MESSAGES.agentRunning(agent);
