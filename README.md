@@ -41,6 +41,12 @@ All of this happens locally on your machine. No hosted service, no data leaving 
                                                                       │
                                                                       ▼
                                                                ┌──────────────┐
+                                                               │  Conflict    │
+                                                               │  Resolution  │
+                                                               └──────┬───────┘
+                                                                      │
+                                                                      ▼
+                                                               ┌──────────────┐
                                                                │ Commit & Push│
                                                                │ to PR branch │
                                                                └──────────────┘
