@@ -34,9 +34,9 @@ All of this happens locally on your machine. No hosted service, no data leaving 
 
 ```
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│ Watch Repos  │────▶│ Sync Reviews │────▶│ Triage Items │────▶│  Agent Runs  │
-│ & PRs        │     │ & Comments   │     │ accept/      │     │  codex or    │
-│              │     │              │     │ reject/flag  │     │  claude CLI  │
+│ Watch Repos  │────▶│ Sync Reviews │────▶│ Triage Items │────▶│ Agent Runs   │
+│ & PRs        │     │ & Comments   │     │ accept/      │     │ codex or     │
+│              │     │              │     │ reject/flag  │     │ claude CLI   │
 └──────────────┘     └──────────────┘     └──────────────┘     └──────┬───────┘
                                                                       │
                                                                       ▼
