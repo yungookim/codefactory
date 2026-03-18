@@ -172,6 +172,62 @@ test("syncFeedbackForPR logs completion even when no new feedback items arrive",
   assert.equal(logs.at(-1)?.message, "GitHub sync complete: 1 feedback item (0 new)");
 });
 
+test("retryFeedbackItem serializes concurrent retry updates for the same PR", async () => {
+  const storage = new MemStorage();
+  const failedItem = makeFeedbackItem({
+    id: "gh-review-comment-1",
+    status: "failed",
+    statusReason: "GitHub follow-up failed",
+  });
+  const warningItem = makeFeedbackItem({
+    id: "gh-review-comment-2",
+    sourceId: "2",
+    sourceNodeId: "PRRC_kwDO_example_2",
+    sourceUrl: "https://github.com/octo/example/pull/42#discussion_r2",
+    threadId: "PRRT_kwDO_example_2",
+    auditToken: "codefactory-feedback:gh-review-comment-2",
+    line: 24,
+    createdAt: "2026-03-15T10:01:00.000Z",
+    status: "warning",
+    statusReason: "GitHub comment could not be posted",
+  });
+
+  const pr = await storage.addPR({
+    number: 42,
+    title: "Example PR",
+    repo: "octo/example",
+    branch: "feature/example",
+    author: "octocat",
+    url: "https://github.com/octo/example/pull/42",
+    status: "watching",
+    feedbackItems: [failedItem, warningItem],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const babysitter = new PRBabysitter(storage);
+  const [firstResult, secondResult] = await Promise.all([
+    babysitter.retryFeedbackItem(pr.id, failedItem.id),
+    babysitter.retryFeedbackItem(pr.id, warningItem.id),
+  ]);
+
+  assert.equal(firstResult.kind, "ok");
+  assert.equal(secondResult.kind, "ok");
+
+  const updated = await storage.getPR(pr.id);
+  const retriedFailed = updated?.feedbackItems.find((item) => item.id === failedItem.id);
+  const retriedWarning = updated?.feedbackItems.find((item) => item.id === warningItem.id);
+
+  assert.equal(retriedFailed?.status, "queued");
+  assert.equal(retriedFailed?.statusReason, "Queued for retry");
+  assert.equal(retriedWarning?.status, "queued");
+  assert.equal(retriedWarning?.statusReason, "Queued for retry");
+});
+
 test("babysitPR uses a CODEFACTORY_HOME worktree, passes GitHub context, and verifies audit trail", async () => {
   const storage = new MemStorage();
   const existingItem = makeFeedbackItem();
