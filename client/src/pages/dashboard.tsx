@@ -66,7 +66,7 @@ function FeedbackStatusTag({ status }: { status: FeedbackItem["status"] }) {
 }
 
 function AgentIndicator({ pr }: { pr: PR }) {
-  const agentCount = pr.feedbackItems.filter((item) => item.status === "in_progress").length;
+  const agentCount = countActiveFeedbackStatuses(pr.feedbackItems).inProgress;
   const isProcessing = pr.status === "processing";
 
   if (!isProcessing && agentCount === 0) {
