@@ -8,125 +8,28 @@
       content="CodeFactory is an autonomous PR babysitter that watches repositories, triages review feedback, and dispatches agents to fix code."
     />
     <title>CodeFactory | The Autonomous PR Babysitter</title>
-    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="./assets/landing.css" rel="stylesheet" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&amp;display=swap" rel="stylesheet" />
     <link
       href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
       rel="stylesheet"
     />
-    <script id="tailwind-config">
-      tailwind.config = {
-        darkMode: "class",
-        theme: {
-          extend: {
-            colors: {
-              "on-primary": "#001c8e",
-              "background": "#0e0e0e",
-              "inverse-on-surface": "#565554",
-              "primary-container": "#8999ff",
-              "surface-variant": "#262626",
-              "secondary-dim": "#9492ff",
-              "surface-bright": "#2c2c2c",
-              "outline-variant": "#494847",
-              "on-tertiary-container": "#5f0656",
-              "secondary-fixed": "#cfcdff",
-              "on-secondary-container": "#cecbff",
-              "on-secondary": "#110077",
-              "on-primary-container": "#001470",
-              "on-tertiary": "#6c1561",
-              "surface-container-highest": "#262626",
-              "on-background": "#ffffff",
-              "on-secondary-fixed-variant": "#4642aa",
-              "on-surface": "#ffffff",
-              "secondary-container": "#3b37a0",
-              "inverse-primary": "#2949ef",
-              "surface-container": "#1a1919",
-              "surface-tint": "#9ba8ff",
-              "primary": "#9ba8ff",
-              "on-primary-fixed-variant": "#001a88",
-              "tertiary-fixed-dim": "#e883d2",
-              "on-primary-fixed": "#000000",
-              "surface-container-high": "#201f1f",
-              "error-dim": "#d73357",
-              "tertiary-fixed": "#f790e0",
-              "on-tertiary-fixed": "#380033",
-              "surface-dim": "#0e0e0e",
-              "primary-dim": "#4963ff",
-              "surface-container-low": "#131313",
-              "tertiary": "#ffa3e9",
-              "error-container": "#a70138",
-              "primary-fixed": "#8999ff",
-              "on-secondary-fixed": "#28218d",
-              "on-error-container": "#ffb2b9",
-              "secondary-fixed-dim": "#bfbdff",
-              "tertiary-container": "#f790e0",
-              "surface": "#0e0e0e",
-              "on-error": "#490013",
-              "inverse-surface": "#fcf8f8",
-              "on-surface-variant": "#adaaaa",
-              "error": "#ff6e84",
-              "outline": "#777575",
-              "primary-fixed-dim": "#778aff",
-              "secondary": "#9492ff",
-              "tertiary-dim": "#e883d2",
-              "on-tertiary-fixed-variant": "#6a1460"
-            },
-            fontFamily: {
-              "headline": ["Inter"],
-              "body": ["Inter"],
-              "label": ["Inter"]
-            },
-            borderRadius: {
-              "DEFAULT": "0.25rem",
-              "lg": "0.5rem",
-              "xl": "0.75rem",
-              "full": "9999px"
-            }
-          }
-        }
-      };
-    </script>
-    <style>
-      body {
-        background-color: #0e0e0e;
-        color: #ffffff;
-        font-family: "Inter", sans-serif;
-      }
-      .material-symbols-outlined {
-        font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
-      }
-      .glass-card {
-        background: rgba(38, 38, 38, 0.6);
-        backdrop-filter: blur(24px);
-      }
-      .primary-gradient {
-        background: linear-gradient(135deg, #4963ff 0%, #9ba8ff 100%);
-      }
-      .luminal-glow {
-        box-shadow: 0 0 40px rgba(155, 168, 255, 0.06);
-      }
-      .text-luminal-gradient {
-        background: linear-gradient(to bottom, #ffffff 0%, #adaaaa 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-      }
-    </style>
   </head>
   <body class="selection:bg-primary-container selection:text-on-primary-container">
     <nav class="fixed top-0 z-50 w-full bg-[#0e0e0e]/80 shadow-[0_0_40px_rgba(155,168,255,0.06)] backdrop-blur-xl">
       <div class="mx-auto flex max-w-7xl items-center justify-between px-8 py-4">
         <div class="text-xl font-bold tracking-tighter text-[#9ba8ff]">CodeFactory</div>
         <div class="hidden items-center gap-8 md:flex">
-          <a class="font-['Inter'] tracking-tight text-[#adaaaa] antialiased transition-colors hover:text-white" href="https://github.com/yungookim/codefactory" rel="noreferrer" target="_blank">GitHub</a>
-          <a class="font-['Inter'] tracking-tight text-[#adaaaa] antialiased transition-colors hover:text-white" href="#features">Features</a>
-          <a class="font-['Inter'] tracking-tight text-[#adaaaa] antialiased transition-colors hover:text-white" href="#workflow">How It Works</a>
-          <a class="font-['Inter'] tracking-tight text-[#adaaaa] antialiased transition-colors hover:text-white" href="https://github.com/yungookim/codefactory#readme" rel="noreferrer" target="_blank">Docs</a>
-          <a class="font-['Inter'] tracking-tight text-[#adaaaa] antialiased transition-colors hover:text-white" href="https://github.com/yungookim/codefactory/discussions" rel="noreferrer" target="_blank">Community</a>
+          <a class="tracking-tight text-[#adaaaa] antialiased transition-colors hover:text-white" href="https://github.com/yungookim/codefactory" rel="noreferrer" target="_blank">GitHub</a>
+          <a class="tracking-tight text-[#adaaaa] antialiased transition-colors hover:text-white" href="#features">Features</a>
+          <a class="tracking-tight text-[#adaaaa] antialiased transition-colors hover:text-white" href="#workflow">How It Works</a>
+          <a class="tracking-tight text-[#adaaaa] antialiased transition-colors hover:text-white" href="https://github.com/yungookim/codefactory#readme" rel="noreferrer" target="_blank">Docs</a>
+          <a class="tracking-tight text-[#adaaaa] antialiased transition-colors hover:text-white" href="https://github.com/yungookim/codefactory/discussions" rel="noreferrer" target="_blank">Community</a>
         </div>
         <div class="flex items-center gap-4">
           <a class="hidden items-center gap-2 rounded-lg border border-outline-variant/20 bg-surface-container-high px-4 py-2 text-sm font-medium text-[#adaaaa] transition-colors hover:text-white lg:flex" href="https://github.com/yungookim/codefactory/stargazers" rel="noreferrer" target="_blank">
             <span class="material-symbols-outlined text-sm">star</span>
-            <span>12.4k stars</span>
+            <span>Star on GitHub</span>
           </a>
           <a class="primary-gradient rounded-full px-6 py-2.5 text-sm font-bold text-black transition-all hover:opacity-90 active:scale-95" href="https://github.com/yungookim/codefactory.git" rel="noreferrer" target="_blank">Clone Repository</a>
         </div>
@@ -355,14 +258,14 @@
       <div class="mx-auto flex max-w-7xl flex-col items-center justify-between gap-6 px-8 py-12 md:flex-row">
         <div class="flex flex-col gap-4">
           <div class="text-lg font-black text-[#9ba8ff]">CodeFactory</div>
-          <p class="font-['Inter'] text-sm uppercase tracking-widest text-[#adaaaa]">© 2026 CodeFactory. Licensed under MIT. Community Powered.</p>
+          <p class="text-sm uppercase tracking-widest text-[#adaaaa]">© 2026 CodeFactory. Licensed under MIT. Community Powered.</p>
         </div>
         <div class="flex flex-wrap justify-center gap-8">
-          <a class="font-['Inter'] text-sm uppercase tracking-widest text-[#adaaaa] opacity-80 transition-colors hover:text-[#9ba8ff] hover:opacity-100" href="https://github.com/yungookim/codefactory/blob/main/CONTRIBUTING.md" rel="noreferrer" target="_blank">Code of Conduct</a>
-          <a class="font-['Inter'] text-sm uppercase tracking-widest text-[#adaaaa] opacity-80 transition-colors hover:text-[#9ba8ff] hover:opacity-100" href="https://github.com/yungookim/codefactory/blob/main/CONTRIBUTING.md" rel="noreferrer" target="_blank">Contributing</a>
-          <a class="font-['Inter'] text-sm uppercase tracking-widest text-[#adaaaa] opacity-80 transition-colors hover:text-[#9ba8ff] hover:opacity-100" href="https://github.com/yungookim/codefactory/security" rel="noreferrer" target="_blank">Security</a>
-          <a class="font-['Inter'] text-sm uppercase tracking-widest text-[#adaaaa] opacity-80 transition-colors hover:text-[#9ba8ff] hover:opacity-100" href="https://github.com/yungookim/codefactory/issues" rel="noreferrer" target="_blank">Issues</a>
-          <a class="font-['Inter'] text-sm uppercase tracking-widest text-[#adaaaa] opacity-80 transition-colors hover:text-[#9ba8ff] hover:opacity-100" href="https://github.com/yungookim/codefactory/releases" rel="noreferrer" target="_blank">Changelog</a>
+          <a class="text-sm uppercase tracking-widest text-[#adaaaa] opacity-80 transition-colors hover:text-[#9ba8ff] hover:opacity-100" href="https://github.com/yungookim/codefactory/blob/main/CONTRIBUTING.md#code-of-conduct" rel="noreferrer" target="_blank">Code of Conduct</a>
+          <a class="text-sm uppercase tracking-widest text-[#adaaaa] opacity-80 transition-colors hover:text-[#9ba8ff] hover:opacity-100" href="https://github.com/yungookim/codefactory/blob/main/CONTRIBUTING.md" rel="noreferrer" target="_blank">Contributing</a>
+          <a class="text-sm uppercase tracking-widest text-[#adaaaa] opacity-80 transition-colors hover:text-[#9ba8ff] hover:opacity-100" href="https://github.com/yungookim/codefactory/security" rel="noreferrer" target="_blank">Security</a>
+          <a class="text-sm uppercase tracking-widest text-[#adaaaa] opacity-80 transition-colors hover:text-[#9ba8ff] hover:opacity-100" href="https://github.com/yungookim/codefactory/issues" rel="noreferrer" target="_blank">Issues</a>
+          <a class="text-sm uppercase tracking-widest text-[#adaaaa] opacity-80 transition-colors hover:text-[#9ba8ff] hover:opacity-100" href="https://github.com/yungookim/codefactory/releases" rel="noreferrer" target="_blank">Changelog</a>
         </div>
       </div>
     </footer>

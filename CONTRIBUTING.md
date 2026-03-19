@@ -2,6 +2,10 @@
 
 Thanks for your interest in contributing to Code Factory! This document provides guidelines and information for contributors.
 
+## Code of Conduct
+
+Be respectful and constructive in every interaction. Harassment, discrimination, and personal attacks are not acceptable in this project.
+
 ## Getting Started
 
 1. Fork the repository
