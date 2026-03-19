@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <meta
+      name="description"
+      content="CodeFactory is an autonomous PR babysitter that watches repositories, triages review feedback, and dispatches agents to fix code."
+    />
+    <title>CodeFactory | The Autonomous PR Babysitter</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&amp;display=swap" rel="stylesheet" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+      rel="stylesheet"
+    />
+    <script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "on-primary": "#001c8e",
+              "background": "#0e0e0e",
+              "inverse-on-surface": "#565554",
+              "primary-container": "#8999ff",
+              "surface-variant": "#262626",
+              "secondary-dim": "#9492ff",
+              "surface-bright": "#2c2c2c",
+              "outline-variant": "#494847",
+              "on-tertiary-container": "#5f0656",
+              "secondary-fixed": "#cfcdff",
+              "on-secondary-container": "#cecbff",
+              "on-secondary": "#110077",
+              "on-primary-container": "#001470",
+              "on-tertiary": "#6c1561",
+              "surface-container-highest": "#262626",
+              "on-background": "#ffffff",
+              "on-secondary-fixed-variant": "#4642aa",
+              "on-surface": "#ffffff",
+              "secondary-container": "#3b37a0",
+              "inverse-primary": "#2949ef",
+              "surface-container": "#1a1919",
+              "surface-tint": "#9ba8ff",
+              "primary": "#9ba8ff",
+              "on-primary-fixed-variant": "#001a88",
+              "tertiary-fixed-dim": "#e883d2",
+              "on-primary-fixed": "#000000",
+              "surface-container-high": "#201f1f",
+              "error-dim": "#d73357",
+              "tertiary-fixed": "#f790e0",
+              "on-tertiary-fixed": "#380033",
+              "surface-dim": "#0e0e0e",
+              "primary-dim": "#4963ff",
+              "surface-container-low": "#131313",
+              "tertiary": "#ffa3e9",
+              "error-container": "#a70138",
+              "primary-fixed": "#8999ff",
+              "on-secondary-fixed": "#28218d",
+              "on-error-container": "#ffb2b9",
+              "secondary-fixed-dim": "#bfbdff",
+              "tertiary-container": "#f790e0",
+              "surface": "#0e0e0e",
+              "on-error": "#490013",
+              "inverse-surface": "#fcf8f8",
+              "on-surface-variant": "#adaaaa",
+              "error": "#ff6e84",
+              "outline": "#777575",
+              "primary-fixed-dim": "#778aff",
+              "secondary": "#9492ff",
+              "tertiary-dim": "#e883d2",
+              "on-tertiary-fixed-variant": "#6a1460"
+            },
+            fontFamily: {
+              "headline": ["Inter"],
+              "body": ["Inter"],
+              "label": ["Inter"]
+            },
+            borderRadius: {
+              "DEFAULT": "0.25rem",
+              "lg": "0.5rem",
+              "xl": "0.75rem",
+              "full": "9999px"
+            }
+          }
+        }
+      };
+    </script>
+    <style>
+      body {
+        background-color: #0e0e0e;
+        color: #ffffff;
+        font-family: "Inter", sans-serif;
+      }
+      .material-symbols-outlined {
+        font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+      }
+      .glass-card {
+        background: rgba(38, 38, 38, 0.6);
+        backdrop-filter: blur(24px);
+      }
+      .primary-gradient {
+        background: linear-gradient(135deg, #4963ff 0%, #9ba8ff 100%);
+      }
+      .luminal-glow {
+        box-shadow: 0 0 40px rgba(155, 168, 255, 0.06);
+      }
+      .text-luminal-gradient {
+        background: linear-gradient(to bottom, #ffffff 0%, #adaaaa 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+    </style>
+  </head>
+  <body class="selection:bg-primary-container selection:text-on-primary-container">
+    <nav class="fixed top-0 z-50 w-full bg-[#0e0e0e]/80 shadow-[0_0_40px_rgba(155,168,255,0.06)] backdrop-blur-xl">
+      <div class="mx-auto flex max-w-7xl items-center justify-between px-8 py-4">
+        <div class="text-xl font-bold tracking-tighter text-[#9ba8ff]">CodeFactory</div>
+        <div class="hidden items-center gap-8 md:flex">
+          <a class="font-['Inter'] tracking-tight text-[#adaaaa] antialiased transition-colors hover:text-white" href="https://github.com/yungookim/codefactory" rel="noreferrer" target="_blank">GitHub</a>
+          <a class="font-['Inter'] tracking-tight text-[#adaaaa] antialiased transition-colors hover:text-white" href="#features">Features</a>
+          <a class="font-['Inter'] tracking-tight text-[#adaaaa] antialiased transition-colors hover:text-white" href="#workflow">How It Works</a>
+          <a class="font-['Inter'] tracking-tight text-[#adaaaa] antialiased transition-colors hover:text-white" href="https://github.com/yungookim/codefactory#readme" rel="noreferrer" target="_blank">Docs</a>
+          <a class="font-['Inter'] tracking-tight text-[#adaaaa] antialiased transition-colors hover:text-white" href="https://github.com/yungookim/codefactory/discussions" rel="noreferrer" target="_blank">Community</a>
+        </div>
+        <div class="flex items-center gap-4">
+          <a class="hidden items-center gap-2 rounded-lg border border-outline-variant/20 bg-surface-container-high px-4 py-2 text-sm font-medium text-[#adaaaa] transition-colors hover:text-white lg:flex" href="https://github.com/yungookim/codefactory/stargazers" rel="noreferrer" target="_blank">
+            <span class="material-symbols-outlined text-sm">star</span>
+            <span>12.4k stars</span>
+          </a>
+          <a class="primary-gradient rounded-full px-6 py-2.5 text-sm font-bold text-black transition-all hover:opacity-90 active:scale-95" href="https://github.com/yungookim/codefactory.git" rel="noreferrer" target="_blank">Clone Repository</a>
+        </div>
+      </div>
+    </nav>
+
+    <main>
+      <section class="relative flex min-h-screen items-center justify-center overflow-hidden pt-20">
+        <div class="absolute inset-0 z-0">
+          <div class="absolute inset-0 bg-gradient-to-b from-transparent via-background to-background"></div>
+          <div class="absolute left-1/2 top-1/2 h-[800px] w-[800px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/5 blur-[120px]"></div>
+          <img
+            alt="Cinematic high-fidelity visualization of an AI entity in a dark cyberspace void"
+            class="h-full w-full object-cover opacity-30 mix-blend-luminosity"
+            src="https://lh3.googleusercontent.com/aida-public/AB6AXuCMA9nVJLEpMaQSwQfAbzZk6OGsyx2K7t7HjaoXaU9O9R4gPmxEu0URrTQMQSZgiXo1WC55611QizPTqhDpTSyY1S8UNZ9bazvfAQFGtcMd9WCoGH3eJUpyngr896rZJqmaF0oKQjRkVSJudevMGXi2-N-gujarEEiLIHpOz1iFnfQDzbJLmiIKc5pn9ZxfFxlK2jj7-I-VUKadHXGAlCG0lQye5knD3kkPlMAJOMNxbOXFxf3o9iFvPbtNaYjjOce7pjvKXPQ_zpk"
+          />
+        </div>
+        <div class="relative z-10 mx-auto max-w-5xl px-8 text-center">
+          <div class="mb-8 inline-flex items-center gap-2 rounded-full border border-outline-variant/15 bg-surface-container-high px-3 py-1">
+            <span class="h-2 w-2 animate-pulse rounded-full bg-primary"></span>
+            <span class="text-[10px] font-bold uppercase tracking-[0.2em] text-primary">The Open Source PR Babysitter</span>
+          </div>
+          <h1 class="text-luminal-gradient mb-8 text-6xl font-black leading-[0.9] tracking-tighter md:text-8xl">
+            Stop babysitting PRs manually. Code Factory handles the toil.
+          </h1>
+          <p class="mx-auto mb-12 max-w-2xl text-xl leading-relaxed text-on-surface-variant">
+            A community-driven engine that watches repos, triages review feedback, and dispatches agents to fix code automatically.
+          </p>
+          <div class="flex flex-col items-center justify-center gap-6 sm:flex-row">
+            <a class="primary-gradient flex items-center gap-3 rounded-xl px-8 py-4 text-lg font-black text-black transition-all hover:shadow-[0_0_30px_rgba(155,168,255,0.3)]" href="https://github.com/yungookim/codefactory" rel="noreferrer" target="_blank">
+              View on GitHub <span class="material-symbols-outlined">terminal</span>
+            </a>
+            <a class="rounded-xl border border-outline-variant/15 bg-surface-container-high px-8 py-4 text-lg font-bold text-on-surface transition-all hover:bg-surface-variant" href="https://github.com/yungookim/codefactory#quick-start" rel="noreferrer" target="_blank">
+              Getting Started
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section class="bg-surface px-8 py-32" id="workflow">
+        <div class="mx-auto max-w-7xl">
+          <div class="mb-20 text-center">
+            <h2 class="mb-4 text-4xl font-bold tracking-tight">Autonomous CI/CD Workflow</h2>
+            <p class="mx-auto max-w-xl text-on-surface-variant">From community feedback to commit, automated at every step.</p>
+          </div>
+          <div class="grid grid-cols-1 gap-4 md:grid-cols-3 lg:grid-cols-6">
+            <div class="group rounded-xl border border-outline-variant/5 bg-surface-container-low p-6 transition-all hover:border-primary/20">
+              <div class="mb-4 text-3xl font-black text-primary opacity-50">01</div>
+              <div class="material-symbols-outlined mb-4 text-primary" style="font-variation-settings: 'opsz' 40">visibility</div>
+              <h3 class="mb-2 text-sm font-bold uppercase tracking-widest">Watch Repos</h3>
+              <p class="text-xs text-on-surface-variant">Real-time monitoring across your repositories.</p>
+            </div>
+            <div class="group rounded-xl border border-outline-variant/5 bg-surface-container-low p-6 transition-all hover:border-primary/20">
+              <div class="mb-4 text-3xl font-black text-primary opacity-50">02</div>
+              <div class="material-symbols-outlined mb-4 text-primary" style="font-variation-settings: 'opsz' 40">sync_alt</div>
+              <h3 class="mb-2 text-sm font-bold uppercase tracking-widest">Sync Reviews</h3>
+              <p class="text-xs text-on-surface-variant">Capture threaded comments and change requests instantly.</p>
+            </div>
+            <div class="group rounded-xl border border-outline-variant/5 bg-surface-container-low p-6 transition-all hover:border-primary/20">
+              <div class="mb-4 text-3xl font-black text-primary opacity-50">03</div>
+              <div class="material-symbols-outlined mb-4 text-primary" style="font-variation-settings: 'opsz' 40">assignment_turned_in</div>
+              <h3 class="mb-2 text-sm font-bold uppercase tracking-widest">Triage</h3>
+              <p class="text-xs text-on-surface-variant">Classify feedback into actionable tasks for agents.</p>
+            </div>
+            <div class="group rounded-xl border border-outline-variant/5 bg-surface-container-low p-6 transition-all hover:border-primary/20">
+              <div class="mb-4 text-3xl font-black text-primary opacity-50">04</div>
+              <div class="material-symbols-outlined mb-4 text-primary" style="font-variation-settings: 'opsz' 40">smart_toy</div>
+              <h3 class="mb-2 text-sm font-bold uppercase tracking-widest">Agent Runs</h3>
+              <p class="text-xs text-on-surface-variant">Open-weights agents iterate on isolated worktrees.</p>
+            </div>
+            <div class="group rounded-xl border border-outline-variant/5 bg-surface-container-low p-6 transition-all hover:border-primary/20">
+              <div class="mb-4 text-3xl font-black text-primary opacity-50">05</div>
+              <div class="material-symbols-outlined mb-4 text-primary" style="font-variation-settings: 'opsz' 40">call_merge</div>
+              <h3 class="mb-2 text-sm font-bold uppercase tracking-widest">Resolutions</h3>
+              <p class="text-xs text-on-surface-variant">Automated merge conflict handling and rebase.</p>
+            </div>
+            <div class="group rounded-xl border border-outline-variant/5 bg-surface-container-low p-6 transition-all hover:border-primary/20">
+              <div class="mb-4 text-3xl font-black text-primary opacity-50">06</div>
+              <div class="material-symbols-outlined mb-4 text-primary" style="font-variation-settings: 'opsz' 40">publish</div>
+              <h3 class="mb-2 text-sm font-bold uppercase tracking-widest">Commit &amp; Push</h3>
+              <p class="text-xs text-on-surface-variant">Push signed commits back to the remote branch.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="bg-surface-container-low px-8 py-32" id="features">
+        <div class="mx-auto max-w-7xl">
+          <div class="mb-16 flex flex-col items-end justify-between gap-8 md:flex-row">
+            <div class="max-w-xl">
+              <h2 class="mb-6 text-5xl font-black tracking-tighter">Built for Open Development.</h2>
+              <p class="text-on-surface-variant">CodeFactory is a transparent tool for managing pull request complexity. Built by contributors, for contributors.</p>
+            </div>
+            <div class="rounded-xl border border-outline-variant/10 bg-surface p-4">
+              <div class="flex items-center gap-4">
+                <div class="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
+                  <span class="material-symbols-outlined text-primary">diversity_3</span>
+                </div>
+                <div>
+                  <div class="text-sm font-bold">Free &amp; Open</div>
+                  <div class="text-[10px] uppercase tracking-wider text-on-surface-variant">MIT Licensed Core</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="grid h-auto grid-cols-1 gap-6 md:h-[600px] md:grid-cols-12">
+            <div class="group relative overflow-hidden rounded-3xl bg-surface-container p-10 md:col-span-8">
+              <div class="relative z-10 flex h-full flex-col justify-between">
+                <div>
+                  <h3 class="mb-4 text-3xl font-bold">Multi-repo watching</h3>
+                  <p class="max-w-md text-on-surface-variant">Connect any repository you manage. CodeFactory creates a centralized intelligence hub for all active pull requests in your ecosystem.</p>
+                </div>
+                <div class="mt-8 flex gap-4">
+                  <span class="rounded-full border border-outline-variant/20 bg-background px-4 py-2 text-xs font-mono">github.com/org/*</span>
+                  <span class="rounded-full border border-outline-variant/20 bg-background px-4 py-2 text-xs font-mono">gitlab.com/projects/*</span>
+                </div>
+              </div>
+              <div class="absolute bottom-0 right-0 h-2/3 w-1/2 opacity-20 transition-opacity group-hover:opacity-40">
+                <img
+                  alt="Abstract code terminal interface with glowing syntax"
+                  class="h-full w-full rounded-tl-3xl object-cover"
+                  src="https://lh3.googleusercontent.com/aida-public/AB6AXuDSIqGY3TH2tYW4-SfXKjX0oO1CP7cMzMEwL8exJBRNtzD2auaGYFS2TT1NpINIU00_ZyrZG9kqc9fbsHDV1r2zspBiP4YKKKHESGc_p2dYxk9wh2F1opCo-jPtOuj-sioHLd5ypTAgs6a0-nE_8pGSv5hCbFOfyNrKeITaX8HFaviwOyUxhgA0He18QPJhzlf5L5FPSXDPh2SAwI9xGhtOnlM9kp_tMBtMJzLXISnqGDzOwA3Suv3pJQ_6u1h1Rx_iOPhoq1oHeSE"
+                />
+              </div>
+            </div>
+            <div class="rounded-3xl bg-primary p-1 group md:col-span-4">
+              <div class="flex h-full w-full flex-col justify-between rounded-[1.4rem] bg-background p-8">
+                <span class="material-symbols-outlined text-4xl text-primary" data-weight="fill">chat_bubble</span>
+                <div>
+                  <h3 class="mb-2 text-xl font-bold">PR Q&amp;A</h3>
+                  <p class="text-sm text-on-surface-variant">Interrogate your pull requests. Ask &quot;Why did this fail?&quot; or &quot;Summarize architectural implications.&quot;</p>
+                </div>
+              </div>
+            </div>
+            <div class="flex flex-col justify-between rounded-3xl bg-surface-container-high p-8 transition-colors hover:bg-surface-container-highest md:col-span-4">
+              <div>
+                <div class="material-symbols-outlined mb-6 text-tertiary">account_tree</div>
+                <h3 class="mb-2 text-xl font-bold">Isolated Worktrees</h3>
+              </div>
+              <p class="text-sm text-on-surface-variant">Each agent run happens in a sterile, temporary environment. No state pollution, ever.</p>
+            </div>
+            <div class="flex flex-col justify-between rounded-3xl bg-surface-container-high p-8 transition-colors hover:bg-surface-container-highest md:col-span-4">
+              <div>
+                <div class="material-symbols-outlined mb-6 text-primary">psychology</div>
+                <h3 class="mb-2 text-xl font-bold">Agent Flexibility</h3>
+              </div>
+              <p class="text-sm text-on-surface-variant">Compatible with open-weights models. Use local LLMs for private, secure code processing.</p>
+            </div>
+            <div class="flex flex-col justify-between rounded-3xl bg-surface-container-high p-8 transition-colors hover:bg-surface-container-highest md:col-span-4">
+              <div>
+                <div class="material-symbols-outlined mb-6 text-secondary">verified_user</div>
+                <h3 class="mb-2 text-xl font-bold">Smart Triage</h3>
+              </div>
+              <p class="text-sm text-on-surface-variant">Automated filtering that helps maintainers prioritize breaking concerns over nitpicks.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="bg-surface px-8 py-32">
+        <div class="mx-auto max-w-4xl">
+          <div class="overflow-hidden rounded-2xl border border-outline-variant/20 bg-black shadow-2xl">
+            <div class="flex items-center justify-between border-b border-outline-variant/20 bg-surface-container-high px-6 py-3">
+              <div class="flex gap-2">
+                <div class="h-3 w-3 rounded-full bg-error-dim/50"></div>
+                <div class="h-3 w-3 rounded-full bg-tertiary-dim/50"></div>
+                <div class="h-3 w-3 rounded-full bg-primary/50"></div>
+              </div>
+              <div class="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant">system_specs.yml</div>
+            </div>
+            <div class="p-10 font-mono text-sm leading-relaxed">
+              <div class="grid grid-cols-1 gap-8 md:grid-cols-2">
+                <div>
+                  <div class="mb-2 text-primary"># Core Runtime</div>
+                  <div class="flex justify-between border-b border-outline-variant/10 py-2">
+                    <span class="text-on-surface-variant">runtime:</span>
+                    <span class="text-on-surface">Node.js 22.x LTS</span>
+                  </div>
+                  <div class="flex justify-between border-b border-outline-variant/10 py-2">
+                    <span class="text-on-surface-variant">language:</span>
+                    <span class="text-on-surface">TypeScript 5.4</span>
+                  </div>
+                  <div class="flex justify-between border-b border-outline-variant/10 py-2">
+                    <span class="text-on-surface-variant">database:</span>
+                    <span class="text-on-surface">SQLite (Local-first)</span>
+                  </div>
+                </div>
+                <div>
+                  <div class="mb-2 text-tertiary"># Interface</div>
+                  <div class="flex justify-between border-b border-outline-variant/10 py-2">
+                    <span class="text-on-surface-variant">framework:</span>
+                    <span class="text-on-surface">React 18.3</span>
+                  </div>
+                  <div class="flex justify-between border-b border-outline-variant/10 py-2">
+                    <span class="text-on-surface-variant">styling:</span>
+                    <span class="text-on-surface">Tailwind CSS</span>
+                  </div>
+                  <div class="flex justify-between border-b border-outline-variant/10 py-2">
+                    <span class="text-on-surface-variant">license:</span>
+                    <span class="text-on-surface">MIT</span>
+                  </div>
+                </div>
+              </div>
+              <div class="mt-8 flex items-center gap-4 border-t border-outline-variant/20 pt-6">
+                <span class="animate-pulse text-primary">$</span>
+                <span class="text-on-surface-variant">git clone https://github.com/yungookim/codefactory.git</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="bg-surface px-8 py-32">
+        <div class="luminal-glow relative mx-auto max-w-5xl overflow-hidden rounded-[3rem] border border-outline-variant/15 bg-surface-container-high p-16 text-center">
+          <div class="absolute left-1/2 top-0 h-[1px] w-full -translate-x-1/2 bg-gradient-to-r from-transparent via-primary/50 to-transparent"></div>
+          <h2 class="mb-8 text-5xl font-black tracking-tight">Ready to automate your PR reviews?</h2>
+          <div class="flex flex-col justify-center gap-4 sm:flex-row">
+            <a class="primary-gradient rounded-2xl px-10 py-5 text-xl font-black text-black transition-transform hover:scale-[1.02]" href="https://github.com/yungookim/codefactory/releases" rel="noreferrer" target="_blank">Download Release</a>
+            <a class="rounded-2xl border border-outline-variant/20 bg-background px-10 py-5 text-xl font-bold text-on-surface transition-colors hover:bg-surface-variant" href="https://github.com/yungookim/codefactory" rel="noreferrer" target="_blank">View on GitHub</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="w-full border-t border-[#494847]/15 bg-[#0e0e0e]">
+      <div class="mx-auto flex max-w-7xl flex-col items-center justify-between gap-6 px-8 py-12 md:flex-row">
+        <div class="flex flex-col gap-4">
+          <div class="text-lg font-black text-[#9ba8ff]">CodeFactory</div>
+          <p class="font-['Inter'] text-sm uppercase tracking-widest text-[#adaaaa]">© 2026 CodeFactory. Licensed under MIT. Community Powered.</p>
+        </div>
+        <div class="flex flex-wrap justify-center gap-8">
+          <a class="font-['Inter'] text-sm uppercase tracking-widest text-[#adaaaa] opacity-80 transition-colors hover:text-[#9ba8ff] hover:opacity-100" href="https://github.com/yungookim/codefactory/blob/main/CONTRIBUTING.md" rel="noreferrer" target="_blank">Code of Conduct</a>
+          <a class="font-['Inter'] text-sm uppercase tracking-widest text-[#adaaaa] opacity-80 transition-colors hover:text-[#9ba8ff] hover:opacity-100" href="https://github.com/yungookim/codefactory/blob/main/CONTRIBUTING.md" rel="noreferrer" target="_blank">Contributing</a>
+          <a class="font-['Inter'] text-sm uppercase tracking-widest text-[#adaaaa] opacity-80 transition-colors hover:text-[#9ba8ff] hover:opacity-100" href="https://github.com/yungookim/codefactory/security" rel="noreferrer" target="_blank">Security</a>
+          <a class="font-['Inter'] text-sm uppercase tracking-widest text-[#adaaaa] opacity-80 transition-colors hover:text-[#9ba8ff] hover:opacity-100" href="https://github.com/yungookim/codefactory/issues" rel="noreferrer" target="_blank">Issues</a>
+          <a class="font-['Inter'] text-sm uppercase tracking-widest text-[#adaaaa] opacity-80 transition-colors hover:text-[#9ba8ff] hover:opacity-100" href="https://github.com/yungookim/codefactory/releases" rel="noreferrer" target="_blank">Changelog</a>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
