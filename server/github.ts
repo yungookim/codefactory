@@ -807,7 +807,26 @@ export async function postStatusReplyForFeedbackItem(
   body: string,
 ): Promise<StatusReplyRef | null> {
   if (item.replyKind === "review_thread") {
-    if (!item.threadId) return null;
+    if (!item.threadId) {
+      const fallbackBody = item.sourceUrl
+        ? `> _Could not post this status update in the review thread directly ([original comment](${item.sourceUrl}))._\n\n${body}`
+        : body;
+
+      const fallbackResult = await withGitHubErrorHandling("status reply fallback", parsed, () =>
+        octokit.issues.createComment({
+          owner: parsed.owner,
+          repo: parsed.repo,
+          issue_number: parsed.number,
+          body: fallbackBody,
+        }),
+      );
+
+      return {
+        commentDatabaseId: fallbackResult.data.id,
+        replyKind: "general_comment",
+        body: fallbackBody,
+      };
+    }
 
     const result = await withGitHubErrorHandling("status reply in review thread", parsed, () =>
       octokit.request("POST /graphql", {

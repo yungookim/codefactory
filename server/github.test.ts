@@ -531,6 +531,77 @@ test("postFollowUpForFeedbackItem falls back to PR comment when review thread ID
   );
 });
 
+test("postStatusReplyForFeedbackItem falls back to PR comment when review thread ID is missing", async () => {
+  const comments: Array<Record<string, unknown>> = [];
+  const issueCommentUpdates: Array<Record<string, unknown>> = [];
+
+  const octokit = {
+    request: async () => {
+      throw new Error("should not call graphql when falling back");
+    },
+    pulls: {
+      updateReviewComment: async () => {
+        throw new Error("should not update review comments for fallback status replies");
+      },
+    },
+    issues: {
+      createComment: async (params: Record<string, unknown>) => {
+        comments.push(params);
+        return { data: { id: 222 } };
+      },
+      updateComment: async (params: Record<string, unknown>) => {
+        issueCommentUpdates.push(params);
+        return { data: { ok: true } };
+      },
+    },
+  };
+
+  const ref = await postStatusReplyForFeedbackItem(
+    octokit as never,
+    { owner: "octo", repo: "example", number: 42 },
+    makeFeedbackItem({
+      threadId: null,
+      sourceUrl: "https://github.com/octo/example/pull/42#discussion_r1",
+    }),
+    "Queued for processing",
+  );
+
+  assert.deepEqual(ref, {
+    commentDatabaseId: 222,
+    replyKind: "general_comment",
+    body: `> _Could not post this status update in the review thread directly ([original comment](https://github.com/octo/example/pull/42#discussion_r1))._\n\nQueued for processing`,
+  });
+  assert.equal(comments.length, 1);
+  assert.ok(
+    String(comments[0]?.body).includes("Queued for processing"),
+    "fallback comment should contain original status body",
+  );
+  assert.ok(
+    String(comments[0]?.body).includes("original comment"),
+    "fallback comment should link to original review comment",
+  );
+
+  if (!ref) {
+    throw new Error("expected a status reply reference");
+  }
+
+  await updateStatusReply(
+    octokit as never,
+    { owner: "octo", repo: "example", number: 42 },
+    ref,
+    "Queued for processing\nVerifying changes",
+  );
+
+  assert.deepEqual(issueCommentUpdates, [
+    {
+      owner: "octo",
+      repo: "example",
+      comment_id: 222,
+      body: "Queued for processing\nVerifying changes",
+    },
+  ]);
+});
+
 test("postStatusReplyForFeedbackItem validates review-thread replies and updateStatusReply mutates the local ref", async () => {
   const requests: Array<{ route: string; params: Record<string, unknown> }> = [];
   const updatedReviewComments: Array<Record<string, unknown>> = [];
