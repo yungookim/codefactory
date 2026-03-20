@@ -1,0 +1,72 @@
+module.exports = {
+  content: ["./docs/index.html"],
+  darkMode: "class",
+  theme: {
+    extend: {
+      colors: {
+        "on-primary": "#001c8e",
+        "background": "#0e0e0e",
+        "inverse-on-surface": "#565554",
+        "primary-container": "#8999ff",
+        "surface-variant": "#262626",
+        "secondary-dim": "#9492ff",
+        "surface-bright": "#2c2c2c",
+        "outline-variant": "#494847",
+        "on-tertiary-container": "#5f0656",
+        "secondary-fixed": "#cfcdff",
+        "on-secondary-container": "#cecbff",
+        "on-secondary": "#110077",
+        "on-primary-container": "#001470",
+        "on-tertiary": "#6c1561",
+        "surface-container-highest": "#262626",
+        "on-background": "#ffffff",
+        "on-secondary-fixed-variant": "#4642aa",
+        "on-surface": "#ffffff",
+        "secondary-container": "#3b37a0",
+        "inverse-primary": "#2949ef",
+        "surface-container": "#1a1919",
+        "surface-tint": "#9ba8ff",
+        "primary": "#9ba8ff",
+        "on-primary-fixed-variant": "#001a88",
+        "tertiary-fixed-dim": "#e883d2",
+        "on-primary-fixed": "#000000",
+        "surface-container-high": "#201f1f",
+        "error-dim": "#d73357",
+        "tertiary-fixed": "#f790e0",
+        "on-tertiary-fixed": "#380033",
+        "surface-dim": "#0e0e0e",
+        "primary-dim": "#4963ff",
+        "surface-container-low": "#131313",
+        "tertiary": "#ffa3e9",
+        "error-container": "#a70138",
+        "primary-fixed": "#8999ff",
+        "on-secondary-fixed": "#28218d",
+        "on-error-container": "#ffb2b9",
+        "secondary-fixed-dim": "#bfbdff",
+        "tertiary-container": "#f790e0",
+        "surface": "#0e0e0e",
+        "on-error": "#490013",
+        "inverse-surface": "#fcf8f8",
+        "on-surface-variant": "#adaaaa",
+        "error": "#ff6e84",
+        "outline": "#777575",
+        "primary-fixed-dim": "#778aff",
+        "secondary": "#9492ff",
+        "tertiary-dim": "#e883d2",
+        "on-tertiary-fixed-variant": "#6a1460"
+      },
+      fontFamily: {
+        "headline": ["Inter"],
+        "body": ["Inter"],
+        "label": ["Inter"]
+      },
+      borderRadius: {
+        "DEFAULT": "0.25rem",
+        "lg": "0.5rem",
+        "xl": "0.75rem",
+        "full": "9999px"
+      }
+    }
+  },
+  plugins: []
+};
