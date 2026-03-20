@@ -1704,7 +1704,11 @@ export class PRBabysitter {
           // yet (e.g. previous run posted the reply but failed before
           // resolving). Resolve it now to keep conversations tidy.
           if (!item.threadId) {
-            throw new Error(`Missing review thread metadata for ${item.id}`);
+            await queueLog(pr.id, "warn", `Cannot resolve review thread for ${item.id}: thread ID unavailable (skipping)`, {
+              phase: "github.followup",
+              metadata: { feedbackId: item.id },
+            });
+            continue;
           }
 
           await this.github.resolveReviewThread(octokit, parsedPr, item.threadId);
