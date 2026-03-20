@@ -493,6 +493,44 @@ test("postFollowUpForFeedbackItem routes review and general comments to PR comme
   ]);
 });
 
+test("postFollowUpForFeedbackItem falls back to PR comment when review thread ID is missing", async () => {
+  const comments: Array<Record<string, unknown>> = [];
+
+  const octokit = {
+    request: async () => {
+      throw new Error("should not call graphql when falling back");
+    },
+    issues: {
+      createComment: async (params: Record<string, unknown>) => {
+        comments.push(params);
+        return { data: { id: 999 } };
+      },
+    },
+  };
+
+  await postFollowUpForFeedbackItem(
+    octokit as never,
+    { owner: "octo", repo: "example", number: 42 },
+    makeFeedbackItem({
+      threadId: null,
+      sourceUrl: "https://github.com/octo/example/pull/42#discussion_r1",
+    }),
+    "Addressed this feedback.",
+  );
+
+  assert.equal(comments.length, 1);
+  assert.equal(comments[0]?.owner, "octo");
+  assert.equal(comments[0]?.issue_number, 42);
+  assert.ok(
+    String(comments[0]?.body).includes("Addressed this feedback."),
+    "fallback comment should contain original body",
+  );
+  assert.ok(
+    String(comments[0]?.body).includes("original comment"),
+    "fallback comment should link to original review comment",
+  );
+});
+
 test("postStatusReplyForFeedbackItem validates review-thread replies and updateStatusReply mutates the local ref", async () => {
   const requests: Array<{ route: string; params: Record<string, unknown> }> = [];
   const updatedReviewComments: Array<Record<string, unknown>> = [];

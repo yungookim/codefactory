@@ -579,10 +579,13 @@ export async function postFollowUpForFeedbackItem(
 ): Promise<void> {
   if (item.replyKind === "review_thread") {
     if (!item.threadId) {
-      throw new GitHubIntegrationError(
-        `GitHub could not determine the review thread for feedback item ${item.id} on ${formatGitHubTarget(parsed)}.`,
-        502,
-      );
+      // Thread lookup failed (e.g. GraphQL pagination gap or timing issue).
+      // Fall back to a top-level PR comment so the audit trail is still visible.
+      const fallbackBody = item.sourceUrl
+        ? `> _Could not reply in the review thread directly ([original comment](${item.sourceUrl}))._\n\n${body}`
+        : body;
+      await replyToIssueComment(octokit, parsed, fallbackBody);
+      return;
     }
 
     await replyToReviewThread(octokit, parsed, item.threadId, body);
