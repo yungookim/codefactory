@@ -1,20 +1,6 @@
 # Code Factory
 
-```
-  SDLC PHASES
-  ──────────────────────────────────────────────────────────────────────
-  Plan  →  Design  →  Code  →  [ PR REVIEW ]  →  Deploy  →  Monitor
-                                 ↑
-                          🤖 AUTOMATED
-                     ┌─────────────────────┐
-                     │  • PR review        │  90% of deployment
-                     │  • Test runs        │  delay lives here
-                     │  • Code analysis    │
-                     │  • Address comments │
-                     └─────────────────────┘
-  ──────────────────────────────────────────────────────────────────────
-  Result: Dev is no longer the bottleneck. Shipping is.
-```
+<img src="docs/assets/sdlc-bottleneck.png" alt="SDLC Bottleneck Shift" />
 
 **Autonomous GitHub PR babysitter — watches your repos, triages review feedback, and dispatches AI agents to fix code.**
 
