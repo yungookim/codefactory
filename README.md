@@ -16,6 +16,24 @@
 <img width="1365" height="686" alt="SCR-20260318-qsva-2" src="https://github.com/user-attachments/assets/66dfa082-c732-4989-8b05-f19aa550acb5" />
 
 
+## Where Code Factory Fits in Your SDLC
+
+```
+  SDLC PHASES
+  ──────────────────────────────────────────────────────────────────────
+  Plan  →  Design  →  Code  →  [ PR REVIEW ]  →  Deploy  →  Monitor
+                                 ↑
+                          🤖 AUTOMATED
+                     ┌─────────────────────┐
+                     │  • PR review        │  90% of deployment
+                     │  • Test runs        │  delay lives here
+                     │  • Code analysis    │
+                     │  • Address comments │
+                     └─────────────────────┘
+  ──────────────────────────────────────────────────────────────────────
+  Result: Dev is no longer the bottleneck. Shipping is.
+```
+
 ## Why Code Factory?
 
 Managing PR feedback across multiple repositories is tedious. Review comments pile up, context-switching kills productivity, and small fixes sit idle for hours. Code Factory automates the entire feedback loop:
