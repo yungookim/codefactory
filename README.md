@@ -1,23 +1,5 @@
 # Code Factory
 
-**Autonomous GitHub PR babysitter — watches your repos, triages review feedback, and dispatches AI agents to fix code.**
-
-[![CI](https://github.com/yungookim/codefactory/actions/workflows/ci.yml/badge.svg)](https://github.com/yungookim/codefactory/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-green.svg)](https://nodejs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)](https://www.typescriptlang.org/)
-
----
-
-> Stop babysitting pull requests manually. Code Factory watches your GitHub repos, syncs review comments into a local dashboard, auto-triages feedback, and launches Claude or Codex agents to prepare fixes — all running on your machine.
-
----
-
-<img width="1365" height="686" alt="SCR-20260318-qsva-2" src="https://github.com/user-attachments/assets/66dfa082-c732-4989-8b05-f19aa550acb5" />
-
-
-## Where Code Factory Fits in Your SDLC
-
 ```
   SDLC PHASES
   ──────────────────────────────────────────────────────────────────────
@@ -33,6 +15,21 @@
   ──────────────────────────────────────────────────────────────────────
   Result: Dev is no longer the bottleneck. Shipping is.
 ```
+
+**Autonomous GitHub PR babysitter — watches your repos, triages review feedback, and dispatches AI agents to fix code.**
+
+[![CI](https://github.com/yungookim/codefactory/actions/workflows/ci.yml/badge.svg)](https://github.com/yungookim/codefactory/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-green.svg)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)](https://www.typescriptlang.org/)
+
+---
+
+> Stop babysitting pull requests manually. Code Factory watches your GitHub repos, syncs review comments into a local dashboard, auto-triages feedback, and launches Claude or Codex agents to prepare fixes — all running on your machine.
+
+---
+
+<img width="1365" height="686" alt="SCR-20260318-qsva-2" src="https://github.com/user-attachments/assets/66dfa082-c732-4989-8b05-f19aa550acb5" />
 
 ## Why Code Factory?
 
