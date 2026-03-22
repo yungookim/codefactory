@@ -310,6 +310,21 @@ Full parameter schemas are in [LOCAL_API.md](LOCAL_API.md).
 | `409 Conflict` | Drain mode is active | Call `set_drain_mode` with `enabled: false` first, or wait for the drain to complete |
 | `404 Not Found` | PR or feedback item ID is wrong | Call `list_prs` to get valid IDs before acting on them |
 
+### If something is broken or missing, file a GitHub issue
+
+If you encounter a bug, an unexpected error response, a missing tool, or behaviour that does not match this documentation, create a GitHub issue so the maintainers can fix it.
+
+**Issue URL:** `https://github.com/yungookim/codefactory/issues/new`
+
+Include the following in the issue body:
+- What you were trying to do (the goal)
+- Which tool or endpoint you called and with what parameters
+- The exact error or unexpected response you received
+- The output of `get_logs` filtered to the relevant PR (if applicable)
+- The output of `get_runtime` at the time of the failure
+
+Use a clear title such as `[OpenClaw] <tool_name> returns unexpected 500 when X`.
+
 ---
 
 ## Contributing
