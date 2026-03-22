@@ -722,6 +722,21 @@ export default function Dashboard() {
             <option value="sonnet">sonnet</option>
             <option value="haiku">haiku</option>
           </select>
+          <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={config?.autoResolveMergeConflicts ?? true}
+              onChange={(e) =>
+                updateConfigMutation.mutate({
+                  autoResolveMergeConflicts: e.target.checked,
+                })
+              }
+              disabled={updateConfigMutation.isPending}
+              data-testid="checkbox-auto-resolve-conflicts"
+              className="accent-foreground"
+            />
+            Auto-resolve conflicts
+          </label>
         </div>
       </header>
 

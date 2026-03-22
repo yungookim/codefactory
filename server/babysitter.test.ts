@@ -2139,3 +2139,83 @@ test("babysitPR errors when conflict resolution agent fails", async () => {
 
   delete process.env.CODEFACTORY_HOME;
 });
+
+test("babysitPR skips conflict resolution when autoResolveMergeConflicts is disabled", async () => {
+  const storage = new MemStorage();
+  await storage.updateConfig({ autoResolveMergeConflicts: false });
+  const pr = await storage.addPR({
+    number: 107,
+    title: "Conflict skip PR",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/conflict-skip",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/107",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "codefactory-home-"));
+  process.env.CODEFACTORY_HOME = worktreeRoot;
+
+  let mergeAttempted = false;
+  let conflictAgentCalled = false;
+  const pullSummary = makePullSummary(pr, { mergeable: false });
+
+  const gitRunner = makeGitRunCommand({
+    localHeadSha: "skip123",
+    remoteHeadSha: "skip123",
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    {
+      buildOctokit: async () => ({}) as never,
+      fetchFeedbackItemsForPR: async () => [],
+      fetchPullSummary: async () => pullSummary,
+      listFailingStatuses: async () => [],
+      listOpenPullsForRepo: async () => [],
+      postFollowUpForFeedbackItem: async () => undefined,
+      resolveReviewThread: async () => undefined,
+      resolveGitHubAuthToken: async () => "test-token",
+      addReactionToComment: async () => {},
+      postStatusReplyForFeedbackItem: async () => null,
+      updateStatusReply: async () => {},
+    },
+    {
+      resolveAgent: async () => "codex",
+      evaluateFixNecessityWithAgent: async () => ({
+        needsFix: false,
+        reason: "No fix needed",
+      }),
+      applyFixesWithAgent: async () => {
+        conflictAgentCalled = true;
+        return { code: 0, stdout: "", stderr: "" };
+      },
+      runCommand: async (command: string, args: string[], opts?: Record<string, unknown>) => {
+        if (command === "git" && args[0] === "merge") {
+          mergeAttempted = true;
+          return { code: 1, stdout: "", stderr: "CONFLICT" };
+        }
+        return gitRunner(command, args, opts);
+      },
+    },
+  );
+
+  await babysitter.babysitPR(pr.id, "codex");
+
+  const updated = await storage.getPR(pr.id);
+  const logs = await storage.getLogs(pr.id);
+
+  assert.equal(mergeAttempted, false, "Should not attempt merge when auto-resolve is disabled");
+  assert.equal(conflictAgentCalled, false, "Should not invoke conflict agent when auto-resolve is disabled");
+  assert.equal(updated?.status, "watching");
+  assert.ok(logs.some((log) => log.phase === "conflict" && log.message.includes("auto-resolve is disabled")));
+
+  delete process.env.CODEFACTORY_HOME;
+});

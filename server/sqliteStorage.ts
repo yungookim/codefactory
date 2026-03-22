@@ -16,6 +16,7 @@ type ConfigRow = {
   batch_window_ms: number;
   poll_interval_ms: number;
   max_changes_per_run: number;
+  auto_resolve_merge_conflicts: number;
   trusted_reviewers_json: string;
   ignored_bots_json: string;
 };
@@ -274,6 +275,7 @@ export class SqliteStorage implements IStorage {
     this.ensureColumn("feedback_items", "audit_token", "TEXT NOT NULL DEFAULT ''");
     this.ensureColumn("feedback_items", "status", "TEXT NOT NULL DEFAULT 'pending'");
     this.ensureColumn("feedback_items", "status_reason", "TEXT");
+    this.ensureColumn("config", "auto_resolve_merge_conflicts", "INTEGER NOT NULL DEFAULT 1");
 
     const configExists = this.db.prepare("SELECT 1 AS present FROM config WHERE id = 1").get() as { present: number } | undefined;
     if (!configExists) {
@@ -309,6 +311,7 @@ export class SqliteStorage implements IStorage {
       batchWindowMs: row.batch_window_ms,
       pollIntervalMs: row.poll_interval_ms,
       maxChangesPerRun: row.max_changes_per_run,
+      autoResolveMergeConflicts: Boolean(row.auto_resolve_merge_conflicts),
       watchedRepos,
       trustedReviewers: JSON.parse(row.trusted_reviewers_json),
       ignoredBots: JSON.parse(row.ignored_bots_json),
@@ -326,9 +329,10 @@ export class SqliteStorage implements IStorage {
         batch_window_ms,
         poll_interval_ms,
         max_changes_per_run,
+        auto_resolve_merge_conflicts,
         trusted_reviewers_json,
         ignored_bots_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         github_token = excluded.github_token,
         coding_agent = excluded.coding_agent,
@@ -337,6 +341,7 @@ export class SqliteStorage implements IStorage {
         batch_window_ms = excluded.batch_window_ms,
         poll_interval_ms = excluded.poll_interval_ms,
         max_changes_per_run = excluded.max_changes_per_run,
+        auto_resolve_merge_conflicts = excluded.auto_resolve_merge_conflicts,
         trusted_reviewers_json = excluded.trusted_reviewers_json,
         ignored_bots_json = excluded.ignored_bots_json
     `).run(
@@ -348,6 +353,7 @@ export class SqliteStorage implements IStorage {
       config.batchWindowMs,
       config.pollIntervalMs,
       config.maxChangesPerRun,
+      Number(config.autoResolveMergeConflicts),
       JSON.stringify(config.trustedReviewers),
       JSON.stringify(config.ignoredBots),
     );
@@ -779,7 +785,8 @@ export class SqliteStorage implements IStorage {
   async getConfig(): Promise<Config> {
     const row = this.db.prepare(`
       SELECT github_token, coding_agent, model, max_turns, batch_window_ms,
-             poll_interval_ms, max_changes_per_run, trusted_reviewers_json, ignored_bots_json
+             poll_interval_ms, max_changes_per_run, auto_resolve_merge_conflicts,
+             trusted_reviewers_json, ignored_bots_json
       FROM config
       WHERE id = 1
     `).get() as ConfigRow;

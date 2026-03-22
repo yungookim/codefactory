@@ -1341,7 +1341,15 @@ export class PRBabysitter {
         : [];
       const effectiveCommentTasks = replayCommentTasks.length > 0 ? replayCommentTasks : commentTasks;
       followUpTasks = collectGitHubFollowUpTasks(pr);
-      const hasConflicts = pullSummary.mergeable === false;
+      const prHasConflicts = pullSummary.mergeable === false;
+      const hasConflicts = prHasConflicts && config.autoResolveMergeConflicts;
+
+      if (prHasConflicts && !config.autoResolveMergeConflicts) {
+        await queueLog(pr.id, "warn", `PR #${pr.number} has merge conflicts but auto-resolve is disabled in settings`, {
+          phase: "conflict",
+          metadata: { baseRef: pullSummary.baseRef, mergeable: pullSummary.mergeable },
+        });
+      }
       const shouldRunForcedReplay = Boolean(forcedFixPrompt && !skipForcedReplay);
       const disableAgentExecution = Boolean(forcedFixPrompt && skipForcedReplay);
       const hasAgentWork = !disableAgentExecution && (effectiveCommentTasks.length > 0 || statusTasks.length > 0 || shouldRunForcedReplay);
