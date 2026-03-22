@@ -1,0 +1,26 @@
+[package]
+name = "code-factory"
+version = "1.0.0"
+description = "Autonomous GitHub PR babysitter desktop app"
+authors = ["Code Factory"]
+edition = "2021"
+
+[lib]
+name = "code_factory_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+portpicker = "0.1"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
