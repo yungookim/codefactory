@@ -1,6 +1,7 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { MemStorage } from "./memoryStorage";
+import { DEFAULT_CONFIG } from "./defaultConfig";
 import type { AgentRun, PR } from "@shared/schema";
 
 function makePRInput(overrides: Partial<Omit<PR, "id" | "addedAt">> = {}): Omit<PR, "id" | "addedAt"> {
@@ -324,9 +325,9 @@ describe("MemStorage", () => {
   describe("getConfig", () => {
     it("returns default config initially", async () => {
       const config = await storage.getConfig();
-      assert.equal(config.codingAgent, "claude");
-      assert.equal(config.model, "opus");
-      assert.equal(config.maxTurns, 15);
+      assert.equal(config.codingAgent, DEFAULT_CONFIG.codingAgent);
+      assert.equal(config.model, DEFAULT_CONFIG.model);
+      assert.equal(config.maxTurns, DEFAULT_CONFIG.maxTurns);
       assert.deepEqual(config.watchedRepos, []);
     });
   });
