@@ -322,6 +322,235 @@ export async function buildOctokit(config: Config): Promise<Octokit> {
   });
 }
 
+export type CodeReviewPresence = {
+  claude: boolean;
+  codex: boolean;
+  gemini: boolean;
+};
+
+export type RepoOnboardingStatus = {
+  repo: string;
+  accessible: boolean;
+  error?: string;
+  codeReviews: CodeReviewPresence;
+};
+
+export type OnboardingStatus = {
+  githubConnected: boolean;
+  githubError?: string;
+  githubUser?: string;
+  repos: RepoOnboardingStatus[];
+};
+
+type OnboardingStatusDeps = {
+  buildOctokitFn?: typeof buildOctokit;
+  resolveGitHubAuthTokenFn?: typeof resolveGitHubAuthToken;
+};
+
+export async function checkOnboardingStatus(
+  config: Config,
+  watchedRepos: string[],
+  deps: OnboardingStatusDeps = {},
+): Promise<OnboardingStatus> {
+  const buildOctokitFn = deps.buildOctokitFn ?? buildOctokit;
+  const resolveGitHubAuthTokenFn = deps.resolveGitHubAuthTokenFn ?? resolveGitHubAuthToken;
+  let octokit: Octokit;
+  let githubConnected = false;
+  let githubError: string | undefined;
+  let githubUser: string | undefined;
+
+  try {
+    octokit = await buildOctokitFn(config);
+    const auth = await resolveGitHubAuthTokenFn(config);
+    if (!auth) {
+      githubError = "No GitHub token found. Run `gh auth login` or set GITHUB_TOKEN, or enter a Personal Access Token in settings.";
+    } else {
+      const { data } = await octokit.rest.users.getAuthenticated();
+      githubConnected = true;
+      githubUser = data.login;
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    githubError = msg;
+    return { githubConnected: false, githubError, repos: [] };
+  }
+
+  const repos: RepoOnboardingStatus[] = await Promise.all(
+    watchedRepos.map(async (repoSlug): Promise<RepoOnboardingStatus> => {
+      const parsed = parseRepoSlug(repoSlug);
+      if (!parsed) {
+        return { repo: repoSlug, accessible: false, error: "Invalid repo slug", codeReviews: { claude: false, codex: false, gemini: false } };
+      }
+
+      try {
+        const { data: files } = await octokit.rest.repos.getContent({
+          owner: parsed.owner,
+          repo: parsed.repo,
+          path: ".github/workflows",
+        });
+
+        const fileList = Array.isArray(files) ? files : [];
+        const names = fileList.map((f) => ("name" in f ? f.name.toLowerCase() : ""));
+        const contentResults = await Promise.all(
+          fileList
+            .filter((f) => "name" in f && "path" in f && f.path && (f.name.endsWith(".yml") || f.name.endsWith(".yaml")))
+            .map(async (f) => {
+              try {
+                const { data: fileContent } = await octokit.rest.repos.getContent({
+                  owner: parsed.owner,
+                  repo: parsed.repo,
+                  path: f.path as string,
+                });
+                if (!Array.isArray(fileContent) && "content" in fileContent && fileContent.content) {
+                  return Buffer.from(fileContent.content, "base64").toString("utf-8");
+                }
+              } catch {
+                // Keep matching behavior: silently ignore per-file read failures.
+                return "";
+              }
+              return "";
+            }),
+        );
+        const allContent = contentResults.join("\n").toLowerCase();
+
+        const claude = names.some((n) => n.includes("claude")) || allContent.includes("claude-code-action") || allContent.includes("anthropics/claude");
+        const codex = names.some((n) => n.includes("codex")) || allContent.includes("openai/codex-action") || allContent.includes("codex-action");
+        const gemini = names.some((n) => n.includes("gemini")) || allContent.includes("gemini-code-assist") || allContent.includes("run-gemini-cli") || allContent.includes("google-github-actions/run-gemini");
+
+        return { repo: repoSlug, accessible: true, codeReviews: { claude, codex, gemini } };
+      } catch (err) {
+        const status = typeof (err as { status?: number })?.status === "number" ? (err as { status: number }).status : 0;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (status === 404) {
+          // Workflows dir doesn't exist — repo is accessible but no workflows
+          return { repo: repoSlug, accessible: true, codeReviews: { claude: false, codex: false, gemini: false } };
+        }
+        return { repo: repoSlug, accessible: false, error: msg, codeReviews: { claude: false, codex: false, gemini: false } };
+      }
+    }),
+  );
+
+  return { githubConnected, githubUser, repos };
+}
+
+export type ReviewTool = "claude" | "codex";
+
+const WORKFLOW_TEMPLATES: Record<ReviewTool, { filename: string; content: string }> = {
+  claude: {
+    filename: "claude-code-review.yml",
+    content: `name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  code-review:
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: \${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: "Review this pull request for code quality, correctness, and security. Post your findings as review comments."
+`,
+  },
+  codex: {
+    filename: "codex-code-review.yml",
+    content: `name: Codex Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  code-review:
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: openai/codex-action@v1
+        with:
+          openai-api-key: \${{ secrets.OPENAI_API_KEY }}
+          prompt: |
+            Review this pull request. Focus on:
+            - Code correctness and potential bugs
+            - Security issues
+            - Performance concerns
+            - Code style and readability
+            Post your review as GitHub PR review comments.
+`,
+  },
+};
+
+export async function installCodeReviewWorkflow(
+  config: Config,
+  repoSlug: string,
+  tool: ReviewTool,
+): Promise<{ path: string; url: string }> {
+  const parsed = parseRepoSlug(repoSlug);
+  if (!parsed) {
+    throw new GitHubIntegrationError(`Invalid repository: ${repoSlug}`, 400);
+  }
+
+  const octokit = await buildOctokit(config);
+  const template = WORKFLOW_TEMPLATES[tool];
+  const path = `.github/workflows/${template.filename}`;
+  const contentBase64 = Buffer.from(template.content).toString("base64");
+
+  // Check if file already exists to get its SHA (required for updates)
+  let existingSha: string | undefined;
+  try {
+    const { data } = await octokit.rest.repos.getContent({
+      owner: parsed.owner,
+      repo: parsed.repo,
+      path,
+    });
+    if (!Array.isArray(data) && "sha" in data) {
+      existingSha = data.sha;
+    }
+  } catch (err) {
+    const status = typeof (err as { status?: number })?.status === "number" ? (err as { status: number }).status : 0;
+    if (status !== 404) {
+      throw toGitHubIntegrationError(err, "workflow file check", parsed);
+    }
+    // 404 means file doesn't exist yet — that's fine
+  }
+
+  const commitMessage = existingSha
+    ? `ci: update ${tool} code review workflow`
+    : `ci: add ${tool} code review workflow`;
+
+  const response = await withGitHubErrorHandling("workflow file creation", parsed, () =>
+    octokit.rest.repos.createOrUpdateFileContents({
+      owner: parsed.owner,
+      repo: parsed.repo,
+      path,
+      message: commitMessage,
+      content: contentBase64,
+      ...(existingSha ? { sha: existingSha } : {}),
+    }),
+  );
+
+  return {
+    path,
+    url: response.data.content?.html_url ?? `https://github.com/${repoSlug}/blob/HEAD/${path}`,
+  };
+}
+
 export async function fetchPullSummary(
   octokit: Octokit,
   parsed: ParsedPRUrl,

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { Config, FeedbackItem } from "@shared/schema";
 import {
   GitHubIntegrationError,
+  checkOnboardingStatus,
   fetchFeedbackItemsForPR,
   postFollowUpForFeedbackItem,
   postStatusReplyForFeedbackItem,
@@ -46,6 +47,88 @@ function makeFeedbackItem(overrides: Partial<FeedbackItem> = {}): FeedbackItem {
     ...overrides,
   };
 }
+
+test("checkOnboardingStatus reads workflow files with authenticated API content calls", async () => {
+  const getContentCalls: Array<{ owner: string; repo: string; path: string }> = [];
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+
+  (globalThis as { fetch: typeof fetch }).fetch = (async () => {
+    fetchCalled = true;
+    throw new Error("Unexpected fetch call");
+  }) as typeof fetch;
+
+  const octokit = {
+    rest: {
+      users: {
+        getAuthenticated: async () => ({ data: { login: "octo" } }),
+      },
+      repos: {
+        getContent: async (params: { owner: string; repo: string; path: string }) => {
+          getContentCalls.push(params);
+
+          if (params.path === ".github/workflows") {
+            return {
+              data: [
+                {
+                  name: "ai-review.yml",
+                  path: ".github/workflows/ai-review.yml",
+                  download_url: "https://example.com/private-ai-review.yml",
+                },
+                {
+                  name: "fallback.yaml",
+                  path: ".github/workflows/fallback.yaml",
+                  download_url: "https://example.com/private-fallback.yaml",
+                },
+              ],
+            };
+          }
+
+          if (params.path === ".github/workflows/ai-review.yml") {
+            return {
+              data: {
+                content: Buffer.from("jobs:\n  code-review:\n    steps:\n      - uses: openai/codex-action@v1\n").toString("base64"),
+              },
+            };
+          }
+
+          if (params.path === ".github/workflows/fallback.yaml") {
+            throw new Error("simulated file read failure");
+          }
+
+          throw new Error(`Unexpected path: ${params.path}`);
+        },
+      },
+    },
+  };
+
+  try {
+    const status = await checkOnboardingStatus(
+      config,
+      ["octo/private-repo"],
+      {
+        buildOctokitFn: async () => octokit as never,
+        resolveGitHubAuthTokenFn: async () => "token",
+      },
+    );
+
+    assert.equal(status.githubConnected, true);
+    assert.equal(status.githubUser, "octo");
+    assert.equal(status.repos.length, 1);
+    assert.equal(status.repos[0]?.accessible, true);
+    assert.equal(status.repos[0]?.codeReviews.codex, true);
+    assert.equal(status.repos[0]?.codeReviews.claude, false);
+    assert.equal(status.repos[0]?.codeReviews.gemini, false);
+    assert.equal(fetchCalled, false, "expected workflow content loading to avoid unauthenticated fetch()");
+    assert.deepEqual(getContentCalls.map((call) => call.path), [
+      ".github/workflows",
+      ".github/workflows/ai-review.yml",
+      ".github/workflows/fallback.yaml",
+    ]);
+  } finally {
+    (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
+  }
+});
 
 test("fetchFeedbackItemsForPR keeps review bots that are not explicitly ignored", async () => {
   let callIndex = 0;
