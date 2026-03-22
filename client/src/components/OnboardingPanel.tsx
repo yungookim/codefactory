@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { queryClient, apiRequest } from "@/lib/queryClient";
 
 type CodeReviewPresence = {
   claude: boolean;
@@ -20,6 +21,9 @@ type OnboardingStatus = {
   githubUser?: string;
   repos: RepoOnboardingStatus[];
 };
+
+type InstallableTool = "claude" | "codex";
+type ReviewTool = InstallableTool | "gemini";
 
 const CLAUDE_WORKFLOW = `name: Claude Code Review
 
@@ -195,10 +199,68 @@ function GitHubSetupSection() {
   );
 }
 
-type ReviewTool = "claude" | "codex" | "gemini";
+function InstallButton({
+  repo,
+  tool,
+  onInstalled,
+}: {
+  repo: string;
+  tool: InstallableTool;
+  onInstalled: (url: string) => void;
+}) {
+  const [installedUrl, setInstalledUrl] = useState<string | null>(null);
+
+  const installMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/onboarding/install-review", { repo, tool });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error ?? "Installation failed");
+      }
+      return res.json() as Promise<{ path: string; url: string }>;
+    },
+    onSuccess: (data) => {
+      setInstalledUrl(data.url);
+      onInstalled(data.url);
+      // Refresh onboarding status so the tool shows as installed
+      void queryClient.invalidateQueries({ queryKey: ["/api/onboarding/status"] });
+    },
+  });
+
+  if (installedUrl) {
+    return (
+      <a
+        href={installedUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="border border-green-600 bg-green-600/10 px-3 py-1 text-[11px] uppercase tracking-wider text-green-500 transition-colors hover:bg-green-600/20"
+      >
+        Installed — view on GitHub →
+      </a>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        onClick={() => installMutation.mutate()}
+        disabled={installMutation.isPending}
+        className="border border-foreground bg-foreground px-3 py-1 text-[11px] uppercase tracking-wider text-background transition-colors hover:bg-foreground/80 disabled:opacity-50"
+      >
+        {installMutation.isPending ? "Installing…" : "Install workflow"}
+      </button>
+      {installMutation.isError && (
+        <span className="text-[11px] text-destructive">
+          {installMutation.error instanceof Error ? installMutation.error.message : "Failed"}
+        </span>
+      )}
+    </div>
+  );
+}
 
 function ReviewToolSetup({ tool, repo }: { tool: ReviewTool; repo: string }) {
   const [expanded, setExpanded] = useState(false);
+  const [installedUrl, setInstalledUrl] = useState<string | null>(null);
 
   const labels: Record<ReviewTool, string> = {
     claude: "Claude Code Review",
@@ -214,16 +276,39 @@ function ReviewToolSetup({ tool, repo }: { tool: ReviewTool; repo: string }) {
 
   return (
     <div className="border border-border">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center justify-between px-3 py-2 text-left transition-colors hover:bg-muted/20"
-      >
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between px-3 py-2">
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex flex-1 items-center gap-2 text-left transition-colors hover:opacity-70"
+        >
           <span className="text-[11px] font-medium">{labels[tool]}</span>
-          <span className="border border-border px-1 py-0 text-[10px] uppercase tracking-wider text-muted-foreground">not installed</span>
-        </div>
-        <span className="text-[10px] text-muted-foreground">{expanded ? "▲" : "▼"}</span>
-      </button>
+          {installedUrl ? (
+            <span className="border border-green-600 px-1 py-0 text-[10px] uppercase tracking-wider text-green-500">installed</span>
+          ) : (
+            <span className="border border-border px-1 py-0 text-[10px] uppercase tracking-wider text-muted-foreground">not installed</span>
+          )}
+          <span className="text-[10px] text-muted-foreground">{expanded ? "▲" : "▼"}</span>
+        </button>
+
+        {/* One-click install for Claude and Codex */}
+        {(tool === "claude" || tool === "codex") && !installedUrl && (
+          <InstallButton
+            repo={repo}
+            tool={tool}
+            onInstalled={(url) => setInstalledUrl(url)}
+          />
+        )}
+        {installedUrl && (
+          <a
+            href={installedUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] text-green-500 underline underline-offset-2"
+          >
+            View →
+          </a>
+        )}
+      </div>
 
       {expanded && (
         <div className="border-t border-border px-3 py-3 space-y-3">
@@ -231,6 +316,10 @@ function ReviewToolSetup({ tool, repo }: { tool: ReviewTool; repo: string }) {
 
           {tool === "claude" && (
             <div className="space-y-3">
+              <div className="border border-amber-500/30 bg-amber-500/5 p-2 text-[11px] text-muted-foreground">
+                The <strong>Install workflow</strong> button above creates the file in your repo automatically.
+                You still need to complete steps 1–2 below for the action to authenticate.
+              </div>
               <Step number={1}>
                 Install the{" "}
                 <a href="https://github.com/apps/claude" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
@@ -250,7 +339,7 @@ function ReviewToolSetup({ tool, repo }: { tool: ReviewTool; repo: string }) {
                 </a>.
               </Step>
               <Step number={3}>
-                Create <InlineCode>.github/workflows/claude-code-review.yml</InlineCode> in your repo with this content:
+                The workflow file will be created automatically when you click <strong>Install workflow</strong>. Or add it manually:
                 <CodeBlock code={CLAUDE_WORKFLOW} />
               </Step>
               <p className="text-[11px] text-muted-foreground">
@@ -268,6 +357,10 @@ function ReviewToolSetup({ tool, repo }: { tool: ReviewTool; repo: string }) {
 
           {tool === "codex" && (
             <div className="space-y-3">
+              <div className="border border-amber-500/30 bg-amber-500/5 p-2 text-[11px] text-muted-foreground">
+                The <strong>Install workflow</strong> button above creates the file in your repo automatically.
+                You still need to add the secret in step 1 below.
+              </div>
               <Step number={1}>
                 Add your OpenAI API key as a repository secret named <InlineCode>OPENAI_API_KEY</InlineCode> in{" "}
                 <a
@@ -280,7 +373,7 @@ function ReviewToolSetup({ tool, repo }: { tool: ReviewTool; repo: string }) {
                 </a>.
               </Step>
               <Step number={2}>
-                Create <InlineCode>.github/workflows/codex-code-review.yml</InlineCode> in your repo:
+                The workflow file will be created automatically when you click <strong>Install workflow</strong>. Or add it manually:
                 <CodeBlock code={CODEX_WORKFLOW} />
               </Step>
               <Step number={3}>
@@ -306,7 +399,7 @@ function ReviewToolSetup({ tool, repo }: { tool: ReviewTool; repo: string }) {
           {tool === "gemini" && (
             <div className="space-y-3">
               <div className="border border-border p-2 text-[11px] text-muted-foreground">
-                <strong>Recommended:</strong> Gemini Code Assist is a GitHub App — no workflow file needed.
+                <strong>Note:</strong> Gemini Code Assist is a GitHub App installed via the marketplace — it cannot be installed by pushing a workflow file.
               </div>
               <Step number={1}>
                 Go to the{" "}
@@ -395,7 +488,7 @@ export function OnboardingPanel() {
   if (isLoading || !status) return null;
 
   const reposNeedingSetup = status.repos.filter(
-    (r) => !r.accessible || !r.codeReviews.claude && !r.codeReviews.codex && !r.codeReviews.gemini,
+    (r) => !r.accessible || (!r.codeReviews.claude && !r.codeReviews.codex && !r.codeReviews.gemini),
   );
 
   const hasIssues = !status.githubConnected || reposNeedingSetup.length > 0;

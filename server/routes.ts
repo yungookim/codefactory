@@ -13,6 +13,7 @@ import {
   fetchPullSummary,
   formatRepoSlug,
   GitHubIntegrationError,
+  installCodeReviewWorkflow,
   parsePRUrl,
   parseRepoSlug,
 } from "./github";
@@ -457,6 +458,28 @@ export async function registerRoutes(
     const config = await storage.getConfig();
     const status = await checkOnboardingStatus(config, config.watchedRepos);
     res.json(status);
+  });
+
+  app.post("/api/onboarding/install-review", async (req, res) => {
+    try {
+      const { repo, tool } = z.object({
+        repo: z.string().min(1),
+        tool: z.enum(["claude", "codex"]),
+      }).parse(req.body);
+
+      const config = await storage.getConfig();
+      const result = await installCodeReviewWorkflow(config, repo, tool);
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: err.errors[0].message });
+      }
+      if (err instanceof GitHubIntegrationError) {
+        return res.status(err.statusCode).json({ error: err.message });
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: message });
+    }
   });
 
   // ── Config ─────────────────────────────────────────────────
