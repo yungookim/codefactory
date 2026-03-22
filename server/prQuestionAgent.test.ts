@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { MemStorage } from "./memoryStorage";
 import { answerPRQuestion } from "./prQuestionAgent";
-import type { PR, PRQuestion } from "@shared/schema";
+import type { PRQuestion } from "@shared/schema";
 import type { IStorage } from "./storage";
 
 /** Helper: create a minimal PR in storage and return its id. */
@@ -194,8 +194,7 @@ describe("answerPRQuestion", () => {
       get(target, prop, receiver) {
         if (prop === "getPR") {
           return async () => {
-            // eslint-disable-next-line no-throw-literal
-            throw "string error without Error wrapper";
+            throw new Error("string error without Error wrapper");
           };
         }
         return Reflect.get(target, prop, receiver);

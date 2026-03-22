@@ -27,7 +27,7 @@ function makeAgentRun(overrides: Partial<AgentRun> = {}): AgentRun {
   return {
     id: "run-1",
     prId: "pr-1",
-    preferredAgent: "codex",
+    preferredAgent: "claude",
     resolvedAgent: null,
     status: "running",
     phase: "init",
@@ -204,7 +204,7 @@ describe("MemStorage", () => {
         createdAt: "1999-01-01T00:00:00.000Z",
         status: "answered",
         answer: "The answer",
-      } as any);
+      } as unknown as Parameters<typeof storage.updateQuestion>[1]);
 
       assert.ok(updated);
       assert.equal(updated.id, q.id);
@@ -324,8 +324,8 @@ describe("MemStorage", () => {
   describe("getConfig", () => {
     it("returns default config initially", async () => {
       const config = await storage.getConfig();
-      assert.equal(config.codingAgent, "codex");
-      assert.equal(config.model, "sonnet");
+      assert.equal(config.codingAgent, "claude");
+      assert.equal(config.model, "opus");
       assert.equal(config.maxTurns, 15);
       assert.deepEqual(config.watchedRepos, []);
     });
@@ -337,7 +337,7 @@ describe("MemStorage", () => {
       assert.equal(updated.model, "opus");
       assert.equal(updated.maxTurns, 25);
       // Other fields preserved
-      assert.equal(updated.codingAgent, "codex");
+      assert.equal(updated.codingAgent, "claude");
     });
 
     it("returns the updated config", async () => {
