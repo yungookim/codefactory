@@ -189,7 +189,7 @@ function GitHubSetupSection() {
                 {" "}with <InlineCode>repo</InlineCode> and <InlineCode>read:user</InlineCode> scopes.
               </Step>
               <Step number={2}>
-                Paste it via the API: <InlineCode>curl -X PATCH http://localhost:5001/api/config -H 'Content-Type: application/json' -d '{"{"}\"githubToken\":\"ghp_your_token\"{"}"}'</InlineCode>
+                Paste it via the API: <InlineCode>{`curl -X PATCH http://localhost:5001/api/config -H 'Content-Type: application/json' -d '{"githubToken":"ghp_your_token"}'`}</InlineCode>
               </Step>
             </div>
           )}
@@ -208,8 +208,6 @@ function InstallButton({
   tool: InstallableTool;
   onInstalled: (url: string) => void;
 }) {
-  const [installedUrl, setInstalledUrl] = useState<string | null>(null);
-
   const installMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/onboarding/install-review", { repo, tool });
@@ -220,25 +218,11 @@ function InstallButton({
       return res.json() as Promise<{ path: string; url: string }>;
     },
     onSuccess: (data) => {
-      setInstalledUrl(data.url);
       onInstalled(data.url);
       // Refresh onboarding status so the tool shows as installed
       void queryClient.invalidateQueries({ queryKey: ["/api/onboarding/status"] });
     },
   });
-
-  if (installedUrl) {
-    return (
-      <a
-        href={installedUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="border border-green-600 bg-green-600/10 px-3 py-1 text-[11px] uppercase tracking-wider text-green-500 transition-colors hover:bg-green-600/20"
-      >
-        Installed — view on GitHub →
-      </a>
-    );
-  }
 
   return (
     <div className="flex items-center gap-2">

@@ -342,18 +342,26 @@ export type OnboardingStatus = {
   repos: RepoOnboardingStatus[];
 };
 
+type OnboardingStatusDeps = {
+  buildOctokitFn?: typeof buildOctokit;
+  resolveGitHubAuthTokenFn?: typeof resolveGitHubAuthToken;
+};
+
 export async function checkOnboardingStatus(
   config: Config,
   watchedRepos: string[],
+  deps: OnboardingStatusDeps = {},
 ): Promise<OnboardingStatus> {
+  const buildOctokitFn = deps.buildOctokitFn ?? buildOctokit;
+  const resolveGitHubAuthTokenFn = deps.resolveGitHubAuthTokenFn ?? resolveGitHubAuthToken;
   let octokit: Octokit;
   let githubConnected = false;
   let githubError: string | undefined;
   let githubUser: string | undefined;
 
   try {
-    octokit = await buildOctokit(config);
-    const auth = await resolveGitHubAuthToken(config);
+    octokit = await buildOctokitFn(config);
+    const auth = await resolveGitHubAuthTokenFn(config);
     if (!auth) {
       githubError = "No GitHub token found. Run `gh auth login` or set GITHUB_TOKEN, or enter a Personal Access Token in settings.";
     } else {
@@ -385,15 +393,22 @@ export async function checkOnboardingStatus(
         const names = fileList.map((f) => ("name" in f ? f.name.toLowerCase() : ""));
         const contentResults = await Promise.all(
           fileList
-            .filter((f) => "name" in f && (f.name.endsWith(".yml") || f.name.endsWith(".yaml")))
+            .filter((f) => "name" in f && "path" in f && f.path && (f.name.endsWith(".yml") || f.name.endsWith(".yaml")))
             .map(async (f) => {
-              if (!("download_url" in f) || !f.download_url) return "";
               try {
-                const resp = await fetch(f.download_url as string);
-                return resp.ok ? await resp.text() : "";
+                const { data: fileContent } = await octokit.rest.repos.getContent({
+                  owner: parsed.owner,
+                  repo: parsed.repo,
+                  path: f.path as string,
+                });
+                if (!Array.isArray(fileContent) && "content" in fileContent && fileContent.content) {
+                  return Buffer.from(fileContent.content, "base64").toString("utf-8");
+                }
               } catch {
+                // Keep matching behavior: silently ignore per-file read failures.
                 return "";
               }
+              return "";
             }),
         );
         const allContent = contentResults.join("\n").toLowerCase();
