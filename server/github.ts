@@ -322,6 +322,102 @@ export async function buildOctokit(config: Config): Promise<Octokit> {
   });
 }
 
+export type CodeReviewPresence = {
+  claude: boolean;
+  codex: boolean;
+  gemini: boolean;
+};
+
+export type RepoOnboardingStatus = {
+  repo: string;
+  accessible: boolean;
+  error?: string;
+  codeReviews: CodeReviewPresence;
+};
+
+export type OnboardingStatus = {
+  githubConnected: boolean;
+  githubError?: string;
+  githubUser?: string;
+  repos: RepoOnboardingStatus[];
+};
+
+export async function checkOnboardingStatus(
+  config: Config,
+  watchedRepos: string[],
+): Promise<OnboardingStatus> {
+  let octokit: Octokit;
+  let githubConnected = false;
+  let githubError: string | undefined;
+  let githubUser: string | undefined;
+
+  try {
+    octokit = await buildOctokit(config);
+    const auth = await resolveGitHubAuthToken(config);
+    if (!auth) {
+      githubError = "No GitHub token found. Run `gh auth login` or set GITHUB_TOKEN, or enter a Personal Access Token in settings.";
+    } else {
+      const { data } = await octokit.rest.users.getAuthenticated();
+      githubConnected = true;
+      githubUser = data.login;
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    githubError = msg;
+    return { githubConnected: false, githubError, repos: [] };
+  }
+
+  const repos: RepoOnboardingStatus[] = await Promise.all(
+    watchedRepos.map(async (repoSlug): Promise<RepoOnboardingStatus> => {
+      const parsed = parseRepoSlug(repoSlug);
+      if (!parsed) {
+        return { repo: repoSlug, accessible: false, error: "Invalid repo slug", codeReviews: { claude: false, codex: false, gemini: false } };
+      }
+
+      try {
+        const { data: files } = await octokit.rest.repos.getContent({
+          owner: parsed.owner,
+          repo: parsed.repo,
+          path: ".github/workflows",
+        });
+
+        const fileList = Array.isArray(files) ? files : [];
+        const names = fileList.map((f) => ("name" in f ? f.name.toLowerCase() : ""));
+        const contentResults = await Promise.all(
+          fileList
+            .filter((f) => "name" in f && (f.name.endsWith(".yml") || f.name.endsWith(".yaml")))
+            .map(async (f) => {
+              if (!("download_url" in f) || !f.download_url) return "";
+              try {
+                const resp = await fetch(f.download_url as string);
+                return resp.ok ? await resp.text() : "";
+              } catch {
+                return "";
+              }
+            }),
+        );
+        const allContent = contentResults.join("\n").toLowerCase();
+
+        const claude = names.some((n) => n.includes("claude")) || allContent.includes("claude-code-action") || allContent.includes("anthropics/claude");
+        const codex = names.some((n) => n.includes("codex")) || allContent.includes("openai/codex-action") || allContent.includes("codex-action");
+        const gemini = names.some((n) => n.includes("gemini")) || allContent.includes("gemini-code-assist") || allContent.includes("run-gemini-cli") || allContent.includes("google-github-actions/run-gemini");
+
+        return { repo: repoSlug, accessible: true, codeReviews: { claude, codex, gemini } };
+      } catch (err) {
+        const status = typeof (err as { status?: number })?.status === "number" ? (err as { status: number }).status : 0;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (status === 404) {
+          // Workflows dir doesn't exist — repo is accessible but no workflows
+          return { repo: repoSlug, accessible: true, codeReviews: { claude: false, codex: false, gemini: false } };
+        }
+        return { repo: repoSlug, accessible: false, error: msg, codeReviews: { claude: false, codex: false, gemini: false } };
+      }
+    }),
+  );
+
+  return { githubConnected, githubUser, repos };
+}
+
 export async function fetchPullSummary(
   octokit: Octokit,
   parsed: ParsedPRUrl,

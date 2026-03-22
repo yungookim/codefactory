@@ -9,6 +9,7 @@ import { createWatcherScheduler } from "./watcherScheduler";
 import { answerPRQuestion } from "./prQuestionAgent";
 import {
   buildOctokit,
+  checkOnboardingStatus,
   fetchPullSummary,
   formatRepoSlug,
   GitHubIntegrationError,
@@ -448,6 +449,14 @@ export async function registerRoutes(
     const prId = req.query.prId as string | undefined;
     const logs = await storage.getLogs(prId);
     res.json(logs);
+  });
+
+  // ── Onboarding ─────────────────────────────────────────────
+
+  app.get("/api/onboarding/status", async (_req, res) => {
+    const config = await storage.getConfig();
+    const status = await checkOnboardingStatus(config, config.watchedRepos);
+    res.json(status);
   });
 
   // ── Config ─────────────────────────────────────────────────
