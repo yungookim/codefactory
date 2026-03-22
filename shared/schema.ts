@@ -169,6 +169,7 @@ export const configSchema = z.object({
   batchWindowMs: z.number(),
   pollIntervalMs: z.number(),
   maxChangesPerRun: z.number(),
+  autoResolveMergeConflicts: z.boolean(),
   watchedRepos: z.array(z.string()),
   trustedReviewers: z.array(z.string()),
   ignoredBots: z.array(z.string()),

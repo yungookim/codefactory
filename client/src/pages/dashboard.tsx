@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import * as Collapsible from "@radix-ui/react-collapsible";
-import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { getRepoHref } from "@/lib/repoHref";
 import { FALLBACK_AGENT_MODELS, DEFAULT_AGENT_MODEL } from "@shared/schema";
@@ -747,6 +746,21 @@ export default function Dashboard() {
               </option>
             ))}
           </select>
+          <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={config?.autoResolveMergeConflicts ?? true}
+              onChange={(e) =>
+                updateConfigMutation.mutate({
+                  autoResolveMergeConflicts: e.target.checked,
+                })
+              }
+              disabled={updateConfigMutation.isPending}
+              data-testid="checkbox-auto-resolve-conflicts"
+              className="accent-foreground"
+            />
+            Auto-resolve conflicts
+          </label>
           <Link
             href="/settings"
             className="border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground"
