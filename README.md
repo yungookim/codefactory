@@ -1,5 +1,7 @@
 # Code Factory
 
+**Mission: get to unsupervised software development. Remove the human as the bottleneck.**
+
 **Autonomous GitHub PR babysitter — watches your repos, triages review feedback, and dispatches AI agents to fix code.**
 
 [![CI](https://github.com/yungookim/codefactory/actions/workflows/ci.yml/badge.svg)](https://github.com/yungookim/codefactory/actions/workflows/ci.yml)
