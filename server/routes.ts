@@ -15,6 +15,7 @@ import {
   parsePRUrl,
   parseRepoSlug,
 } from "./github";
+import { getAgentModels, startModelDiscoveryJob, stopModelDiscoveryJob } from "./modelDiscovery";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -62,12 +63,14 @@ export async function registerRoutes(
   await refreshWatcherSchedule();
   void babysitter.resumeInterruptedRuns();
   void runWatcher();
+  startModelDiscoveryJob();
 
   httpServer.on("close", () => {
     if (watcherTimer) {
       clearInterval(watcherTimer);
       watcherTimer = null;
     }
+    stopModelDiscoveryJob();
   });
 
   app.get("/api/runtime", async (_req, res) => {
@@ -448,6 +451,12 @@ export async function registerRoutes(
     const prId = req.query.prId as string | undefined;
     const logs = await storage.getLogs(prId);
     res.json(logs);
+  });
+
+  // ── Agent Models ─────────────────────────────────────────────
+
+  app.get("/api/agent-models", (_req, res) => {
+    res.json(getAgentModels());
   });
 
   // ── Config ─────────────────────────────────────────────────

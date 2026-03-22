@@ -126,14 +126,14 @@ export const askQuestionSchema = z.object({
   question: z.string().min(1).max(2000),
 });
 
-export const AGENT_MODELS: Record<"codex" | "claude", string[]> = {
-  codex: ["o3", "o4-mini", "gpt-4.1"],
-  claude: ["opus", "sonnet", "haiku"],
+export const FALLBACK_AGENT_MODELS: Record<"codex" | "claude", string[]> = {
+  codex: ["codex-mini-latest", "gpt-4.1", "o3", "o4-mini"],
+  claude: ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5-20251001"],
 };
 
 export const DEFAULT_AGENT_MODEL: Record<"codex" | "claude", string> = {
-  codex: "o3",
-  claude: "opus",
+  codex: "codex-mini-latest",
+  claude: "claude-sonnet-4-6",
 };
 
 export const configSchema = z.object({

@@ -3,7 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import * as Collapsible from "@radix-ui/react-collapsible";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { getRepoHref } from "@/lib/repoHref";
-import { AGENT_MODELS, DEFAULT_AGENT_MODEL } from "@shared/schema";
+import { FALLBACK_AGENT_MODELS, DEFAULT_AGENT_MODEL } from "@shared/schema";
 import type { Config, FeedbackItem, LogEntry, PR, PRQuestion } from "@shared/schema";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { toast } from "@/hooks/use-toast";
@@ -570,6 +570,11 @@ export default function Dashboard() {
     refetchInterval: 5000,
   });
 
+  const { data: agentModels } = useQuery<Record<string, string[]>>({
+    queryKey: ["/api/agent-models"],
+    refetchInterval: 60000,
+  });
+
   const { data: repos = [] } = useQuery<string[]>({
     queryKey: ["/api/repos"],
     refetchInterval: 5000,
@@ -689,7 +694,7 @@ export default function Dashboard() {
             value={config?.codingAgent ?? "codex"}
             onChange={(e) => {
               const newAgent = e.target.value as Config["codingAgent"];
-              const models = AGENT_MODELS[newAgent];
+              const models = agentModels?.[newAgent] ?? FALLBACK_AGENT_MODELS[newAgent];
               const currentModel = config?.model;
               const model = currentModel && models.includes(currentModel)
                 ? currentModel
@@ -718,7 +723,7 @@ export default function Dashboard() {
             data-testid="select-model"
             className="border border-border bg-transparent px-2 py-0.5 text-[11px] focus:border-foreground focus:outline-none disabled:opacity-50"
           >
-            {(AGENT_MODELS[(config?.codingAgent ?? "codex") as keyof typeof AGENT_MODELS] ?? AGENT_MODELS.codex).map(
+            {(agentModels?.[config?.codingAgent ?? "codex"] ?? FALLBACK_AGENT_MODELS[config?.codingAgent ?? "codex"]).map(
               (m) => (
                 <option key={m} value={m}>
                   {m}
