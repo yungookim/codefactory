@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import * as Collapsible from "@radix-ui/react-collapsible";
@@ -582,6 +582,15 @@ export default function Dashboard() {
     refetchInterval: 5000,
   });
 
+  const getModelsForAgent = (agent: Config["codingAgent"]) =>
+    agentModels?.[agent] ?? FALLBACK_AGENT_MODELS[agent];
+
+  const currentAgent = config?.codingAgent ?? "codex";
+  const modelsForCurrentAgent = useMemo(
+    () => getModelsForAgent(currentAgent),
+    [agentModels, currentAgent],
+  );
+
   const displayedPRs = viewMode === "active" ? prs : archivedPRs;
   const isArchived = viewMode === "archived";
 
@@ -702,7 +711,7 @@ export default function Dashboard() {
             value={config?.codingAgent ?? "codex"}
             onChange={(e) => {
               const newAgent = e.target.value as Config["codingAgent"];
-              const models = agentModels?.[newAgent] ?? FALLBACK_AGENT_MODELS[newAgent];
+              const models = getModelsForAgent(newAgent);
               const currentModel = config?.model;
               const model = currentModel && models.includes(currentModel)
                 ? currentModel
@@ -731,13 +740,11 @@ export default function Dashboard() {
             data-testid="select-model"
             className="border border-border bg-transparent px-2 py-0.5 text-[11px] focus:border-foreground focus:outline-none disabled:opacity-50"
           >
-            {(agentModels?.[config?.codingAgent ?? "codex"] ?? FALLBACK_AGENT_MODELS[config?.codingAgent ?? "codex"]).map(
-              (m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ),
-            )}
+            {modelsForCurrentAgent.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
           </select>
           <Link
             href="/settings"

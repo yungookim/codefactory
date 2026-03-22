@@ -30,56 +30,54 @@ export async function discoverModels(): Promise<AgentModels> {
 }
 
 async function discoverCodexModels(): Promise<string[]> {
-  if (!(await commandExists("codex"))) {
-    return FALLBACK_AGENT_MODELS.codex;
-  }
-
   try {
-    // `codex --help` lists supported model names
-    const result = await runCommand("codex", ["--help"], { timeoutMs: 10000 });
-    if (result.code !== 0) {
-      return FALLBACK_AGENT_MODELS.codex;
+    if (await commandExists("codex")) {
+      // `codex --help` lists supported model names
+      const result = await runCommand("codex", ["--help"], { timeoutMs: 10000 });
+      if (result.code === 0) {
+        const models = parseModelsFromHelp(result.stdout, "codex");
+        if (models.length > 0) {
+          return models;
+        }
+      }
     }
-
-    const models = parseModelsFromHelp(result.stdout, "codex");
-    return models.length > 0 ? models : FALLBACK_AGENT_MODELS.codex;
-  } catch {
-    return FALLBACK_AGENT_MODELS.codex;
+  } catch (err) {
+    console.error("Codex model discovery failed:", err);
   }
+
+  return FALLBACK_AGENT_MODELS.codex;
 }
 
 async function discoverClaudeModels(): Promise<string[]> {
-  if (!(await commandExists("claude"))) {
-    return FALLBACK_AGENT_MODELS.claude;
-  }
-
   try {
-    // Try `claude model list` first (added in newer versions)
-    const listResult = await runCommand("claude", ["model", "list"], {
-      timeoutMs: 15000,
-    });
-    if (listResult.code === 0 && listResult.stdout.trim()) {
-      const models = parseModelListOutput(listResult.stdout);
-      if (models.length > 0) {
-        return models;
+    if (await commandExists("claude")) {
+      // Try `claude model list` first (added in newer versions)
+      const listResult = await runCommand("claude", ["model", "list"], {
+        timeoutMs: 15000,
+      });
+      if (listResult.code === 0 && listResult.stdout.trim()) {
+        const models = parseModelListOutput(listResult.stdout);
+        if (models.length > 0) {
+          return models;
+        }
+      }
+
+      // Fallback: parse `claude --help` for model references
+      const helpResult = await runCommand("claude", ["--help"], {
+        timeoutMs: 10000,
+      });
+      if (helpResult.code === 0) {
+        const models = parseModelsFromHelp(helpResult.stdout, "claude");
+        if (models.length > 0) {
+          return models;
+        }
       }
     }
-
-    // Fallback: parse `claude --help` for model references
-    const helpResult = await runCommand("claude", ["--help"], {
-      timeoutMs: 10000,
-    });
-    if (helpResult.code === 0) {
-      const models = parseModelsFromHelp(helpResult.stdout, "claude");
-      if (models.length > 0) {
-        return models;
-      }
-    }
-
-    return FALLBACK_AGENT_MODELS.claude;
-  } catch {
-    return FALLBACK_AGENT_MODELS.claude;
+  } catch (err) {
+    console.error("Claude model discovery failed:", err);
   }
+
+  return FALLBACK_AGENT_MODELS.claude;
 }
 
 /**
@@ -119,15 +117,17 @@ export function startModelDiscoveryJob(): void {
     return;
   }
 
+  const runDiscovery = (context: "Initial" | "Periodic") => {
+    void discoverModels().catch((err) => {
+      console.error(`${context} model discovery failed:`, err);
+    });
+  };
+
   // Run discovery immediately (non-blocking)
-  void discoverModels().catch((err) => {
-    console.error("Initial model discovery failed:", err);
-  });
+  runDiscovery("Initial");
 
   discoveryTimer = setInterval(() => {
-    void discoverModels().catch((err) => {
-      console.error("Periodic model discovery failed:", err);
-    });
+    runDiscovery("Periodic");
   }, THREE_DAYS_MS);
 }
 
