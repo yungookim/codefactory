@@ -7,6 +7,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { getRepoHref } from "@/lib/repoHref";
 import { FALLBACK_AGENT_MODELS, DEFAULT_AGENT_MODEL } from "@shared/schema";
 import type { Config, FeedbackItem, LogEntry, PR, PRQuestion } from "@shared/schema";
+import { OnboardingPanel } from "@/components/OnboardingPanel";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -754,6 +755,8 @@ export default function Dashboard() {
           </Link>
         </div>
       </header>
+
+      <OnboardingPanel />
 
       <div className="flex flex-1 overflow-hidden">
         <div className="flex w-80 shrink-0 flex-col border-r border-border">
