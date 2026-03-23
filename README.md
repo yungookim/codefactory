@@ -1,6 +1,4 @@
-# Code Factory
-
-**Mission: get to unsupervised software development. Remove the human bottleneck.**
+# Code Factory - get to unsupervised software development
 
 **Autonomous GitHub PR babysitter — watches your repos, triages review feedback, and dispatches AI agents to fix code.**
 
