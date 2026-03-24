@@ -158,8 +158,7 @@ export async function applyFixesWithAgent(params: {
     "claude",
     [
       "-p",
-      "--permission-mode",
-      "auto",
+      "--dangerously-skip-permissions",
       ...modelArgs(model),
       prompt,
     ],
