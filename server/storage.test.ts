@@ -6,6 +6,7 @@ import { mkdtemp } from "fs/promises";
 import os from "os";
 import path from "path";
 import { DatabaseSync } from "node:sqlite";
+import { DEFAULT_CONFIG } from "./defaultConfig";
 import { getCodeFactoryPaths } from "./paths";
 import { SQLITE_LOCK_TIMEOUT_MS, SqliteStorage } from "./sqliteStorage";
 
@@ -163,6 +164,45 @@ test("SqliteStorage reloads config and PR state from the same root", async () =>
   assert.equal(logs[0]?.phase, "agent");
   assert.deepEqual(logs[0]?.metadata, { attempt: 1 });
   second.close();
+});
+
+test("SqliteStorage returns defaults when singleton rows are missing", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codefactory-storage-"));
+  const storage = new SqliteStorage(root);
+  const db = createRawDatabase(root);
+
+  try {
+    await storage.updateConfig({
+      githubToken: "tok_123",
+      watchedRepos: ["alex-morgan-o/lolodex"],
+      trustedReviewers: ["octocat"],
+      ignoredBots: ["custom[bot]"],
+    });
+    await storage.updateRuntimeState({
+      drainMode: true,
+      drainRequestedAt: "2026-03-18T10:00:00.000Z",
+      drainReason: "planned update",
+    });
+
+    db.exec("DELETE FROM config WHERE id = 1");
+    db.exec("DELETE FROM runtime_state WHERE id = 1");
+
+    const config = await storage.getConfig();
+    const runtime = await storage.getRuntimeState();
+
+    assert.deepEqual(config, {
+      ...DEFAULT_CONFIG,
+      watchedRepos: ["alex-morgan-o/lolodex"],
+    });
+    assert.deepEqual(runtime, {
+      drainMode: false,
+      drainRequestedAt: null,
+      drainReason: null,
+    });
+  } finally {
+    db.close();
+    storage.close();
+  }
 });
 
 test("SqliteStorage upsertAgentRun preserves the original createdAt", async () => {

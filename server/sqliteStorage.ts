@@ -35,6 +35,11 @@ const LEGACY_CONFIG_MODEL_PLACEHOLDER = "cli-managed";
 export const SQLITE_LOCK_TIMEOUT_MS = 1000;
 export const SQLITE_LOCK_RECOVERY_RETRIES = 1;
 const SQLITE_RETRYABLE_LOCK_ERRCODES = new Set([5, 6]);
+const DEFAULT_RUNTIME_STATE: RuntimeState = {
+  drainMode: false,
+  drainRequestedAt: null,
+  drainReason: null,
+};
 
 type SqliteError = Error & {
   code?: string;
@@ -440,7 +445,14 @@ export class SqliteStorage implements IStorage {
     this.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 
-  private parseConfigRow(row: ConfigRow, watchedRepos: string[]): Config {
+  private parseConfigRow(row: ConfigRow | undefined, watchedRepos: string[]): Config {
+    if (!row) {
+      return {
+        ...DEFAULT_CONFIG,
+        watchedRepos,
+      };
+    }
+
     return {
       githubToken: row.github_token,
       codingAgent: row.coding_agent,
@@ -533,7 +545,13 @@ export class SqliteStorage implements IStorage {
     };
   }
 
-  private parseRuntimeStateRow(row: RuntimeStateRow): RuntimeState {
+  private parseRuntimeStateRow(row: RuntimeStateRow | undefined): RuntimeState {
+    if (!row) {
+      return {
+        ...DEFAULT_RUNTIME_STATE,
+      };
+    }
+
     return {
       drainMode: Boolean(row.drain_mode),
       drainRequestedAt: row.drain_requested_at,
@@ -911,7 +929,7 @@ export class SqliteStorage implements IStorage {
       WHERE id = 1
     `);
 
-    return this.parseConfigRow(row as ConfigRow, this.getWatchedRepos());
+    return this.parseConfigRow(row, this.getWatchedRepos());
   }
 
   async updateConfig(updates: Partial<Config>): Promise<Config> {
@@ -928,7 +946,7 @@ export class SqliteStorage implements IStorage {
       WHERE id = 1
     `);
 
-    return this.parseRuntimeStateRow(row as RuntimeStateRow);
+    return this.parseRuntimeStateRow(row);
   }
 
   async updateRuntimeState(updates: Partial<RuntimeState>): Promise<RuntimeState> {
