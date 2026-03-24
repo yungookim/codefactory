@@ -88,13 +88,14 @@ describe("MemStorage", () => {
       // addedAt is immutable via updatePR, so we add PRs with a small delay
       // to ensure they get distinct timestamps for deterministic ordering.
       await storage.addPR(makePRInput({ title: "First" }));
-      await new Promise((r) => setTimeout(r, 2));
+      await new Promise((resolve) => setTimeout(resolve, 15));
       await storage.addPR(makePRInput({ title: "Second" }));
 
       const prs = await storage.getPRs();
       // Most recent first
       assert.equal(prs[0].title, "Second");
       assert.equal(prs[1].title, "First");
+      assert.ok(new Date(prs[0].addedAt).getTime() > new Date(prs[1].addedAt).getTime());
     });
   });
 
