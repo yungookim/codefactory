@@ -1,8 +1,17 @@
-import { randomUUID } from "crypto";
 import { mkdirSync } from "fs";
 import { DatabaseSync } from "node:sqlite";
 import { feedbackStatusEnum } from "@shared/schema";
 import type { AgentRun, AgentRunStatus, Config, FeedbackItem, LogEntry, PR, PRQuestion, RuntimeState, SocialChangelog } from "@shared/schema";
+import {
+  applyConfigUpdate,
+  applyPRQuestionUpdate,
+  applyPRUpdate,
+  applySocialChangelogUpdate,
+  createLogEntry,
+  createPR,
+  createPRQuestion,
+  createSocialChangelog,
+} from "@shared/models";
 import type { IStorage } from "./storage";
 import { getCodeFactoryPaths } from "./paths";
 import { DEFAULT_CONFIG } from "./defaultConfig";
@@ -20,6 +29,8 @@ type ConfigRow = {
   trusted_reviewers_json: string;
   ignored_bots_json: string;
 };
+
+const LEGACY_CONFIG_MODEL_PLACEHOLDER = "cli-managed";
 
 type PRRow = {
   id: string;
@@ -306,7 +317,6 @@ export class SqliteStorage implements IStorage {
     return {
       githubToken: row.github_token,
       codingAgent: row.coding_agent,
-      model: row.model,
       maxTurns: row.max_turns,
       batchWindowMs: row.batch_window_ms,
       pollIntervalMs: row.poll_interval_ms,
@@ -319,6 +329,10 @@ export class SqliteStorage implements IStorage {
   }
 
   private writeConfig(config: Config): void {
+    const legacyModelValue = (
+      this.db.prepare("SELECT model FROM config WHERE id = 1").get() as { model?: string } | undefined
+    )?.model ?? LEGACY_CONFIG_MODEL_PLACEHOLDER;
+
     this.db.prepare(`
       INSERT INTO config (
         id,
@@ -348,7 +362,7 @@ export class SqliteStorage implements IStorage {
       1,
       config.githubToken,
       config.codingAgent,
-      config.model,
+      legacyModelValue,
       config.maxTurns,
       config.batchWindowMs,
       config.pollIntervalMs,
@@ -562,12 +576,7 @@ export class SqliteStorage implements IStorage {
   }
 
   async addPR(pr: Omit<PR, "id" | "addedAt">): Promise<PR> {
-    const id = randomUUID();
-    const full: PR = {
-      ...pr,
-      id,
-      addedAt: new Date().toISOString(),
-    };
+    const full = createPR(pr);
 
     this.db.prepare(`
       INSERT INTO prs (
@@ -602,12 +611,7 @@ export class SqliteStorage implements IStorage {
       return undefined;
     }
 
-    const updated: PR = {
-      ...existing,
-      ...updates,
-      id: existing.id,
-      addedAt: existing.addedAt,
-    };
+    const updated = applyPRUpdate(existing, updates);
 
     this.db.prepare(`
       UPDATE prs
@@ -661,16 +665,7 @@ export class SqliteStorage implements IStorage {
   }
 
   async addQuestion(prId: string, question: string): Promise<PRQuestion> {
-    const entry: PRQuestion = {
-      id: randomUUID(),
-      prId,
-      question,
-      answer: null,
-      status: "pending",
-      error: null,
-      createdAt: new Date().toISOString(),
-      answeredAt: null,
-    };
+    const entry = createPRQuestion(prId, question);
 
     this.db.prepare(`
       INSERT INTO pr_questions (id, pr_id, question, answer, status, error, created_at, answered_at)
@@ -693,7 +688,7 @@ export class SqliteStorage implements IStorage {
       status: row.status, error: row.error, createdAt: row.created_at, answeredAt: row.answered_at,
     };
 
-    const updated = { ...current, ...updates, id: current.id, prId: current.prId, createdAt: current.createdAt };
+    const updated = applyPRQuestionUpdate(current, updates);
 
     this.db.prepare(`
       UPDATE pr_questions SET answer = ?, status = ?, error = ?, answered_at = ? WHERE id = ?
@@ -740,16 +735,7 @@ export class SqliteStorage implements IStorage {
       metadata?: Record<string, unknown> | null;
     },
   ): Promise<LogEntry> {
-    const entry: LogEntry = {
-      id: randomUUID(),
-      prId,
-      runId: details?.runId ?? null,
-      timestamp: new Date().toISOString(),
-      level,
-      phase: details?.phase ?? null,
-      message,
-      metadata: details?.metadata ?? null,
-    };
+    const entry = createLogEntry(prId, level, message, details);
 
     this.db.prepare(`
       INSERT INTO logs (id, pr_id, run_id, timestamp, level, phase, message, metadata_json)
@@ -796,14 +782,7 @@ export class SqliteStorage implements IStorage {
 
   async updateConfig(updates: Partial<Config>): Promise<Config> {
     const current = await this.getConfig();
-    const next: Config = {
-      ...current,
-      ...updates,
-      watchedRepos: updates.watchedRepos ? [...updates.watchedRepos] : current.watchedRepos,
-      trustedReviewers: updates.trustedReviewers ? [...updates.trustedReviewers] : current.trustedReviewers,
-      ignoredBots: updates.ignoredBots ? [...updates.ignoredBots] : current.ignoredBots,
-    };
-
+    const next = applyConfigUpdate(current, updates);
     this.writeConfig(next);
     return next;
   }
@@ -884,6 +863,9 @@ export class SqliteStorage implements IStorage {
   }
 
   async upsertAgentRun(run: AgentRun): Promise<AgentRun> {
+    const existing = await this.getAgentRun(run.id);
+    const stored = existing ? { ...run, createdAt: existing.createdAt } : run;
+
     this.db.prepare(`
       INSERT INTO agent_runs (
         id, pr_id, preferred_agent, resolved_agent, status, phase, prompt, initial_head_sha,
@@ -899,24 +881,23 @@ export class SqliteStorage implements IStorage {
         initial_head_sha = excluded.initial_head_sha,
         metadata_json = excluded.metadata_json,
         last_error = excluded.last_error,
-        created_at = excluded.created_at,
         updated_at = excluded.updated_at
     `).run(
-      run.id,
-      run.prId,
-      run.preferredAgent,
-      run.resolvedAgent,
-      run.status,
-      run.phase,
-      run.prompt,
-      run.initialHeadSha,
-      run.metadata ? JSON.stringify(run.metadata) : null,
-      run.lastError,
-      run.createdAt,
-      run.updatedAt,
+      stored.id,
+      stored.prId,
+      stored.preferredAgent,
+      stored.resolvedAgent,
+      stored.status,
+      stored.phase,
+      stored.prompt,
+      stored.initialHeadSha,
+      stored.metadata ? JSON.stringify(stored.metadata) : null,
+      stored.lastError,
+      stored.createdAt,
+      stored.updatedAt,
     );
 
-    return run;
+    return stored;
   }
 
   // ── Social changelogs ───────────────────────────────────────────────────
@@ -949,29 +930,28 @@ export class SqliteStorage implements IStorage {
   }
 
   async createSocialChangelog(data: Omit<SocialChangelog, "id" | "createdAt">): Promise<SocialChangelog> {
-    const id = randomUUID();
-    const createdAt = new Date().toISOString();
+    const entry = createSocialChangelog(data);
     this.db.prepare(`
       INSERT INTO social_changelogs (id, date, trigger_count, pr_summaries_json, content, status, error, created_at, completed_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      id,
-      data.date,
-      data.triggerCount,
-      JSON.stringify(data.prSummaries),
-      data.content,
-      data.status,
-      data.error,
-      createdAt,
-      data.completedAt,
+      entry.id,
+      entry.date,
+      entry.triggerCount,
+      JSON.stringify(entry.prSummaries),
+      entry.content,
+      entry.status,
+      entry.error,
+      entry.createdAt,
+      entry.completedAt,
     );
-    return { ...data, id, createdAt };
+    return entry;
   }
 
   async updateSocialChangelog(id: string, updates: Partial<SocialChangelog>): Promise<SocialChangelog | undefined> {
     const existing = await this.getSocialChangelog(id);
     if (!existing) return undefined;
-    const next = { ...existing, ...updates };
+    const next = applySocialChangelogUpdate(existing, updates);
     this.db.prepare(`
       UPDATE social_changelogs
       SET date = ?, trigger_count = ?, pr_summaries_json = ?, content = ?, status = ?, error = ?, created_at = ?, completed_at = ?

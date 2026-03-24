@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="CodeFactory Documentation — Configuration" />
+  <title>Configuration | CodeFactory Docs</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <nav class="top-nav">
+    <div class="nav-inner">
+      <a href="../../index.html" class="brand">CodeFactory</a>
+      <span class="nav-separator">/</span>
+      <span class="nav-section">Documentation</span>
+    </div>
+  </nav>
+  <div class="layout">
+    <main class="content">
+      <div class="breadcrumb"><a href="./index.html" class="nav-back">← All Documentation</a></div>
+      <article class="prose">
+        <h1>Configuration</h1>
+<p>CodeFactory is configured through environment variables and the dashboard settings page.</p>
+<h2>Environment Variables</h2>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>PORT</code></td>
+<td><code>5001</code></td>
+<td>HTTP server port</td>
+</tr>
+<tr>
+<td><code>CODEFACTORY_HOME</code></td>
+<td><code>~/.codefactory</code></td>
+<td>Data directory for state and logs</td>
+</tr>
+<tr>
+<td><code>PR_BABYSITTER_ROOT</code></td>
+<td><code>/tmp/pr-babysitter</code></td>
+<td>Root directory for agent worktrees</td>
+</tr>
+<tr>
+<td><code>CODEFACTORY_AGENT</code></td>
+<td>(auto)</td>
+<td>Preferred agent: <code>claude</code> or <code>codex</code></td>
+</tr>
+<tr>
+<td><code>DATABASE_URL</code></td>
+<td>(SQLite)</td>
+<td>PostgreSQL connection string (optional)</td>
+</tr>
+<tr>
+<td><code>GITHUB_TOKEN</code></td>
+<td>—</td>
+<td>Default GitHub personal access token</td>
+</tr>
+</tbody></table>
+<h2>Storage</h2>
+<h3>SQLite (Default)</h3>
+<p>By default, CodeFactory stores all state in a local SQLite database:</p>
+<pre><code>~/.codefactory/state.sqlite
+</code></pre>
+<p>No external database is required. This is ideal for single-user setups.</p>
+<h3>PostgreSQL</h3>
+<p>For team deployments, configure a PostgreSQL connection:</p>
+<pre><code class="language-bash">DATABASE_URL=postgresql://user:pass@localhost:5432/codefactory
+</code></pre>
+<p>Then push the schema:</p>
+<pre><code class="language-bash">npm run db:push
+</code></pre>
+<h2>Activity Logs</h2>
+<p>CodeFactory writes daily activity logs to:</p>
+<pre><code>~/.codefactory/log/
+</code></pre>
+<p>These logs mirror the dashboard activity feed and are useful for debugging or auditing agent behavior.</p>
+<h2>Dashboard Settings</h2>
+<p>The settings page in the dashboard provides a UI for:</p>
+<ul>
+<li><strong>GitHub Token management</strong> — Add, update, or rotate tokens.</li>
+<li><strong>Repository preferences</strong> — Per-repo agent and poll interval settings.</li>
+<li><strong>Model discovery</strong> — View and refresh available AI models.</li>
+<li><strong>Theme</strong> — Toggle between light and dark mode.</li>
+</ul>
+<h2>Build &amp; Deploy</h2>
+<h3>Development</h3>
+<pre><code class="language-bash">npm run dev          # Start dev server with hot reload
+</code></pre>
+<h3>Production</h3>
+<pre><code class="language-bash">npm run build        # Bundle client and server
+npm run start        # Run production server
+</code></pre>
+<h3>Desktop App</h3>
+<pre><code class="language-bash">npm run tauri:dev    # Tauri dev build
+npm run tauri:build  # Tauri production build
+</code></pre>
+
+      </article>
+    </main>
+  </div>
+</body>
+</html>
