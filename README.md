@@ -47,24 +47,8 @@ All of this happens locally on your machine. No hosted service, no data leaving 
 
 On startup, Code Factory restores the watcher schedule, resumes interrupted runs, and starts a sync cycle immediately.
 
-```mermaid
-flowchart LR
-  intake["Watched repos<br/>or direct PR URL"] --> watch["Watcher polls GitHub,<br/>auto-registers open PRs,<br/>and queues babysitter runs"]
-  watch --> sync["Sync PR metadata and review feedback<br/>into local state"]
-  sync --> store[("SQLite state<br/>+ mirrored logs")]
-  sync --> eval["Evaluate pending comments<br/>and failing CI statuses<br/>with the configured agent"]
-  eval --> needed{"Anything actionable?"}
-  needed -->|No| done["Return PR to watching state"]
-  needed -->|Yes| prep["Prepare app-owned repo cache<br/>and isolated PR worktree<br/>under ~/.codefactory"]
-  prep --> conflicts{"Merge conflicts?"}
-  conflicts -->|Yes| merge["Resolve base-branch conflicts<br/>inside the worktree"]
-  conflicts -->|No| fix["Run Codex or Claude<br/>on accepted tasks"]
-  merge --> fix
-  fix --> push["Agent runs verification,<br/>commits, and pushes<br/>to the PR branch"]
-  push --> verify["Re-sync GitHub, post follow-ups,<br/>resolve review threads, verify audit trail,<br/>and poll CI on the new head SHA"]
-  verify --> store
-  verify --> done
-```
+<img width="969" height="572" alt="image" src="https://github.com/user-attachments/assets/b9dbd102-ae2e-4837-a862-a0282bdfa0b8" />
+
 
 1. Add a repository to the watch list or register a PR directly by URL.
 2. The watcher polls GitHub, auto-registers open PRs, archives PRs that closed upstream, and queues babysitter runs.
