@@ -20,6 +20,7 @@ interface SidebarLink {
   href: string;
   icon: string;
   label: string;
+  slug?: string;
   external?: boolean;
 }
 
@@ -30,21 +31,28 @@ interface SidebarSection {
 
 /** Returns the sidebar sections. `activeSlug` is used to highlight the current page. */
 function getSidebarSections(): SidebarSection[] {
+  const docLink = (slug: string, icon: string, label: string): SidebarLink => ({
+    href: `./${slug}.html`,
+    icon,
+    label,
+    slug,
+  });
+
   return [
     {
       title: "Getting Started",
       links: [
         { href: "../../index.html", icon: "home", label: "Introduction" },
-        { href: "./getting-started.html", icon: "rocket_launch", label: "Quickstart" },
-        { href: "./configuration.html", icon: "settings", label: "Configuration" },
+        docLink("getting-started", "rocket_launch", "Quickstart"),
+        docLink("configuration", "settings", "Configuration"),
       ],
     },
     {
       title: "Core Concepts",
       links: [
-        { href: "./pr-babysitter.html", icon: "visibility", label: "PR Babysitter" },
-        { href: "./agent-dispatch.html", icon: "smart_toy", label: "Agent Dispatch" },
-        { href: "./pr-questions.html", icon: "chat_bubble", label: "PR Q&A" },
+        docLink("pr-babysitter", "visibility", "PR Babysitter"),
+        docLink("agent-dispatch", "smart_toy", "Agent Dispatch"),
+        docLink("pr-questions", "chat_bubble", "PR Q&A"),
       ],
     },
     {
@@ -73,8 +81,7 @@ function renderSidebar(activeSlug: string): string {
     .map((section) => {
       const links = section.links
         .map((link) => {
-          // Match active page by checking if href contains the slug
-          const isActive = link.href.includes(`./${activeSlug}.html`);
+          const isActive = link.slug === activeSlug;
           const activeClass = isActive ? " active" : "";
           const target = link.external ? ' target="_blank"' : "";
           return `          <a class="sidebar-link${activeClass}" href="${link.href}"${target}>
@@ -122,7 +129,7 @@ function htmlTemplate(title: string, content: string, activeSlug: string): strin
     <div class="header-left">
       <a href="../../index.html" class="header-logo">
         <div class="logo-icon">
-          <span class="material-symbols-outlined" style="font-size:14px;font-variation-settings:'FILL' 1,'wght' 600">bolt</span>
+          <span class="material-symbols-outlined">bolt</span>
         </div>
         CodeFactory
       </a>
@@ -254,6 +261,7 @@ function getStyles(): string {
     .header-logo .logo-icon span {
       font-size: 14px;
       color: #fff;
+      font-variation-settings: 'FILL' 1, 'wght' 600;
     }
 
     .header-badge {
