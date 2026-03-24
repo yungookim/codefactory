@@ -85,16 +85,15 @@ describe("MemStorage", () => {
     });
 
     it("sorts by addedAt descending", async () => {
-      const pr1 = await storage.addPR(makePRInput({ title: "First" }));
-      // Force a later addedAt on the second PR
-      await storage.updatePR(pr1.id, { addedAt: "2020-01-01T00:00:00.000Z" });
-      const pr2 = await storage.addPR(makePRInput({ title: "Second" }));
-      await storage.updatePR(pr2.id, { addedAt: "2025-01-01T00:00:00.000Z" });
+      await storage.addPR(makePRInput({ title: "First" }));
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      await storage.addPR(makePRInput({ title: "Second" }));
 
       const prs = await storage.getPRs();
       // Most recent first
       assert.equal(prs[0].title, "Second");
       assert.equal(prs[1].title, "First");
+      assert.ok(new Date(prs[0].addedAt).getTime() > new Date(prs[1].addedAt).getTime());
     });
   });
 
