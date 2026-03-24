@@ -1,5 +1,15 @@
-import { randomUUID } from "crypto";
 import type { AgentRun, AgentRunStatus, Config, LogEntry, PR, PRQuestion, RuntimeState, SocialChangelog } from "@shared/schema";
+import {
+  applyConfigUpdate,
+  applyPRQuestionUpdate,
+  applyPRUpdate,
+  applySocialChangelogUpdate,
+  createLogEntry,
+  createPR,
+  createPRQuestion,
+  createSocialChangelog,
+  touchAgentRun,
+} from "@shared/models";
 import type { IStorage } from "./storage";
 import { DEFAULT_CONFIG } from "./defaultConfig";
 
@@ -37,16 +47,15 @@ export class MemStorage implements IStorage {
   }
 
   async addPR(pr: Omit<PR, "id" | "addedAt">): Promise<PR> {
-    const id = randomUUID();
-    const full: PR = { ...pr, id, addedAt: new Date().toISOString() };
-    this.prs.set(id, full);
+    const full = createPR(pr);
+    this.prs.set(full.id, full);
     return full;
   }
 
   async updatePR(id: string, updates: Partial<PR>): Promise<PR | undefined> {
     const existing = this.prs.get(id);
     if (!existing) return undefined;
-    const updated = { ...existing, ...updates };
+    const updated = applyPRUpdate(existing, updates);
     this.prs.set(id, updated);
     return updated;
   }
@@ -62,16 +71,7 @@ export class MemStorage implements IStorage {
   }
 
   async addQuestion(prId: string, question: string): Promise<PRQuestion> {
-    const entry: PRQuestion = {
-      id: randomUUID(),
-      prId,
-      question,
-      answer: null,
-      status: "pending",
-      error: null,
-      createdAt: new Date().toISOString(),
-      answeredAt: null,
-    };
+    const entry = createPRQuestion(prId, question);
     this.questions.set(entry.id, entry);
     return entry;
   }
@@ -79,7 +79,7 @@ export class MemStorage implements IStorage {
   async updateQuestion(id: string, updates: Partial<PRQuestion>): Promise<PRQuestion | undefined> {
     const existing = this.questions.get(id);
     if (!existing) return undefined;
-    const updated = { ...existing, ...updates, id: existing.id, prId: existing.prId, createdAt: existing.createdAt };
+    const updated = applyPRQuestionUpdate(existing, updates);
     this.questions.set(id, updated);
     return updated;
   }
@@ -99,16 +99,7 @@ export class MemStorage implements IStorage {
       metadata?: Record<string, unknown> | null;
     },
   ): Promise<LogEntry> {
-    const entry: LogEntry = {
-      id: randomUUID(),
-      prId,
-      runId: details?.runId ?? null,
-      timestamp: new Date().toISOString(),
-      level,
-      phase: details?.phase ?? null,
-      message,
-      metadata: details?.metadata ?? null,
-    };
+    const entry = createLogEntry(prId, level, message, details);
 
     this.logs.push(entry);
     if (this.logs.length > 1000) {
@@ -132,7 +123,7 @@ export class MemStorage implements IStorage {
   }
 
   async updateConfig(updates: Partial<Config>): Promise<Config> {
-    this.config = { ...this.config, ...updates };
+    this.config = applyConfigUpdate(this.config, updates);
     return { ...this.config };
   }
 
@@ -167,8 +158,10 @@ export class MemStorage implements IStorage {
   }
 
   async upsertAgentRun(run: AgentRun): Promise<AgentRun> {
-    this.agentRuns.set(run.id, { ...run });
-    return { ...run };
+    const existing = this.agentRuns.get(run.id);
+    const stored = existing ? touchAgentRun(existing, run) : { ...run };
+    this.agentRuns.set(run.id, stored);
+    return { ...stored };
   }
 
   async getSocialChangelogs(): Promise<SocialChangelog[]> {
@@ -188,7 +181,7 @@ export class MemStorage implements IStorage {
   }
 
   async createSocialChangelog(data: Omit<SocialChangelog, "id" | "createdAt">): Promise<SocialChangelog> {
-    const entry: SocialChangelog = { ...data, id: randomUUID(), createdAt: new Date().toISOString() };
+    const entry = createSocialChangelog(data);
     this.socialChangelogs.set(entry.id, entry);
     return entry;
   }
@@ -196,7 +189,7 @@ export class MemStorage implements IStorage {
   async updateSocialChangelog(id: string, updates: Partial<SocialChangelog>): Promise<SocialChangelog | undefined> {
     const existing = this.socialChangelogs.get(id);
     if (!existing) return undefined;
-    const updated = { ...existing, ...updates };
+    const updated = applySocialChangelogUpdate(existing, updates);
     this.socialChangelogs.set(id, updated);
     return updated;
   }
