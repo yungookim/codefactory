@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="CodeFactory Documentation — PR Babysitter" />
+  <title>PR Babysitter | CodeFactory Docs</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <nav class="top-nav">
+    <div class="nav-inner">
+      <a href="../../index.html" class="brand">CodeFactory</a>
+      <span class="nav-separator">/</span>
+      <span class="nav-section">Documentation</span>
+    </div>
+  </nav>
+  <div class="layout">
+    <main class="content">
+      <div class="breadcrumb"><a href="./index.html" class="nav-back">← All Documentation</a></div>
+      <article class="prose">
+        <h1>PR Babysitter</h1>
+<p>The PR Babysitter is CodeFactory&#39;s core feature — an autonomous system that continuously monitors your GitHub pull requests and takes action on review feedback without manual intervention.</p>
+<h2>How It Works</h2>
+<h3>1. Repository Watching</h3>
+<p>When you add a repository to CodeFactory, the babysitter begins polling for open pull requests. It tracks:</p>
+<ul>
+<li>New PRs opened against the repository.</li>
+<li>Review comments and change requests on existing PRs.</li>
+<li>Status changes (approvals, dismissals, re-requests).</li>
+</ul>
+<h3>2. Review Sync</h3>
+<p>Every review comment is captured and stored locally. CodeFactory understands GitHub&#39;s threaded review model:</p>
+<ul>
+<li><strong>Top-level review comments</strong> — general feedback on the PR.</li>
+<li><strong>Inline comments</strong> — feedback attached to specific lines of code.</li>
+<li><strong>Review threads</strong> — multi-message conversations about a specific change.</li>
+</ul>
+<h3>3. Feedback Triage</h3>
+<p>Not all feedback is equal. CodeFactory classifies each piece of feedback:</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Description</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Blocking</strong></td>
+<td>Must be fixed before merge</td>
+<td>Agent dispatched immediately</td>
+</tr>
+<tr>
+<td><strong>Suggestion</strong></td>
+<td>Improvement that should be considered</td>
+<td>Queued for agent review</td>
+</tr>
+<tr>
+<td><strong>Nitpick</strong></td>
+<td>Style or preference issue</td>
+<td>Logged but deprioritized</td>
+</tr>
+<tr>
+<td><strong>Question</strong></td>
+<td>Reviewer needs clarification</td>
+<td>Flagged for human response</td>
+</tr>
+</tbody></table>
+<h3>4. Automated Resolution</h3>
+<p>For actionable feedback, CodeFactory:</p>
+<ol>
+<li>Creates an <strong>isolated worktree</strong> — a clean copy of the branch.</li>
+<li>Dispatches an <strong>AI agent</strong> (Claude Code or OpenAI Codex) with the feedback context.</li>
+<li>The agent makes changes, runs tests, and validates the fix.</li>
+<li>Changes are <strong>committed and pushed</strong> back to the PR branch.</li>
+</ol>
+<h2>Feedback Lifecycle</h2>
+<p>Each feedback item moves through a defined state machine:</p>
+<pre><code>pending → triaged → dispatched → resolved
+                  ↘ skipped
+</code></pre>
+<ul>
+<li><strong>pending</strong> — Feedback just synced from GitHub.</li>
+<li><strong>triaged</strong> — Classified by category and priority.</li>
+<li><strong>dispatched</strong> — An agent is actively working on it.</li>
+<li><strong>resolved</strong> — The agent successfully addressed the feedback.</li>
+<li><strong>skipped</strong> — Determined to not need automated action.</li>
+</ul>
+<h2>Merge Conflict Resolution</h2>
+<p>When a PR branch falls behind the base branch, CodeFactory can automatically:</p>
+<ol>
+<li>Detect the conflict.</li>
+<li>Rebase the branch.</li>
+<li>Use an AI agent to resolve non-trivial merge conflicts.</li>
+<li>Push the resolved branch.</li>
+</ol>
+<h2>Configuration</h2>
+<p>You can control babysitter behavior per repository:</p>
+<ul>
+<li><strong>Poll interval</strong> — How often to check for new reviews (default: 60 seconds).</li>
+<li><strong>Auto-dispatch</strong> — Whether to automatically dispatch agents or require approval.</li>
+<li><strong>Agent preference</strong> — Choose between Claude Code, OpenAI Codex, or let CodeFactory decide.</li>
+</ul>
+<p>See <a href="./configuration.html">Configuration</a> for details.</p>
+
+      </article>
+    </main>
+  </div>
+</body>
+</html>

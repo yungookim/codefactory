@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="CodeFactory Documentation — Getting Started" />
+  <title>Getting Started | CodeFactory Docs</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <nav class="top-nav">
+    <div class="nav-inner">
+      <a href="../../index.html" class="brand">CodeFactory</a>
+      <span class="nav-separator">/</span>
+      <span class="nav-section">Documentation</span>
+    </div>
+  </nav>
+  <div class="layout">
+    <main class="content">
+      <div class="breadcrumb"><a href="./index.html" class="nav-back">← All Documentation</a></div>
+      <article class="prose">
+        <h1>Getting Started</h1>
+<p>Welcome to CodeFactory — the autonomous PR babysitter that watches your repositories, triages review feedback, and dispatches AI agents to fix code.</p>
+<h2>Prerequisites</h2>
+<ul>
+<li><strong>Node.js 22+</strong> — <a href="https://nodejs.org/">Download</a></li>
+<li><strong>Git</strong> — installed and configured</li>
+<li><strong>GitHub Personal Access Token</strong> — with <code>repo</code> scope (<a href="https://github.com/settings/tokens">create one</a>)</li>
+</ul>
+<h2>Installation</h2>
+<p>Clone the repository and install dependencies:</p>
+<pre><code class="language-bash">git clone https://github.com/yungookim/codefactory.git
+cd codefactory
+npm install
+</code></pre>
+<h2>Quick Start</h2>
+<h3>1. Start the development server</h3>
+<pre><code class="language-bash">npm run dev
+</code></pre>
+<p>This launches the dashboard at <a href="http://localhost:5001">http://localhost:5001</a>.</p>
+<h3>2. Connect a GitHub repository</h3>
+<ol>
+<li>Open the dashboard in your browser.</li>
+<li>Click <strong>Add Repository</strong> and paste the URL of a GitHub repository you manage.</li>
+<li>Enter your GitHub Personal Access Token when prompted.</li>
+</ol>
+<h3>3. Watch CodeFactory work</h3>
+<p>Once connected, CodeFactory will:</p>
+<ul>
+<li><strong>Monitor</strong> open pull requests in real time.</li>
+<li><strong>Sync</strong> review comments and change requests.</li>
+<li><strong>Triage</strong> feedback into actionable tasks.</li>
+<li><strong>Dispatch</strong> AI agents (Claude Code or OpenAI Codex) to fix issues.</li>
+<li><strong>Push</strong> the fixes back to the PR branch.</li>
+</ul>
+<h2>Desktop App</h2>
+<p>CodeFactory is also available as a native desktop application powered by Tauri:</p>
+<pre><code class="language-bash">npm run tauri:dev    # Development
+npm run tauri:build  # Production build
+</code></pre>
+<h2>Next Steps</h2>
+<ul>
+<li><a href="./pr-babysitter.html">PR Babysitter</a> — Learn how autonomous PR monitoring works.</li>
+<li><a href="./agent-dispatch.html">Agent Dispatch</a> — Understand how AI agents are dispatched to fix code.</li>
+<li><a href="./configuration.html">Configuration</a> — Customize CodeFactory for your workflow.</li>
+</ul>
+
+      </article>
+    </main>
+  </div>
+</body>
+</html>

@@ -14,6 +14,7 @@ import { marked } from "marked";
 
 const DOCS_DIR = path.resolve(import.meta.dirname, "../docs/public");
 const OUT_DIR = path.join(DOCS_DIR, "_site");
+const SHARED_STYLESHEET = "styles.css";
 
 /** Sidebar navigation items — mirrors the main docs/index.html sidebar */
 interface SidebarLink {
@@ -110,6 +111,11 @@ const GITHUB_SVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="curren
 
 /** HTML template that wraps rendered markdown content with header + sidebar */
 function htmlTemplate(title: string, content: string, activeSlug: string): string {
+  const isIndex = activeSlug === "__index__";
+  const navBackLink = isIndex
+    ? `<a href="../../index.html" class="nav-back">← Back to CodeFactory</a>`
+    : `<a href="./index.html" class="nav-back">← All Documentation</a>`;
+
   return `<!DOCTYPE html>
 <html class="dark" lang="en">
 <head>
@@ -120,6 +126,7 @@ function htmlTemplate(title: string, content: string, activeSlug: string): strin
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="${SHARED_STYLESHEET}" />
   <style>${getStyles()}</style>
 </head>
 <body>
@@ -165,6 +172,7 @@ ${renderSidebar(activeSlug)}
   <!-- ── Main ── -->
   <main class="doc-main">
     <div class="doc-content">
+      <div class="breadcrumb">${navBackLink}</div>
       <article class="prose">
         ${content}
       </article>
@@ -175,6 +183,7 @@ ${renderSidebar(activeSlug)}
 </html>`;
 }
 
+/** Layout styles that align generated docs pages with docs/index.html. */
 function getStyles(): string {
   return `
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -605,7 +614,6 @@ function getStyles(): string {
     }
   `;
 }
-
 interface DocMeta {
   slug: string;
   title: string;
@@ -672,6 +680,9 @@ async function main() {
     fs.rmSync(OUT_DIR, { recursive: true });
   }
   fs.mkdirSync(OUT_DIR, { recursive: true });
+
+  // Copy the shared stylesheet so the source stays lintable and maintainable.
+  fs.copyFileSync(path.join(DOCS_DIR, SHARED_STYLESHEET), path.join(OUT_DIR, SHARED_STYLESHEET));
 
   // Find all .md files
   const files = fs.readdirSync(DOCS_DIR).filter((f) => f.endsWith(".md"));
