@@ -151,8 +151,7 @@ export async function applyFixesWithAgent(params: {
     "claude",
     [
       "-p",
-      "--permission-mode",
-      "auto",
+      "--dangerously-skip-permissions",
       prompt,
     ],
     { cwd, env, timeoutMs: 900000, onStdoutChunk, onStderrChunk },
