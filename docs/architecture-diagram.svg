@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 380" width="900" height="380" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif">
+
+  <!-- Background -->
+  <rect width="900" height="380" fill="white"/>
+
+  <!-- CODEFACTORY outer box -->
+  <rect x="90" y="30" width="700" height="310" rx="2" fill="none" stroke="#b0b0b0" stroke-width="1"/>
+  <!-- CODEFACTORY label -->
+  <text x="440" y="24" text-anchor="middle" font-size="11" fill="#666" letter-spacing="2">CODEFACTORY</text>
+
+  <!-- Context box -->
+  <rect x="110" y="50" width="660" height="275" rx="2" fill="none" stroke="#b0b0b0" stroke-width="1"/>
+  <!-- Context label -->
+  <text x="160" y="44" text-anchor="middle" font-size="11" fill="#555">Context</text>
+  <!-- Horizontal lines flanking the label -->
+  <line x1="110" y1="50" x2="130" y2="50" stroke="#b0b0b0" stroke-width="1"/>
+  <line x1="190" y1="50" x2="770" y2="50" stroke="#b0b0b0" stroke-width="1"/>
+
+  <!-- Context items (left column) -->
+  <text x="165" y="105" text-anchor="middle" font-size="12" fill="#333">PR Metadata</text>
+  <text x="165" y="130" text-anchor="middle" font-size="12" fill="#333">Review Comments</text>
+  <text x="165" y="155" text-anchor="middle" font-size="12" fill="#333">CI Status</text>
+  <text x="165" y="180" text-anchor="middle" font-size="12" fill="#333">Code Diffs</text>
+  <text x="165" y="205" text-anchor="middle" font-size="12" fill="#333">Feedback History</text>
+  <text x="165" y="230" text-anchor="middle" font-size="12" fill="#333">Audit Logs</text>
+
+  <!-- Rules box -->
+  <rect x="330" y="70" width="420" height="235" rx="2" fill="none" stroke="#b0b0b0" stroke-width="1"/>
+  <!-- Rules label -->
+  <text x="490" y="64" text-anchor="middle" font-size="11" fill="#555">Rules</text>
+  <line x1="330" y1="70" x2="460" y2="70" stroke="#b0b0b0" stroke-width="1"/>
+  <line x1="520" y1="70" x2="750" y2="70" stroke="#b0b0b0" stroke-width="1"/>
+
+  <!-- Rules items -->
+  <text x="390" y="125" text-anchor="middle" font-size="12" fill="#333">Triage Rules</text>
+  <text x="390" y="150" text-anchor="middle" font-size="12" fill="#333">Agent Config</text>
+  <text x="390" y="175" text-anchor="middle" font-size="12" fill="#333">Permissions</text>
+
+  <!-- Agents box -->
+  <rect x="530" y="95" width="195" height="185" rx="2" fill="none" stroke="#b0b0b0" stroke-width="1"/>
+  <!-- Agents label -->
+  <text x="615" y="89" text-anchor="middle" font-size="11" fill="#555">Agents</text>
+  <line x1="530" y1="95" x2="585" y2="95" stroke="#b0b0b0" stroke-width="1"/>
+  <line x1="645" y1="95" x2="725" y2="95" stroke="#b0b0b0" stroke-width="1"/>
+
+  <!-- Agent visual (stacked horizontal lines representing code/agent activity) -->
+  <rect x="555" y="115" width="120" height="8" rx="1" fill="#d0d0d0"/>
+  <rect x="555" y="128" width="100" height="8" rx="1" fill="#d8d8d8"/>
+  <rect x="555" y="141" width="110" height="8" rx="1" fill="#d0d0d0"/>
+  <rect x="555" y="154" width="90" height="8" rx="1" fill="#e0e0e0"/>
+  <rect x="555" y="167" width="115" height="8" rx="1" fill="#d0d0d0"/>
+  <rect x="555" y="180" width="95" height="8" rx="1" fill="#d8d8d8"/>
+  <rect x="555" y="193" width="108" height="8" rx="1" fill="#d0d0d0"/>
+  <rect x="555" y="206" width="85" height="8" rx="1" fill="#e0e0e0"/>
+  <!-- Vertical accent line -->
+  <rect x="548" y="115" width="3" height="99" rx="1" fill="#888"/>
+
+  <!-- Agent labels -->
+  <text x="620" y="245" text-anchor="middle" font-size="11" fill="#555">Claude / Codex</text>
+
+  <!-- Left side: GitHub inputs (bidirectional) -->
+  <!-- Arrow line -->
+  <line x1="20" y1="188" x2="110" y2="188" stroke="#888" stroke-width="1.2"/>
+  <!-- Left arrowhead -->
+  <polygon points="20,188 30,183 30,193" fill="#888"/>
+  <!-- Right arrowhead -->
+  <polygon points="110,188 100,183 100,193" fill="#888"/>
+
+  <!-- Left labels -->
+  <text x="55" y="158" text-anchor="middle" font-size="11.5" fill="#333">Pull Requests</text>
+  <text x="55" y="178" text-anchor="middle" font-size="11.5" fill="#333">Review Comments</text>
+  <text x="55" y="198" text-anchor="middle" font-size="11.5" fill="#333">CI Failures</text>
+  <text x="55" y="218" text-anchor="middle" font-size="11.5" fill="#333">Feedback</text>
+
+  <!-- Bracket / brace for left labels -->
+  <line x1="88" y1="152" x2="90" y2="152" stroke="#aaa" stroke-width="1"/>
+  <line x1="88" y1="152" x2="88" y2="222" stroke="#aaa" stroke-width="1"/>
+  <line x1="88" y1="222" x2="90" y2="222" stroke="#aaa" stroke-width="1"/>
+
+  <!-- Right side: output -->
+  <!-- Arrow line -->
+  <line x1="790" y1="188" x2="870" y2="188" stroke="#888" stroke-width="1.2"/>
+  <!-- Right arrowhead -->
+  <polygon points="870,188 860,183 860,193" fill="#888"/>
+
+  <!-- Right label -->
+  <text x="880" y="183" text-anchor="middle" font-size="11.5" fill="#333">Merged</text>
+  <text x="880" y="198" text-anchor="middle" font-size="11.5" fill="#333">Code</text>
+
+  <!-- Bidirectional arrow between Context items and Rules box -->
+  <line x1="245" y1="188" x2="330" y2="188" stroke="#888" stroke-width="1" stroke-dasharray="none"/>
+  <polygon points="245,188 255,183 255,193" fill="#888"/>
+  <polygon points="330,188 320,183 320,193" fill="#888"/>
+
+  <!-- Bidirectional arrow between Rules items and Agents box -->
+  <line x1="460" y1="188" x2="530" y2="188" stroke="#888" stroke-width="1"/>
+  <polygon points="460,188 470,183 470,193" fill="#888"/>
+  <polygon points="530,188 520,183 520,193" fill="#888"/>
+
+  <!-- Right arrow from Agents to outside -->
+  <line x1="725" y1="188" x2="790" y2="188" stroke="#888" stroke-width="1"/>
+  <polygon points="790,188 780,183 780,193" fill="#888"/>
+
+</svg>
