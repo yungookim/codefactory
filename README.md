@@ -1,11 +1,11 @@
-# Code Factory - get to unsupervised software development
+# Code Factory - get to unsupervised software development. autonomous PR to deployment.
 
 <p align="center">
   <img width="409" height="409" alt="image__7_-removebg-preview" src="https://github.com/user-attachments/assets/ca339a71-40d9-4619-900f-55825f30a57f" />
 </p>
 
 
-**Autonomous GitHub PR babysitter — watches your repos, triages review feedback, and dispatches AI agents to fix code.**
+**Autonomous GitHub PR babysitter — watches your repos, triages review feedback, dispatches AI agents to fix code, and creates releases**
 
 [![CI](https://github.com/yungookim/codefactory/actions/workflows/ci.yml/badge.svg)](https://github.com/yungookim/codefactory/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
