@@ -1,4 +1,5 @@
-# Code Factory - Unsupervised software development. Autonomous PR to deployment.
+# Code Factory - Get to unsupervised software development
+## Autonomous PR improvements to release management
 
 <p align="center">
   <img width="409" height="409" alt="image__7_-removebg-preview" src="https://github.com/user-attachments/assets/ca339a71-40d9-4619-900f-55825f30a57f" />
