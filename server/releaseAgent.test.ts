@@ -89,4 +89,8 @@ test("buildReleaseDecisionPrompt includes trigger and included PR context", () =
   assert.match(prompt, /Latest release tag: v1\.2\.3/);
   assert.match(prompt, /Trigger PR: #71 "Add release automation"/);
   assert.match(prompt, /1\. PR #70 by @octocat/);
+  assert.match(prompt, /## Why This Matters/);
+  assert.match(prompt, /## Detailed Changes/);
+  assert.match(prompt, /user-friendly, value-driven summary/i);
+  assert.match(prompt, /line-by-line changelog/i);
 });

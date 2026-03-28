@@ -205,3 +205,12 @@
   - Compare both the root docs entry page and any generated docs pages against the provided reference before editing.
   - Move shared docs layout into the generator or a shared template so the reference style cannot drift between pages.
   - Rebuild generated docs after the template change and inspect at least one root page and one generated page for matching shell structure.
+
+## 2026-03-28 - Lock generated content structure into prompts and tests
+- Pattern: I implemented release-note generation without encoding the exact user-requested structure, and the user corrected it to require a value-driven summary followed by detailed plain-English changelog lines.
+- Rule: When a feature depends on AI-generated text, translate any user-specified output structure into explicit prompt instructions and add a regression test that asserts those instructions are present.
+- Prevention checklist:
+  - Restate required sections, ordering, and tone before finalizing any prompt-backed feature.
+  - Treat content shape requirements as part of the contract, not as optional wording polish.
+  - Add a focused test on the prompt builder whenever the user specifies exact output sections.
+  - Prefer explicit section headings in prompts when the output will be surfaced directly in the product.

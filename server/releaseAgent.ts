@@ -133,7 +133,11 @@ export function buildReleaseDecisionPrompt(params: {
     "- Use patch for fixes or small improvements, minor for additive user-facing features, and major for breaking changes.",
     "- title should be short and release-note ready when shouldRelease=true, else null.",
     "- notes should be GitHub-release Markdown focused on user-visible/operator-visible impact when shouldRelease=true, else null.",
+    "- notes must have exactly TWO sections in this order:",
+    "  1. '## Why This Matters' — a user-friendly, value-driven summary at the top that explains how the release makes users' lives better.",
+    "  2. '## Detailed Changes' — a line-by-line changelog of the included changes in plain English, more detailed than a headline but not deeply technical.",
     "- notes should mention the key merged PRs in plain language, not internal process commentary.",
+    "- Prefer user outcomes, workflow improvements, and visible behavior over implementation details.",
   ].join("\n");
 }
 
