@@ -1,12 +1,14 @@
-# Code Factory - get to unsupervised software development
+# Code Factory - Get to unsupervised software development
+## Autonomous PR improvements to release management
 
 <p align="center">
   <img width="409" height="409" alt="image__7_-removebg-preview" src="https://github.com/user-attachments/assets/ca339a71-40d9-4619-900f-55825f30a57f" />
 </p>
 
 
-**Autonomous GitHub PR babysitter — watches your repos, triages review feedback, and dispatches AI agents to fix code.**
+**Autonomous GitHub PR babysitter — watches your repos, triages review feedback, dispatches AI agents to fix code, and creates releases**
 
+[![npm version](https://img.shields.io/npm/v/codefactory.svg)](https://www.npmjs.com/package/codefactory)
 [![CI](https://github.com/yungookim/codefactory/actions/workflows/ci.yml/badge.svg)](https://github.com/yungookim/codefactory/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-green.svg)](https://nodejs.org/)
@@ -16,7 +18,7 @@
 
 > Stop babysitting pull requests manually. Code Factory watches your GitHub repos, syncs review comments into a local dashboard, auto-triages feedback, and launches Claude Code CLI or Codex agents to fix everything — all running on your machine.
 
-> **Note:** This project is intended for those obsessed with development speed
+> **Note:** This project is intended for those obsessed with development speed and is still in development.
 
 ---
 
@@ -30,6 +32,10 @@ This is what Code Factory is good at:
 3. Auto-generate and update user-facing documents
 
 Code Factory runs locally and uses the CLI coding agents that are already installed in your machine. No need to add OPEN_API_KEY or any such. Just install & have it running and let it do its thing.
+
+<p align="center">
+  <img src="docs/architecture-diagram.svg" alt="Code Factory Architecture" width="900" />
+</p>
 
 Managing PR feedback across multiple repositories is tedious. Review comments pile up, context-switching kills productivity, and small fixes sit idle for hours. Code Factory automates the entire feedback loop:
 
@@ -99,6 +105,18 @@ On startup, Code Factory restores the watcher schedule, resumes interrupted runs
 ### Install & Run
 
 ```bash
+# Install globally from npm
+npm install -g codefactory
+
+# Start the server
+codefactory
+```
+
+The server starts on port `5001` (configurable via `PORT`) and serves both the API and the dashboard.
+
+### Install from Source
+
+```bash
 # Clone the repository
 git clone https://github.com/yungookim/codefactory.git
 cd codefactory
@@ -110,9 +128,7 @@ npm install
 npm run dev
 ```
 
-The server starts on port `5001` (configurable via `PORT`) and serves both the API and the dashboard.
-
-### Production Build
+### Production Build (from source)
 
 ```bash
 npm run build    # Build the production bundle
@@ -218,6 +234,13 @@ If you get a `200` response, Code Factory is running and you can proceed to Step
 ### Step 2 — Install and start Code Factory
 
 Run these shell commands on the local machine:
+
+```bash
+npm install -g codefactory
+codefactory &
+```
+
+Or from source:
 
 ```bash
 git clone https://github.com/yungookim/codefactory.git
