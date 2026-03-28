@@ -151,6 +151,56 @@ export const socialChangelogSchema = z.object({
 });
 export type SocialChangelog = z.infer<typeof socialChangelogSchema>;
 
+export const releaseRunStatusEnum = z.enum([
+  "detected",
+  "evaluating",
+  "skipped",
+  "proposed",
+  "publishing",
+  "published",
+  "error",
+]);
+export type ReleaseRunStatus = z.infer<typeof releaseRunStatusEnum>;
+
+export const releaseBumpEnum = z.enum(["patch", "minor", "major"]);
+export type ReleaseBump = z.infer<typeof releaseBumpEnum>;
+
+export const releaseRunIncludedPRSchema = z.object({
+  number: z.number(),
+  title: z.string(),
+  url: z.string(),
+  author: z.string(),
+  mergedAt: z.string(),
+  mergeSha: z.string(),
+});
+export type ReleaseRunIncludedPR = z.infer<typeof releaseRunIncludedPRSchema>;
+
+export const releaseRunSchema = z.object({
+  id: z.string(),
+  repo: z.string(),
+  baseBranch: z.string(),
+  triggerPrNumber: z.number(),
+  triggerPrTitle: z.string(),
+  triggerPrUrl: z.string(),
+  triggerMergeSha: z.string(),
+  triggerMergedAt: z.string(),
+  status: releaseRunStatusEnum,
+  decisionReason: z.string().nullable(),
+  recommendedBump: releaseBumpEnum.nullable(),
+  proposedVersion: z.string().nullable(),
+  releaseTitle: z.string().nullable(),
+  releaseNotes: z.string().nullable(),
+  includedPrs: z.array(releaseRunIncludedPRSchema),
+  targetSha: z.string().nullable(),
+  githubReleaseId: z.number().nullable(),
+  githubReleaseUrl: z.string().nullable(),
+  error: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  completedAt: z.string().nullable(),
+});
+export type ReleaseRun = z.infer<typeof releaseRunSchema>;
+
 export const configSchema = z.object({
   githubToken: z.string(),
   codingAgent: z.enum(["codex", "claude"]),
@@ -159,6 +209,7 @@ export const configSchema = z.object({
   pollIntervalMs: z.number(),
   maxChangesPerRun: z.number(),
   autoResolveMergeConflicts: z.boolean(),
+  autoCreateReleases: z.boolean(),
   watchedRepos: z.array(z.string()),
   trustedReviewers: z.array(z.string()),
   ignoredBots: z.array(z.string()),

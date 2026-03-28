@@ -6,6 +6,7 @@ import {
   logEntrySchema,
   prQuestionSchema,
   prSchema,
+  releaseRunSchema,
   socialChangelogSchema,
 } from "./schema";
 import type {
@@ -15,6 +16,7 @@ import type {
   LogEntry,
   PR,
   PRQuestion,
+  ReleaseRun,
   SocialChangelog,
 } from "./schema";
 
@@ -146,6 +148,34 @@ export function applySocialChangelogUpdate(
     // Immutable fields
     id: existing.id,
     createdAt: existing.createdAt,
+  });
+}
+
+// ── Release runs ──────────────────────────────────────────────────────────────
+
+export function createReleaseRun(
+  data: Omit<ReleaseRun, "id" | "createdAt" | "updatedAt">,
+): ReleaseRun {
+  const now = new Date().toISOString();
+  return releaseRunSchema.parse({
+    ...data,
+    id: randomUUID(),
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
+export function applyReleaseRunUpdate(
+  existing: ReleaseRun,
+  updates: Partial<ReleaseRun>,
+): ReleaseRun {
+  return releaseRunSchema.parse({
+    ...existing,
+    ...updates,
+    // Immutable fields
+    id: existing.id,
+    createdAt: existing.createdAt,
+    updatedAt: new Date().toISOString(),
   });
 }
 

@@ -328,6 +328,7 @@ describe("MemStorage", () => {
       const config = await storage.getConfig();
       assert.equal(config.codingAgent, DEFAULT_CONFIG.codingAgent);
       assert.equal(config.maxTurns, DEFAULT_CONFIG.maxTurns);
+      assert.equal(config.autoCreateReleases, DEFAULT_CONFIG.autoCreateReleases);
       assert.deepEqual(config.watchedRepos, []);
     });
   });
@@ -338,12 +339,194 @@ describe("MemStorage", () => {
       assert.equal(updated.maxTurns, 25);
       // Other fields preserved
       assert.equal(updated.codingAgent, "claude");
+      assert.equal(updated.autoCreateReleases, true);
     });
 
     it("returns the updated config", async () => {
       const updated = await storage.updateConfig({ githubToken: "tok_123" });
       const fetched = await storage.getConfig();
       assert.deepEqual(updated, fetched);
+    });
+  });
+
+  // ── ReleaseRuns ─────────────────────────────────────────
+
+  describe("createReleaseRun/getReleaseRun", () => {
+    it("creates a release run and looks it up by id", async () => {
+      const run = await storage.createReleaseRun({
+        repo: "owner/repo",
+        baseBranch: "main",
+        triggerPrNumber: 42,
+        triggerPrTitle: "Ship feature",
+        triggerPrUrl: "https://github.com/owner/repo/pull/42",
+        triggerMergeSha: "abc123",
+        triggerMergedAt: "2026-03-28T12:00:00.000Z",
+        status: "detected",
+        decisionReason: null,
+        recommendedBump: null,
+        proposedVersion: null,
+        releaseTitle: null,
+        releaseNotes: null,
+        includedPrs: [],
+        targetSha: null,
+        githubReleaseId: null,
+        githubReleaseUrl: null,
+        error: null,
+        completedAt: null,
+      });
+
+      const fetched = await storage.getReleaseRun(run.id);
+      assert.ok(fetched);
+      assert.equal(fetched.id, run.id);
+      assert.equal(fetched.repo, "owner/repo");
+    });
+
+    it("updates an existing release run", async () => {
+      const run = await storage.createReleaseRun({
+        repo: "owner/repo",
+        baseBranch: "main",
+        triggerPrNumber: 43,
+        triggerPrTitle: "Update status",
+        triggerPrUrl: "https://github.com/owner/repo/pull/43",
+        triggerMergeSha: "merge-sha-43",
+        triggerMergedAt: "2026-03-28T12:00:00.000Z",
+        status: "detected",
+        decisionReason: null,
+        recommendedBump: null,
+        proposedVersion: null,
+        releaseTitle: null,
+        releaseNotes: null,
+        includedPrs: [],
+        targetSha: null,
+        githubReleaseId: null,
+        githubReleaseUrl: null,
+        error: null,
+        completedAt: null,
+      });
+
+      const updated = await storage.updateReleaseRun(run.id, {
+        status: "published",
+        recommendedBump: "patch",
+        proposedVersion: "v1.0.1",
+        completedAt: "2026-03-28T12:10:00.000Z",
+      });
+
+      assert.equal(updated?.status, "published");
+      assert.equal(updated?.proposedVersion, "v1.0.1");
+      assert.equal(updated?.completedAt, "2026-03-28T12:10:00.000Z");
+    });
+  });
+
+  describe("release run idempotent lookups", () => {
+    it("looks up by repo + triggerMergeSha", async () => {
+      const run = await storage.createReleaseRun({
+        repo: "owner/repo",
+        baseBranch: "main",
+        triggerPrNumber: 8,
+        triggerPrTitle: "Test",
+        triggerPrUrl: "https://github.com/owner/repo/pull/8",
+        triggerMergeSha: "merge-sha-8",
+        triggerMergedAt: "2026-03-28T12:00:00.000Z",
+        status: "detected",
+        decisionReason: null,
+        recommendedBump: null,
+        proposedVersion: null,
+        releaseTitle: null,
+        releaseNotes: null,
+        includedPrs: [],
+        targetSha: null,
+        githubReleaseId: null,
+        githubReleaseUrl: null,
+        error: null,
+        completedAt: null,
+      });
+
+      const found = await storage.getReleaseRunByRepoAndMergeSha("owner/repo", "merge-sha-8");
+      assert.equal(found?.id, run.id);
+    });
+
+    it("looks up by repo + triggerPrNumber + triggerMergeSha", async () => {
+      const run = await storage.createReleaseRun({
+        repo: "owner/repo",
+        baseBranch: "main",
+        triggerPrNumber: 9,
+        triggerPrTitle: "Test two",
+        triggerPrUrl: "https://github.com/owner/repo/pull/9",
+        triggerMergeSha: "merge-sha-9",
+        triggerMergedAt: "2026-03-28T12:00:00.000Z",
+        status: "detected",
+        decisionReason: null,
+        recommendedBump: null,
+        proposedVersion: null,
+        releaseTitle: null,
+        releaseNotes: null,
+        includedPrs: [],
+        targetSha: null,
+        githubReleaseId: null,
+        githubReleaseUrl: null,
+        error: null,
+        completedAt: null,
+      });
+
+      const found = await storage.getReleaseRunByTrigger("owner/repo", 9, "merge-sha-9");
+      assert.equal(found?.id, run.id);
+    });
+  });
+
+  describe("listReleaseRuns", () => {
+    it("returns newest-first", async (t) => {
+      t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-03-28T12:00:00.000Z") });
+
+      await storage.createReleaseRun({
+        repo: "owner/repo",
+        baseBranch: "main",
+        triggerPrNumber: 10,
+        triggerPrTitle: "Older",
+        triggerPrUrl: "https://github.com/owner/repo/pull/10",
+        triggerMergeSha: "sha-10",
+        triggerMergedAt: "2026-03-28T12:00:00.000Z",
+        status: "detected",
+        decisionReason: null,
+        recommendedBump: null,
+        proposedVersion: null,
+        releaseTitle: null,
+        releaseNotes: null,
+        includedPrs: [],
+        targetSha: null,
+        githubReleaseId: null,
+        githubReleaseUrl: null,
+        error: null,
+        completedAt: null,
+      });
+
+      t.mock.timers.tick(100);
+
+      await storage.createReleaseRun({
+        repo: "owner/repo",
+        baseBranch: "main",
+        triggerPrNumber: 11,
+        triggerPrTitle: "Newer",
+        triggerPrUrl: "https://github.com/owner/repo/pull/11",
+        triggerMergeSha: "sha-11",
+        triggerMergedAt: "2026-03-28T12:01:00.000Z",
+        status: "published",
+        decisionReason: "release-worthy",
+        recommendedBump: "minor",
+        proposedVersion: "v1.2.0",
+        releaseTitle: "Release v1.2.0",
+        releaseNotes: "Notes",
+        includedPrs: [],
+        targetSha: "target",
+        githubReleaseId: 1,
+        githubReleaseUrl: "https://github.com/owner/repo/releases/tag/v1.2.0",
+        error: null,
+        completedAt: "2026-03-28T12:01:00.000Z",
+      });
+
+      const runs = await storage.listReleaseRuns();
+      assert.equal(runs.length, 2);
+      assert.equal(runs[0].triggerPrNumber, 11);
+      assert.equal(runs[1].triggerPrNumber, 10);
     });
   });
 

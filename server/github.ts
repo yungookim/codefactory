@@ -37,6 +37,48 @@ export type GitHubStatusFailure = {
   targetUrl: string | null;
 };
 
+export type GitHubPullCloseState = {
+  number: number;
+  title: string;
+  url: string;
+  author: string;
+  baseRef: string;
+  headRef: string;
+  headSha: string;
+  merged: boolean;
+  mergedAt: string | null;
+  closedAt: string | null;
+  mergeCommitSha: string | null;
+};
+
+export type ReleaseBump = "patch" | "minor" | "major";
+
+export type SemverVersion = {
+  major: number;
+  minor: number;
+  patch: number;
+};
+
+export type GitHubReleaseSummary = {
+  id: number;
+  tagName: string;
+  name: string;
+  body: string | null;
+  htmlUrl: string;
+  apiUrl: string;
+  draft: boolean;
+  prerelease: boolean;
+  targetCommitish: string | null;
+  publishedAt: string | null;
+};
+
+export type GitHubRepoTag = {
+  name: string;
+  commitSha: string | null;
+};
+
+const SEMVER_TAG_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)$/;
+
 const GITHUB_API_VERSION = "2022-11-28";
 const GH_AUTH_CACHE_TTL_MS = 15000;
 const REVIEW_THREADS_QUERY = `
@@ -579,6 +621,214 @@ export async function fetchPullSummary(
     headRepoCloneUrl: pull.head?.repo?.clone_url || `https://github.com/${parsed.owner}/${parsed.repo}.git`,
     baseRef: pull.base?.ref || "main",
     mergeable: typeof pull.mergeable === "boolean" ? pull.mergeable : null,
+  };
+}
+
+export async function fetchPullCloseState(
+  octokit: Octokit,
+  parsed: ParsedPRUrl,
+): Promise<GitHubPullCloseState> {
+  const response = await withGitHubErrorHandling("PR close state", parsed, () =>
+    octokit.pulls.get({
+      owner: parsed.owner,
+      repo: parsed.repo,
+      pull_number: parsed.number,
+    }),
+  );
+
+  const pull = response.data;
+
+  return {
+    number: pull.number,
+    title: pull.title || `PR #${pull.number}`,
+    url: pull.html_url || `https://github.com/${parsed.owner}/${parsed.repo}/pull/${pull.number}`,
+    author: pull.user?.login || "unknown",
+    baseRef: pull.base?.ref || "main",
+    headRef: pull.head?.ref || "",
+    headSha: pull.head?.sha || "",
+    merged: Boolean(pull.merged_at),
+    mergedAt: pull.merged_at || null,
+    closedAt: pull.closed_at || null,
+    mergeCommitSha: pull.merge_commit_sha || null,
+  };
+}
+
+export function parseSemverTag(tagName: string): SemverVersion | null {
+  const match = tagName.trim().match(SEMVER_TAG_PATTERN);
+  if (!match) return null;
+
+  return {
+    major: Number.parseInt(match[1], 10),
+    minor: Number.parseInt(match[2], 10),
+    patch: Number.parseInt(match[3], 10),
+  };
+}
+
+function compareSemver(a: SemverVersion, b: SemverVersion): number {
+  if (a.major !== b.major) return a.major - b.major;
+  if (a.minor !== b.minor) return a.minor - b.minor;
+  return a.patch - b.patch;
+}
+
+function formatSemverTag(version: SemverVersion): string {
+  return `v${version.major}.${version.minor}.${version.patch}`;
+}
+
+export function selectLatestSemverTag(tagNames: string[]): string | null {
+  let winner: { tag: string; version: SemverVersion } | null = null;
+
+  for (const tag of tagNames) {
+    const parsed = parseSemverTag(tag);
+    if (!parsed) continue;
+
+    if (!winner || compareSemver(parsed, winner.version) > 0) {
+      winner = { tag, version: parsed };
+    }
+  }
+
+  return winner?.tag ?? null;
+}
+
+export function resolveNextSemverTag(
+  latestTag: string | null | undefined,
+  bump: ReleaseBump,
+): string {
+  const current = latestTag
+    ? parseSemverTag(latestTag)
+    : { major: 0, minor: 0, patch: 0 };
+
+  if (!current) {
+    throw new GitHubIntegrationError(`Cannot calculate next semver tag from invalid tag: ${latestTag}`, 400);
+  }
+
+  const next: SemverVersion = {
+    major: current.major,
+    minor: current.minor,
+    patch: current.patch,
+  };
+
+  if (bump === "major") {
+    next.major += 1;
+    next.minor = 0;
+    next.patch = 0;
+  } else if (bump === "minor") {
+    next.minor += 1;
+    next.patch = 0;
+  } else {
+    next.patch += 1;
+  }
+
+  return formatSemverTag(next);
+}
+
+function parseDateMs(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+export async function listReleasesForRepo(
+  octokit: Octokit,
+  repo: ParsedRepoSlug,
+): Promise<GitHubReleaseSummary[]> {
+  const releases = await withGitHubErrorHandling("repository releases", repo, () =>
+    octokit.paginate(octokit.repos.listReleases, {
+      owner: repo.owner,
+      repo: repo.repo,
+      per_page: 100,
+    }),
+  );
+
+  return releases.map((release) => ({
+    id: release.id,
+    tagName: release.tag_name || "",
+    name: release.name || release.tag_name || `Release ${release.id}`,
+    body: release.body || null,
+    htmlUrl: release.html_url || "",
+    apiUrl: release.url || "",
+    draft: Boolean(release.draft),
+    prerelease: Boolean(release.prerelease),
+    targetCommitish: release.target_commitish || null,
+    publishedAt: release.published_at || null,
+  }));
+}
+
+export async function listTagsForRepo(
+  octokit: Octokit,
+  repo: ParsedRepoSlug,
+): Promise<GitHubRepoTag[]> {
+  const tags = await withGitHubErrorHandling("repository tags", repo, () =>
+    octokit.paginate(octokit.repos.listTags, {
+      owner: repo.owner,
+      repo: repo.repo,
+      per_page: 100,
+    }),
+  );
+
+  return tags.map((tag) => ({
+    name: tag.name,
+    commitSha: tag.commit?.sha || null,
+  }));
+}
+
+export async function getLatestSemverTagForRepo(
+  octokit: Octokit,
+  repo: ParsedRepoSlug,
+): Promise<string | null> {
+  const [releases, tags] = await Promise.all([
+    listReleasesForRepo(octokit, repo),
+    listTagsForRepo(octokit, repo),
+  ]);
+
+  const candidates = [
+    ...releases
+      .filter((release) => !release.draft)
+      .map((release) => release.tagName),
+    ...tags.map((tag) => tag.name),
+  ];
+
+  return selectLatestSemverTag(candidates);
+}
+
+export async function createGitHubRelease(
+  octokit: Octokit,
+  repo: ParsedRepoSlug,
+  input: {
+    tagName: string;
+    name: string;
+    body: string;
+    targetCommitish?: string | null;
+    draft?: boolean;
+    prerelease?: boolean;
+    generateReleaseNotes?: boolean;
+  },
+): Promise<GitHubReleaseSummary> {
+  const response = await withGitHubErrorHandling("release creation", repo, () =>
+    octokit.repos.createRelease({
+      owner: repo.owner,
+      repo: repo.repo,
+      tag_name: input.tagName,
+      name: input.name,
+      body: input.body,
+      target_commitish: input.targetCommitish ?? undefined,
+      draft: input.draft ?? false,
+      prerelease: input.prerelease ?? false,
+      generate_release_notes: input.generateReleaseNotes ?? false,
+    }),
+  );
+
+  const release = response.data;
+  return {
+    id: release.id,
+    tagName: release.tag_name || input.tagName,
+    name: release.name || input.name,
+    body: release.body || null,
+    htmlUrl: release.html_url || "",
+    apiUrl: release.url || "",
+    draft: Boolean(release.draft),
+    prerelease: Boolean(release.prerelease),
+    targetCommitish: release.target_commitish || null,
+    publishedAt: release.published_at || null,
   };
 }
 
@@ -1216,19 +1466,46 @@ export type MergedPRSummary = {
   url: string;
   author: string;
   repo: string;
+  mergedAt: string;
+  mergeCommitSha: string | null;
 };
 
-/**
- * Returns pull requests that were merged to the given base branch today (UTC).
- * Used to determine whether the social changelog trigger threshold has been reached.
- */
-export async function listMergedPullsToday(
+function normalizeMergedPullSummary(
+  pull: {
+    number: number;
+    title: string | null;
+    html_url: string | null;
+    user?: { login?: string | null } | null;
+    merged_at: string | null;
+    merge_commit_sha?: string | null;
+  },
+  repo: ParsedRepoSlug,
+): MergedPRSummary | null {
+  if (!pull.merged_at) return null;
+
+  return {
+    number: pull.number,
+    title: pull.title || `PR #${pull.number}`,
+    url: pull.html_url || `https://github.com/${repo.owner}/${repo.repo}/pull/${pull.number}`,
+    author: pull.user?.login ?? "unknown",
+    repo: formatRepoSlug(repo),
+    mergedAt: pull.merged_at,
+    mergeCommitSha: pull.merge_commit_sha || null,
+  };
+}
+
+export async function listMergedPullsSince(
   octokit: Octokit,
   repo: ParsedRepoSlug,
-  baseRef = "main",
+  options?: {
+    baseRef?: string;
+    sinceMergedAt?: string | null;
+    sinceMergeCommitSha?: string | null;
+  },
 ): Promise<MergedPRSummary[]> {
-  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-  const repoSlug = formatRepoSlug(repo);
+  const baseRef = options?.baseRef ?? "main";
+  const sinceMergedAtMs = parseDateMs(options?.sinceMergedAt);
+  const sinceMergeCommitSha = options?.sinceMergeCommitSha?.trim() || null;
 
   const pulls = await withGitHubErrorHandling("merged pull requests", repo, () =>
     octokit.paginate(octokit.pulls.list, {
@@ -1242,13 +1519,63 @@ export async function listMergedPullsToday(
     }),
   );
 
-  return pulls
-    .filter((p) => p.merged_at != null && p.merged_at.startsWith(today))
-    .map((p) => ({
-      number: p.number,
-      title: p.title || `PR #${p.number}`,
-      url: p.html_url || `https://github.com/${repo.owner}/${repo.repo}/pull/${p.number}`,
-      author: p.user?.login ?? "unknown",
-      repo: repoSlug,
-    }));
+  const merged = pulls
+    .map((pull) => normalizeMergedPullSummary(pull, repo))
+    .filter((pull): pull is MergedPRSummary => Boolean(pull))
+    .filter((pull) => {
+      if (sinceMergedAtMs === null) return true;
+      return Date.parse(pull.mergedAt) > sinceMergedAtMs;
+    });
+
+  let boundedBySha = merged;
+  if (sinceMergeCommitSha) {
+    const boundaryIndex = merged.findIndex((pull) => pull.mergeCommitSha === sinceMergeCommitSha);
+    if (boundaryIndex >= 0) {
+      boundedBySha = merged.slice(0, boundaryIndex);
+    }
+  }
+
+  return boundedBySha.sort((a, b) => Date.parse(a.mergedAt) - Date.parse(b.mergedAt));
+}
+
+export async function listUnreleasedMergedPulls(
+  octokit: Octokit,
+  repo: ParsedRepoSlug,
+  options?: {
+    baseRef?: string;
+    sinceMergedAt?: string | null;
+    sinceMergeCommitSha?: string | null;
+  },
+): Promise<MergedPRSummary[]> {
+  let boundaryMergedAt = options?.sinceMergedAt ?? null;
+  let boundaryMergeCommitSha = options?.sinceMergeCommitSha ?? null;
+
+  if (!boundaryMergedAt && !boundaryMergeCommitSha) {
+    const releases = await listReleasesForRepo(octokit, repo);
+    const latestPublished = releases
+      .filter((release) => !release.draft && release.publishedAt)
+      .sort((a, b) => Date.parse(b.publishedAt || "") - Date.parse(a.publishedAt || ""))[0];
+
+    boundaryMergedAt = latestPublished?.publishedAt ?? null;
+  }
+
+  return listMergedPullsSince(octokit, repo, {
+    baseRef: options?.baseRef,
+    sinceMergedAt: boundaryMergedAt,
+    sinceMergeCommitSha: boundaryMergeCommitSha,
+  });
+}
+
+/**
+ * Returns pull requests that were merged to the given base branch today (UTC).
+ * Used to determine whether the social changelog trigger threshold has been reached.
+ */
+export async function listMergedPullsToday(
+  octokit: Octokit,
+  repo: ParsedRepoSlug,
+  baseRef = "main",
+): Promise<MergedPRSummary[]> {
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const pulls = await listMergedPullsSince(octokit, repo, { baseRef });
+  return pulls.filter((pull) => pull.mergedAt.startsWith(today));
 }

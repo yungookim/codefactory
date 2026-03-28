@@ -1,12 +1,25 @@
-import type { AgentRun, AgentRunStatus, Config, LogEntry, PR, PRQuestion, RuntimeState, SocialChangelog } from "@shared/schema";
+import type {
+  AgentRun,
+  AgentRunStatus,
+  Config,
+  LogEntry,
+  PR,
+  PRQuestion,
+  ReleaseRun,
+  ReleaseRunStatus,
+  RuntimeState,
+  SocialChangelog,
+} from "@shared/schema";
 import {
   applyConfigUpdate,
   applyPRQuestionUpdate,
   applyPRUpdate,
+  applyReleaseRunUpdate,
   applySocialChangelogUpdate,
   createLogEntry,
   createPR,
   createPRQuestion,
+  createReleaseRun,
   createSocialChangelog,
   touchAgentRun,
 } from "@shared/models";
@@ -23,8 +36,16 @@ export class MemStorage implements IStorage {
     drainRequestedAt: null,
     drainReason: null,
   };
+  private releaseRuns: Map<string, ReleaseRun> = new Map();
   private agentRuns: Map<string, AgentRun> = new Map();
   private socialChangelogs: Map<string, SocialChangelog> = new Map();
+
+  private cloneReleaseRun(run: ReleaseRun): ReleaseRun {
+    return {
+      ...run,
+      includedPrs: run.includedPrs.map((pr) => ({ ...pr })),
+    };
+  }
 
   async getPRs(): Promise<PR[]> {
     return Array.from(this.prs.values())
@@ -138,6 +159,65 @@ export class MemStorage implements IStorage {
     };
 
     return { ...this.runtimeState };
+  }
+
+  async getReleaseRun(id: string): Promise<ReleaseRun | undefined> {
+    const run = this.releaseRuns.get(id);
+    return run ? this.cloneReleaseRun(run) : undefined;
+  }
+
+  async getReleaseRunByRepoAndMergeSha(repo: string, triggerMergeSha: string): Promise<ReleaseRun | undefined> {
+    const run = Array.from(this.releaseRuns.values()).find(
+      (candidate) => candidate.repo === repo && candidate.triggerMergeSha === triggerMergeSha,
+    );
+    return run ? this.cloneReleaseRun(run) : undefined;
+  }
+
+  async getReleaseRunByTrigger(repo: string, triggerPrNumber: number, triggerMergeSha: string): Promise<ReleaseRun | undefined> {
+    const run = Array.from(this.releaseRuns.values()).find(
+      (candidate) =>
+        candidate.repo === repo
+        && candidate.triggerPrNumber === triggerPrNumber
+        && candidate.triggerMergeSha === triggerMergeSha,
+    );
+    return run ? this.cloneReleaseRun(run) : undefined;
+  }
+
+  async listReleaseRuns(filters?: {
+    status?: ReleaseRunStatus;
+    repo?: string;
+  }): Promise<ReleaseRun[]> {
+    return Array.from(this.releaseRuns.values())
+      .map((run, index) => ({ run, index }))
+      .filter((run) => {
+        if (filters?.status && run.run.status !== filters.status) return false;
+        if (filters?.repo && run.run.repo !== filters.repo) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const createdDiff = new Date(b.run.createdAt).getTime() - new Date(a.run.createdAt).getTime();
+        if (createdDiff !== 0) {
+          return createdDiff;
+        }
+
+        // If timestamps match to the same millisecond, prefer later insertion.
+        return b.index - a.index;
+      })
+      .map(({ run }) => this.cloneReleaseRun(run));
+  }
+
+  async createReleaseRun(data: Omit<ReleaseRun, "id" | "createdAt" | "updatedAt">): Promise<ReleaseRun> {
+    const entry = createReleaseRun(data);
+    this.releaseRuns.set(entry.id, entry);
+    return this.cloneReleaseRun(entry);
+  }
+
+  async updateReleaseRun(id: string, updates: Partial<ReleaseRun>): Promise<ReleaseRun | undefined> {
+    const existing = this.releaseRuns.get(id);
+    if (!existing) return undefined;
+    const updated = applyReleaseRunUpdate(existing, updates);
+    this.releaseRuns.set(id, updated);
+    return this.cloneReleaseRun(updated);
   }
 
   async getAgentRun(id: string): Promise<AgentRun | undefined> {

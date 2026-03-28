@@ -7,22 +7,85 @@ import { PRBabysitter } from "./babysitter";
 import { applyEvaluationDecision, applyFlagDecision, applyManualDecision } from "./feedbackLifecycle";
 import { createWatcherScheduler } from "./watcherScheduler";
 import { answerPRQuestion } from "./prQuestionAgent";
+import { ReleaseManager } from "./releaseManager";
 import {
   buildOctokit,
   checkOnboardingStatus,
+  createGitHubRelease,
   fetchPullSummary,
   formatRepoSlug,
+  getLatestSemverTagForRepo,
   GitHubIntegrationError,
   installCodeReviewWorkflow,
+  listReleasesForRepo,
+  listUnreleasedMergedPulls,
   parsePRUrl,
   parseRepoSlug,
+  resolveNextSemverTag,
 } from "./github";
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express,
 ): Promise<Server> {
-  const babysitter = new PRBabysitter(storage);
+  const releaseManager = new ReleaseManager(storage, {
+    github: {
+      buildOctokit,
+      findLatestSemverReleaseTag: getLatestSemverTagForRepo,
+      bumpReleaseTag: resolveNextSemverTag,
+      listMergedPullsForReleaseCandidate: async (octokit, repo, options) => {
+        const client = octokit as Awaited<ReturnType<typeof buildOctokit>>;
+        const merged = await listUnreleasedMergedPulls(client, repo, {
+          baseRef: options.baseBranch,
+        });
+        const cutoffMs = Date.parse(options.untilMergedAt);
+
+        return merged
+          .filter((pull) => !Number.isFinite(cutoffMs) || Date.parse(pull.mergedAt) <= cutoffMs)
+          .map((pull) => ({
+            number: pull.number,
+            title: pull.title,
+            url: pull.url,
+            author: pull.author,
+            repo: pull.repo,
+            mergedAt: pull.mergedAt,
+            mergeSha: pull.mergeCommitSha ?? `${pull.repo}#${pull.number}`,
+          }));
+      },
+      findReleaseByTag: async (octokit, repo, tagName) => {
+        const client = octokit as Awaited<ReturnType<typeof buildOctokit>>;
+        const releases = await listReleasesForRepo(client, repo);
+        const existing = releases.find((release) => !release.draft && release.tagName === tagName);
+        if (!existing) {
+          return null;
+        }
+
+        return {
+          id: existing.id,
+          url: existing.htmlUrl,
+          tagName: existing.tagName,
+          name: existing.name,
+        };
+      },
+      createGitHubRelease: async (octokit, repo, params) => {
+        const client = octokit as Awaited<ReturnType<typeof buildOctokit>>;
+        const created = await createGitHubRelease(client, repo, {
+          tagName: params.tagName,
+          targetCommitish: params.targetCommitish,
+          name: params.name,
+          body: params.body,
+        });
+
+        return {
+          id: created.id,
+          url: created.htmlUrl,
+          tagName: created.tagName,
+          name: created.name,
+        };
+      },
+    },
+  });
+  const babysitter = new PRBabysitter(storage, undefined, undefined, releaseManager);
   let watcherTimer: NodeJS.Timeout | null = null;
   let watcherIntervalMs = 0;
 
@@ -511,6 +574,44 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Changelog not found" });
       }
       res.json(changelog);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // ── Release runs ────────────────────────────────────────────────────────
+
+  app.get("/api/releases", async (_req, res) => {
+    try {
+      const releases = await storage.listReleaseRuns();
+      res.json(releases);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.get("/api/releases/:id", async (req, res) => {
+    try {
+      const release = await storage.getReleaseRun(req.params.id);
+      if (!release) {
+        return res.status(404).json({ error: "Release run not found" });
+      }
+      res.json(release);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.post("/api/releases/:id/retry", async (req, res) => {
+    try {
+      const release = await releaseManager.retryReleaseRun(req.params.id);
+      if (!release) {
+        return res.status(404).json({ error: "Release run not found" });
+      }
+      res.json(release);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: message });
