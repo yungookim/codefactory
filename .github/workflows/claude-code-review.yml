@@ -19,8 +19,7 @@ jobs:
 
       - uses: anthropics/claude-code-action@beta
         with:
-          mode: auto
-          direct_prompt: |
+          prompt: |
             Review this pull request. Focus on:
             - Code correctness and potential bugs
             - Security issues

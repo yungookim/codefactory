@@ -24,7 +24,7 @@ if (arg === "--help" || arg === "-h") {
   Environment variables:
     PORT                  Server port (default: 5001)
     GITHUB_TOKEN          GitHub personal access token
-    CODEFACTORY_HOME      Override config/state directory (~/.codefactory)
+    OH_MY_PR_HOME         Override config/state directory (~/.oh-my-pr)
 
   https://github.com/yungookim/oh-my-pr
 `);
