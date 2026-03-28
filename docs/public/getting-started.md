@@ -1,6 +1,6 @@
 # Getting Started
 
-Welcome to CodeFactory — the autonomous PR babysitter that watches your repositories, triages review feedback, and dispatches AI agents to fix code.
+Welcome to oh-my-pr — the autonomous PR babysitter that watches your repositories, triages review feedback, and dispatches AI agents to fix code.
 
 ## Prerequisites
 
@@ -34,9 +34,9 @@ This launches the dashboard at [http://localhost:5001](http://localhost:5001).
 2. Click **Add Repository** and paste the URL of a GitHub repository you manage.
 3. Enter your GitHub Personal Access Token when prompted.
 
-### 3. Watch CodeFactory work
+### 3. Watch oh-my-pr work
 
-Once connected, CodeFactory will:
+Once connected, oh-my-pr will:
 
 - **Monitor** open pull requests in real time.
 - **Sync** review comments and change requests.
@@ -46,7 +46,7 @@ Once connected, CodeFactory will:
 
 ## Desktop App
 
-CodeFactory is also available as a native desktop application powered by Tauri:
+oh-my-pr is also available as a native desktop application powered by Tauri:
 
 ```bash
 npm run tauri:dev    # Development
@@ -57,4 +57,4 @@ npm run tauri:build  # Production build
 
 - [PR Babysitter](./pr-babysitter.md) — Learn how autonomous PR monitoring works.
 - [Agent Dispatch](./agent-dispatch.md) — Understand how AI agents are dispatched to fix code.
-- [Configuration](./configuration.md) — Customize CodeFactory for your workflow.
+- [Configuration](./configuration.md) — Customize oh-my-pr for your workflow.
