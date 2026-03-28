@@ -189,16 +189,21 @@
 <li><strong>GitHub Personal Access Token</strong> — with <code>repo</code> scope (<a href="https://github.com/settings/tokens">create one</a>)</li>
 </ul>
 <h2>Installation</h2>
-<p>Clone the repository and install dependencies:</p>
-<pre><code class="language-bash">git clone https://github.com/yungookim/oh-my-pr.git
-cd codefactory
-npm install
+<p>Install from npm:</p>
+<pre><code class="language-bash">npm install -g oh-my-pr
 </code></pre>
 <h2>Quick Start</h2>
-<h3>1. Start the development server</h3>
-<pre><code class="language-bash">npm run dev
+<h3>1. Start the dashboard</h3>
+<pre><code class="language-bash">oh-my-pr
 </code></pre>
 <p>This launches the dashboard at <a href="http://localhost:5001">http://localhost:5001</a>.</p>
+<h3>Run from source</h3>
+<p>If you prefer to run from source instead:</p>
+<pre><code class="language-bash">git clone https://github.com/yungookim/oh-my-pr.git
+cd oh-my-pr
+npm install
+npm run dev
+</code></pre>
 <h3>2. Connect a GitHub repository</h3>
 <ol>
 <li>Open the dashboard in your browser.</li>

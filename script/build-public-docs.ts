@@ -496,13 +496,11 @@ function renderLandingPage(context: RenderContext, docs: DocMeta[]): string {
       </div>
     </div>
     <div class="overflow-x-auto p-6">
-      <pre class="font-mono text-sm leading-relaxed text-gray-300"><code><span class="text-gray-500"># Clone and install</span>
-<span class="text-white">git clone https://github.com/yungookim/oh-my-pr.git</span>
-<span class="text-white">cd codefactory</span>
-<span class="text-white">npm install</span>
+      <pre class="font-mono text-sm leading-relaxed text-gray-300"><code><span class="text-gray-500"># Install globally from npm</span>
+<span class="text-white">npm install -g oh-my-pr</span>
 
 <span class="text-gray-500"># Start the dashboard</span>
-<span class="text-white">npm run dev</span></code></pre>
+<span class="text-white">oh-my-pr</span></code></pre>
     </div>
   </div>
 </section>
