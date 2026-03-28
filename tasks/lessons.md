@@ -1,5 +1,14 @@
 # Lessons Learned
 
+## 2026-03-28 - Design product features around user repositories, not this repo's own workflow
+- Pattern: I framed a new PR-documentation feature as if it were about Code Factory's own repository and CI/docs pipeline, when the user intended a product capability that agents apply to any tracked repository.
+- Rule: When designing or implementing Code Factory behavior, default to repository-agnostic product semantics unless the user explicitly scopes the request to this repo's own operations.
+- Prevention checklist:
+  - Restate whether a request targets Code Factory's product behavior or this repository's internal workflow before proposing a design.
+  - Validate that prompt contracts, defaults, and storage shape make sense for arbitrary user repositories, not just `README.md` or docs layout in this repo.
+  - Avoid deriving product requirements from this repo's local docs/build pipeline unless the user explicitly wants repo-specific behavior.
+  - Check whether the feature needs to generalize across heterogeneous repositories before choosing fixed file paths or heuristics.
+
 ## 2026-03-15 - Keep PR automation in app-owned `~/.codefactory`
 - Pattern: I described PR workspace isolation too loosely and pointed it at a repo-local `.codefactory` directory instead of the app-owned `~/.codefactory` workspace, and I omitted the required checkout-plus-worktree flow.
 - Rule: When implementing PR automation, default to a clean repository checkout in `~/.codefactory`, fetch and check out the PR there, and create agent worktrees from that app-owned clone rather than from the user's working copy.
@@ -205,3 +214,12 @@
   - Compare both the root docs entry page and any generated docs pages against the provided reference before editing.
   - Move shared docs layout into the generator or a shared template so the reference style cannot drift between pages.
   - Rebuild generated docs after the template change and inspect at least one root page and one generated page for matching shell structure.
+
+## 2026-03-28 - Preserve useful visuals when tightening docs
+- Pattern: I made the README more concise by removing visual elements the user still wanted to keep, then had to restore them.
+- Rule: When simplifying documentation, keep helpful images and diagrams unless the user explicitly asks to remove them.
+- Prevention checklist:
+  - Separate content trimming from visual trimming before rewriting a docs page.
+  - Inventory existing images and diagrams and decide which are essential before deleting them.
+  - If the goal is "more concise," default to shortening copy first and preserving high-signal visuals.
+  - Call out any planned visual removals in the execution update when they are not explicitly requested.
