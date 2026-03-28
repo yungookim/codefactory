@@ -10,23 +10,32 @@ Welcome to CodeFactory — the autonomous PR babysitter that watches your reposi
 
 ## Installation
 
-Clone the repository and install dependencies:
+Install from npm:
 
 ```bash
-git clone https://github.com/yungookim/oh-my-pr.git
-cd codefactory
-npm install
+npm install -g oh-my-pr
 ```
 
 ## Quick Start
 
-### 1. Start the development server
+### 1. Start the dashboard
 
 ```bash
-npm run dev
+oh-my-pr
 ```
 
 This launches the dashboard at [http://localhost:5001](http://localhost:5001).
+
+### Run from source
+
+If you prefer to run from source instead:
+
+```bash
+git clone https://github.com/yungookim/oh-my-pr.git
+cd oh-my-pr
+npm install
+npm run dev
+```
 
 ### 2. Connect a GitHub repository
 
