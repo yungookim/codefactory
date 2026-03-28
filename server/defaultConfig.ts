@@ -8,6 +8,7 @@ export const DEFAULT_CONFIG: Config = {
   pollIntervalMs: 120000,
   maxChangesPerRun: 20,
   autoResolveMergeConflicts: true,
+  autoCreateReleases: true,
   autoUpdateDocs: true,
   watchedRepos: [],
   trustedReviewers: [],

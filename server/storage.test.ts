@@ -58,6 +58,7 @@ test("SqliteStorage reloads config and PR state from the same root", async () =>
   const first = new SqliteStorage(root);
   await first.updateConfig({
     pollIntervalMs: 45000,
+    autoCreateReleases: false,
     autoUpdateDocs: false,
     watchedRepos: ["alex-morgan-o/lolodex"],
   });
@@ -138,6 +139,27 @@ test("SqliteStorage reloads config and PR state from the same root", async () =>
     createdAt: "2026-03-18T10:01:00.000Z",
     updatedAt: "2026-03-18T10:02:00.000Z",
   });
+  const releaseRun = await first.createReleaseRun({
+    repo: "alex-morgan-o/lolodex",
+    baseBranch: "main",
+    triggerPrNumber: 106,
+    triggerPrTitle: "Example PR",
+    triggerPrUrl: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    triggerMergeSha: "merge-sha-106",
+    triggerMergedAt: "2026-03-18T10:05:00.000Z",
+    status: "detected",
+    decisionReason: null,
+    recommendedBump: null,
+    proposedVersion: null,
+    releaseTitle: null,
+    releaseNotes: null,
+    includedPrs: [],
+    targetSha: null,
+    githubReleaseId: null,
+    githubReleaseUrl: null,
+    error: null,
+    completedAt: null,
+  });
   first.close();
 
   const second = new SqliteStorage(root);
@@ -146,9 +168,11 @@ test("SqliteStorage reloads config and PR state from the same root", async () =>
   const reloadedPr = await second.getPR(pr.id);
   const run = await second.getAgentRun("run-1");
   const runningRuns = await second.listAgentRuns({ status: "running" });
+  const release = await second.getReleaseRun(releaseRun.id);
   const logs = await second.getLogs(pr.id);
 
   assert.equal(config.pollIntervalMs, 45000);
+  assert.equal(config.autoCreateReleases, false);
   assert.equal(config.autoUpdateDocs, false);
   assert.deepEqual(config.watchedRepos, ["alex-morgan-o/lolodex"]);
   assert.equal(runtime.drainMode, true);
@@ -171,6 +195,8 @@ test("SqliteStorage reloads config and PR state from the same root", async () =>
   assert.equal(run?.initialHeadSha, "abc123");
   assert.equal(runningRuns.length, 1);
   assert.equal(runningRuns[0]?.id, "run-1");
+  assert.equal(release?.triggerMergeSha, "merge-sha-106");
+  assert.equal(release?.status, "detected");
   assert.equal(logs.length, 1);
   assert.equal(logs[0]?.phase, "agent");
   assert.deepEqual(logs[0]?.metadata, { attempt: 1 });
@@ -185,6 +211,7 @@ test("SqliteStorage returns defaults when singleton rows are missing", async () 
   try {
     await storage.updateConfig({
       githubToken: "tok_123",
+      autoCreateReleases: false,
       autoUpdateDocs: false,
       watchedRepos: ["alex-morgan-o/lolodex"],
       trustedReviewers: ["octocat"],
@@ -274,6 +301,67 @@ test("SqliteStorage upsertAgentRun preserves the original createdAt", async () =
   assert.equal(fetched?.createdAt, "2026-03-18T10:01:00.000Z");
   assert.equal(fetched?.status, "completed");
   assert.equal(fetched?.phase, "run.done");
+  storage.close();
+});
+
+test("SqliteStorage release run lookup is idempotent and list is newest-first", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codefactory-storage-"));
+  const storage = new SqliteStorage(root);
+
+  const older = await storage.createReleaseRun({
+    repo: "owner/repo",
+    baseBranch: "main",
+    triggerPrNumber: 1,
+    triggerPrTitle: "Older",
+    triggerPrUrl: "https://github.com/owner/repo/pull/1",
+    triggerMergeSha: "merge-sha-1",
+    triggerMergedAt: "2026-03-28T10:00:00.000Z",
+    status: "detected",
+    decisionReason: null,
+    recommendedBump: null,
+    proposedVersion: null,
+    releaseTitle: null,
+    releaseNotes: null,
+    includedPrs: [],
+    targetSha: null,
+    githubReleaseId: null,
+    githubReleaseUrl: null,
+    error: null,
+    completedAt: null,
+  });
+
+  await storage.createReleaseRun({
+    repo: "owner/repo",
+    baseBranch: "main",
+    triggerPrNumber: 2,
+    triggerPrTitle: "Newer",
+    triggerPrUrl: "https://github.com/owner/repo/pull/2",
+    triggerMergeSha: "merge-sha-2",
+    triggerMergedAt: "2026-03-28T10:01:00.000Z",
+    status: "published",
+    decisionReason: "Ship it",
+    recommendedBump: "minor",
+    proposedVersion: "v1.1.0",
+    releaseTitle: "v1.1.0",
+    releaseNotes: "notes",
+    includedPrs: [],
+    targetSha: "abc",
+    githubReleaseId: 123,
+    githubReleaseUrl: "https://github.com/owner/repo/releases/tag/v1.1.0",
+    error: null,
+    completedAt: "2026-03-28T10:02:00.000Z",
+  });
+
+  const byRepoAndSha = await storage.getReleaseRunByRepoAndMergeSha("owner/repo", "merge-sha-1");
+  assert.equal(byRepoAndSha?.id, older.id);
+
+  const byTrigger = await storage.getReleaseRunByTrigger("owner/repo", 1, "merge-sha-1");
+  assert.equal(byTrigger?.id, older.id);
+
+  const runs = await storage.listReleaseRuns();
+  assert.equal(runs.length, 2);
+  assert.equal(runs[0]?.triggerPrNumber, 2);
+  assert.equal(runs[1]?.triggerPrNumber, 1);
   storage.close();
 });
 

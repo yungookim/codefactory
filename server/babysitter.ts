@@ -13,6 +13,7 @@ import {
   buildOctokit,
   checkCISettled,
   fetchFeedbackItemsForPR,
+  fetchPullCloseState,
   fetchPullSummary,
   formatRepoSlug,
   GitHubIntegrationError,
@@ -54,6 +55,7 @@ type GitHubService = {
   buildOctokit: typeof buildOctokit;
   checkCISettled: typeof checkCISettled;
   fetchFeedbackItemsForPR: typeof fetchFeedbackItemsForPR;
+  fetchPullCloseState?: typeof fetchPullCloseState;
   fetchPullSummary: typeof fetchPullSummary;
   listFailingStatuses: typeof listFailingStatuses;
   listMergedPullsToday?: typeof listMergedPullsToday; // optional — absent in test mocks
@@ -74,11 +76,24 @@ type BabysitterRuntime = {
   ciPollIntervalMs?: number;
 };
 
+type ReleaseManagerLike = {
+  enqueueMergedPullReleaseEvaluation(input: {
+    repo: string;
+    baseBranch: string;
+    triggerPrNumber: number;
+    triggerPrTitle: string;
+    triggerPrUrl: string;
+    triggerMergeSha: string;
+    triggerMergedAt: string;
+  }): Promise<unknown>;
+};
+
 const defaultGitHubService: GitHubService = {
   addReactionToComment,
   buildOctokit,
   checkCISettled,
   fetchFeedbackItemsForPR,
+  fetchPullCloseState,
   fetchPullSummary,
   listFailingStatuses,
   listMergedPullsToday,
@@ -649,15 +664,18 @@ export class PRBabysitter {
   private readonly feedbackMutationLocks = new Map<string, Promise<void>>();
   private readonly github: GitHubService;
   private readonly runtime: BabysitterRuntime;
+  private readonly releaseManager?: ReleaseManagerLike;
 
   constructor(
     storage: IStorage,
     github: GitHubService = defaultGitHubService,
     runtime: BabysitterRuntime = defaultBabysitterRuntime,
+    releaseManager?: ReleaseManagerLike,
   ) {
     this.storage = storage;
     this.github = github;
     this.runtime = runtime;
+    this.releaseManager = releaseManager;
   }
 
   getActiveRunCount(): number {
@@ -882,10 +900,84 @@ export class PRBabysitter {
       let hadNewlyArchived = false;
       for (const pr of trackedForRepo) {
         if (!openNumbers.has(pr.number) && pr.status !== "archived") {
+          let closeState:
+            | Awaited<ReturnType<NonNullable<GitHubService["fetchPullCloseState"]>>>
+            | undefined;
+          if (this.github.fetchPullCloseState) {
+            try {
+              closeState = await this.github.fetchPullCloseState(octokit, {
+                owner: repo.owner,
+                repo: repo.repo,
+                number: pr.number,
+              });
+            } catch (error) {
+              await this.storage.addLog(pr.id, "warn", `Could not confirm merge state before archival: ${summarizeUnknownError(error)}`, {
+                phase: "watcher",
+              });
+            }
+          }
+
           await this.storage.updatePR(pr.id, { status: "archived" });
           await this.storage.addLog(pr.id, "info", `PR #${pr.number} is no longer open on GitHub — archived`, {
             phase: "watcher",
           });
+
+          if (closeState?.merged && this.releaseManager && config.autoCreateReleases) {
+            const baseBranch = closeState.baseRef.trim();
+            const triggerMergeSha = closeState.mergeCommitSha || closeState.headSha;
+            const triggerMergedAt = closeState.mergedAt || closeState.closedAt;
+            if (!baseBranch || !triggerMergeSha || !triggerMergedAt) {
+              const missingReleaseMetadata = [
+                !baseBranch ? "a base branch" : null,
+                !triggerMergeSha ? "a commit SHA" : null,
+                !triggerMergedAt ? "a merge timestamp" : null,
+              ].filter((value): value is string => Boolean(value));
+              await this.storage.addLog(
+                pr.id,
+                "warn",
+                `PR #${pr.number} was merged, but release evaluation was not queued because GitHub did not return ${missingReleaseMetadata.join(" and ")}.`,
+                {
+                  phase: "watcher",
+                  metadata: {
+                    baseBranch,
+                    headSha: closeState.headSha,
+                    mergeCommitSha: closeState.mergeCommitSha,
+                    mergedAt: closeState.mergedAt,
+                    closedAt: closeState.closedAt,
+                  },
+                },
+              );
+            } else {
+              try {
+                await this.releaseManager.enqueueMergedPullReleaseEvaluation({
+                  repo: repoSlug,
+                  baseBranch,
+                  triggerPrNumber: closeState.number,
+                  triggerPrTitle: closeState.title,
+                  triggerPrUrl: closeState.url,
+                  triggerMergeSha,
+                  triggerMergedAt,
+                });
+
+                await this.storage.addLog(pr.id, "info", `PR #${pr.number} was merged — queued release evaluation`, {
+                  phase: "watcher",
+                  metadata: {
+                    baseBranch,
+                    triggerMergeSha,
+                  },
+                });
+              } catch (error) {
+                await this.storage.addLog(pr.id, "warn", `PR #${pr.number} was merged, but release evaluation could not be queued: ${summarizeUnknownError(error)}`, {
+                  phase: "watcher",
+                });
+              }
+            }
+          } else if (closeState && !closeState.merged) {
+            await this.storage.addLog(pr.id, "info", `PR #${pr.number} closed without merge`, {
+              phase: "watcher",
+            });
+          }
+
           hadNewlyArchived = true;
         }
       }

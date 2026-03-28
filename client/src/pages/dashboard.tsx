@@ -686,6 +686,12 @@ export default function Dashboard() {
           >
             changelogs
           </Link>
+          <Link
+            href="/releases"
+            className="text-[11px] text-muted-foreground hover:text-foreground focus:outline-none"
+          >
+            releases
+          </Link>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-[11px] text-muted-foreground">

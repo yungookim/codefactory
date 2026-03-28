@@ -5,13 +5,23 @@ import {
   GitHubIntegrationError,
   buildFeedbackAuditToken,
   checkOnboardingStatus,
+  createGitHubRelease,
   fetchFeedbackItemsForPR,
+  fetchPullCloseState,
+  fetchPullSummary,
   formatRepoSlug,
+  getLatestSemverTagForRepo,
+  listMergedPullsSince,
+  listReleasesForRepo,
+  listTagsForRepo,
+  listUnreleasedMergedPulls,
   parsePRUrl,
   parseRepoSlug,
   postFollowUpForFeedbackItem,
   postStatusReplyForFeedbackItem,
+  resolveNextSemverTag,
   resolveReviewThread,
+  selectLatestSemverTag,
   updateStatusReply,
 } from "./github";
 
@@ -797,6 +807,480 @@ test("postStatusReplyForFeedbackItem rejects malformed review-thread reply paylo
       return true;
     },
   );
+});
+
+test("fetchPullCloseState returns merged close metadata", async () => {
+  const octokit = {
+    pulls: {
+      get: async () => ({
+        data: {
+          number: 123,
+          title: "Ship release automation",
+          html_url: "https://github.com/octo/example/pull/123",
+          user: { login: "alice" },
+          base: { ref: "main" },
+          head: { ref: "feature/releases", sha: "head123" },
+          merged_at: "2026-03-28T10:00:00Z",
+          closed_at: "2026-03-28T10:01:00Z",
+          merge_commit_sha: "merge123",
+        },
+      }),
+    },
+  };
+
+  const state = await fetchPullCloseState(
+    octokit as never,
+    { owner: "octo", repo: "example", number: 123 },
+  );
+
+  assert.deepEqual(state, {
+    number: 123,
+    title: "Ship release automation",
+    url: "https://github.com/octo/example/pull/123",
+    author: "alice",
+    baseRef: "main",
+    headRef: "feature/releases",
+    headSha: "head123",
+    merged: true,
+    mergedAt: "2026-03-28T10:00:00Z",
+    closedAt: "2026-03-28T10:01:00Z",
+    mergeCommitSha: "merge123",
+  });
+});
+
+test("fetchPullSummary falls back to the repo default branch when the base ref is missing", async () => {
+  const octokit = {
+    pulls: {
+      get: async () => ({
+        data: {
+          number: 124,
+          title: "Prepare release branch handling",
+          html_url: "https://github.com/octo/example/pull/124",
+          user: { login: "alice" },
+          base: {
+            ref: null,
+            repo: {
+              full_name: "octo/example",
+              clone_url: "https://github.com/octo/example.git",
+              default_branch: "develop",
+            },
+          },
+          head: {
+            ref: "feature/releases",
+            sha: "head124",
+            repo: {
+              full_name: "octo/example",
+              clone_url: "https://github.com/octo/example.git",
+            },
+          },
+          mergeable: true,
+        },
+      }),
+    },
+  };
+
+  const summary = await fetchPullSummary(
+    octokit as never,
+    { owner: "octo", repo: "example", number: 124 },
+  );
+
+  assert.equal(summary.baseRef, "develop");
+});
+
+test("fetchPullCloseState falls back to the repo default branch when the base ref is missing", async () => {
+  const octokit = {
+    pulls: {
+      get: async () => ({
+        data: {
+          number: 125,
+          title: "Prepare release branch handling",
+          html_url: "https://github.com/octo/example/pull/125",
+          user: { login: "alice" },
+          base: {
+            ref: null,
+            repo: {
+              default_branch: "develop",
+            },
+          },
+          head: { ref: "feature/releases", sha: "head125" },
+          merged_at: "2026-03-28T10:00:00Z",
+          closed_at: "2026-03-28T10:01:00Z",
+          merge_commit_sha: "merge125",
+        },
+      }),
+    },
+  };
+
+  const state = await fetchPullCloseState(
+    octokit as never,
+    { owner: "octo", repo: "example", number: 125 },
+  );
+
+  assert.equal(state.baseRef, "develop");
+});
+
+test("selectLatestSemverTag picks highest semver and ignores non-semver tags", () => {
+  const tag = selectLatestSemverTag([
+    "build-42",
+    "v1.9.9",
+    "2.0.0",
+    "release-candidate",
+    "v1.10.0",
+  ]);
+
+  assert.equal(tag, "2.0.0");
+});
+
+test("resolveNextSemverTag bumps patch/minor/major and defaults from empty baseline", () => {
+  assert.equal(resolveNextSemverTag("v1.2.3", "patch"), "v1.2.4");
+  assert.equal(resolveNextSemverTag("v1.2.3", "minor"), "v1.3.0");
+  assert.equal(resolveNextSemverTag("v1.2.3", "major"), "v2.0.0");
+  assert.equal(resolveNextSemverTag(null, "patch"), "v0.0.1");
+});
+
+test("resolveNextSemverTag rejects invalid latest tags", () => {
+  assert.throws(
+    () => resolveNextSemverTag("release-2026-03-28", "minor"),
+    /Cannot calculate next semver tag from invalid tag/,
+  );
+});
+
+test("listReleasesForRepo maps repository releases", async () => {
+  const listReleases = Symbol("listReleases");
+  const octokit = {
+    paginate: async (method: symbol) => {
+      assert.equal(method, listReleases);
+      return [
+        {
+          id: 10,
+          tag_name: "v1.2.0",
+          name: "Release v1.2.0",
+          body: "Notes",
+          html_url: "https://github.com/octo/example/releases/tag/v1.2.0",
+          url: "https://api.github.com/repos/octo/example/releases/10",
+          draft: false,
+          prerelease: false,
+          target_commitish: "main",
+          published_at: "2026-03-27T00:00:00Z",
+        },
+      ];
+    },
+    repos: {
+      listReleases,
+    },
+  };
+
+  const releases = await listReleasesForRepo(
+    octokit as never,
+    { owner: "octo", repo: "example" },
+  );
+
+  assert.equal(releases.length, 1);
+  assert.deepEqual(releases[0], {
+    id: 10,
+    tagName: "v1.2.0",
+    name: "Release v1.2.0",
+    body: "Notes",
+    htmlUrl: "https://github.com/octo/example/releases/tag/v1.2.0",
+    apiUrl: "https://api.github.com/repos/octo/example/releases/10",
+    draft: false,
+    prerelease: false,
+    targetCommitish: "main",
+    publishedAt: "2026-03-27T00:00:00Z",
+  });
+});
+
+test("listTagsForRepo maps repository tags", async () => {
+  const listTags = Symbol("listTags");
+  const octokit = {
+    paginate: async (method: symbol) => {
+      assert.equal(method, listTags);
+      return [
+        { name: "v1.2.0", commit: { sha: "abc123" } },
+        { name: "v1.1.0", commit: { sha: "def456" } },
+      ];
+    },
+    repos: {
+      listTags,
+    },
+  };
+
+  const tags = await listTagsForRepo(
+    octokit as never,
+    { owner: "octo", repo: "example" },
+  );
+
+  assert.deepEqual(tags, [
+    { name: "v1.2.0", commitSha: "abc123" },
+    { name: "v1.1.0", commitSha: "def456" },
+  ]);
+});
+
+test("getLatestSemverTagForRepo considers releases and tags", async () => {
+  const listReleases = Symbol("listReleases");
+  const listTags = Symbol("listTags");
+
+  const octokit = {
+    paginate: async (method: symbol) => {
+      if (method === listReleases) {
+        return [
+          {
+            id: 10,
+            tag_name: "v1.2.0",
+            name: "Release v1.2.0",
+            body: null,
+            html_url: "https://github.com/octo/example/releases/tag/v1.2.0",
+            url: "https://api.github.com/repos/octo/example/releases/10",
+            draft: false,
+            prerelease: false,
+            target_commitish: "main",
+            published_at: "2026-03-27T00:00:00Z",
+          },
+        ];
+      }
+
+      if (method === listTags) {
+        return [
+          { name: "v1.3.0", commit: { sha: "tag123" } },
+        ];
+      }
+
+      throw new Error("unexpected paginate method");
+    },
+    repos: {
+      listReleases,
+      listTags,
+    },
+  };
+
+  const latest = await getLatestSemverTagForRepo(
+    octokit as never,
+    { owner: "octo", repo: "example" },
+  );
+
+  assert.equal(latest, "v1.3.0");
+});
+
+test("createGitHubRelease calls GitHub API with release payload", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const octokit = {
+    repos: {
+      createRelease: async (params: Record<string, unknown>) => {
+        calls.push(params);
+        return {
+          data: {
+            id: 99,
+            tag_name: "v2.0.0",
+            name: "v2.0.0",
+            body: "Release notes",
+            html_url: "https://github.com/octo/example/releases/tag/v2.0.0",
+            url: "https://api.github.com/repos/octo/example/releases/99",
+            draft: false,
+            prerelease: false,
+            target_commitish: "abc123",
+            published_at: "2026-03-28T10:00:00Z",
+          },
+        };
+      },
+    },
+  };
+
+  const created = await createGitHubRelease(
+    octokit as never,
+    { owner: "octo", repo: "example" },
+    {
+      tagName: "v2.0.0",
+      name: "v2.0.0",
+      body: "Release notes",
+      targetCommitish: "abc123",
+      generateReleaseNotes: true,
+    },
+  );
+
+  assert.deepEqual(calls, [
+    {
+      owner: "octo",
+      repo: "example",
+      tag_name: "v2.0.0",
+      name: "v2.0.0",
+      body: "Release notes",
+      target_commitish: "abc123",
+      draft: false,
+      prerelease: false,
+      generate_release_notes: true,
+    },
+  ]);
+
+  assert.deepEqual(created, {
+    id: 99,
+    tagName: "v2.0.0",
+    name: "v2.0.0",
+    body: "Release notes",
+    htmlUrl: "https://github.com/octo/example/releases/tag/v2.0.0",
+    apiUrl: "https://api.github.com/repos/octo/example/releases/99",
+    draft: false,
+    prerelease: false,
+    targetCommitish: "abc123",
+    publishedAt: "2026-03-28T10:00:00Z",
+  });
+});
+
+test("listMergedPullsSince applies timestamp and merge-sha boundaries", async () => {
+  const listPulls = Symbol("listPulls");
+  const octokit = {
+    paginate: async (method: symbol) => {
+      assert.equal(method, listPulls);
+      return [
+        {
+          number: 30,
+          title: "latest",
+          html_url: "https://github.com/octo/example/pull/30",
+          user: { login: "a" },
+          merged_at: "2026-03-28T12:00:00Z",
+          merge_commit_sha: "sha-30",
+        },
+        {
+          number: 20,
+          title: "boundary",
+          html_url: "https://github.com/octo/example/pull/20",
+          user: { login: "b" },
+          merged_at: "2026-03-28T11:00:00Z",
+          merge_commit_sha: "sha-20",
+        },
+        {
+          number: 10,
+          title: "old",
+          html_url: "https://github.com/octo/example/pull/10",
+          user: { login: "c" },
+          merged_at: "2026-03-28T10:00:00Z",
+          merge_commit_sha: "sha-10",
+        },
+      ];
+    },
+    pulls: {
+      list: listPulls,
+    },
+  };
+
+  const merged = await listMergedPullsSince(
+    octokit as never,
+    { owner: "octo", repo: "example" },
+    {
+      baseRef: "main",
+      sinceMergedAt: "2026-03-28T10:30:00Z",
+      sinceMergeCommitSha: "sha-20",
+    },
+  );
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0]?.number, 30);
+  assert.equal(merged[0]?.mergeCommitSha, "sha-30");
+});
+
+test("listMergedPullsSince uses the repository default branch when none is provided", async () => {
+  const listPulls = Symbol("listPulls");
+  let repoLookups = 0;
+
+  const octokit = {
+    paginate: async (method: symbol, params: { base: string }) => {
+      assert.equal(method, listPulls);
+      assert.equal(params.base, "develop");
+      return [];
+    },
+    pulls: {
+      list: listPulls,
+    },
+    repos: {
+      get: async () => {
+        repoLookups += 1;
+        return {
+          data: {
+            default_branch: "develop",
+          },
+        };
+      },
+    },
+  };
+
+  const merged = await listMergedPullsSince(
+    octokit as never,
+    { owner: "octo", repo: "example" },
+  );
+
+  assert.deepEqual(merged, []);
+  assert.equal(repoLookups, 1);
+});
+
+test("listUnreleasedMergedPulls uses latest published release when no explicit boundary is provided", async () => {
+  const listReleases = Symbol("listReleases");
+  const listPulls = Symbol("listPulls");
+  const paginateCalls: symbol[] = [];
+
+  const octokit = {
+    paginate: async (method: symbol) => {
+      paginateCalls.push(method);
+
+      if (method === listReleases) {
+        return [
+          {
+            id: 1,
+            tag_name: "v1.0.0",
+            name: "v1.0.0",
+            body: null,
+            html_url: "https://github.com/octo/example/releases/tag/v1.0.0",
+            url: "https://api.github.com/repos/octo/example/releases/1",
+            draft: false,
+            prerelease: false,
+            target_commitish: "main",
+            published_at: "2026-03-28T11:00:00Z",
+          },
+        ];
+      }
+
+      if (method === listPulls) {
+        return [
+          {
+            number: 50,
+            title: "new",
+            html_url: "https://github.com/octo/example/pull/50",
+            user: { login: "a" },
+            merged_at: "2026-03-28T12:00:00Z",
+            merge_commit_sha: "sha-50",
+          },
+          {
+            number: 40,
+            title: "old",
+            html_url: "https://github.com/octo/example/pull/40",
+            user: { login: "b" },
+            merged_at: "2026-03-28T10:00:00Z",
+            merge_commit_sha: "sha-40",
+          },
+        ];
+      }
+
+      throw new Error("unexpected paginate method");
+    },
+    repos: {
+      get: async () => ({
+        data: {
+          default_branch: "develop",
+        },
+      }),
+      listReleases,
+    },
+    pulls: {
+      list: listPulls,
+    },
+  };
+
+  const merged = await listUnreleasedMergedPulls(
+    octokit as never,
+    { owner: "octo", repo: "example" },
+  );
+
+  assert.deepEqual(paginateCalls, [listReleases, listPulls]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0]?.number, 50);
 });
 
 // ---------------------------------------------------------------------------

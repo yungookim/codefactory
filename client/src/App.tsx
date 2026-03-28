@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import Dashboard from "@/pages/dashboard";
 import Settings from "@/pages/settings";
 import Changelogs from "@/pages/changelogs";
+import Releases from "@/pages/releases";
 import NotFound from "@/pages/not-found";
 
 function AppRouter() {
@@ -15,6 +16,7 @@ function AppRouter() {
       <Route path="/" component={Dashboard} />
       <Route path="/settings" component={Settings} />
       <Route path="/changelogs" component={Changelogs} />
+      <Route path="/releases" component={Releases} />
       <Route component={NotFound} />
     </Switch>
   );

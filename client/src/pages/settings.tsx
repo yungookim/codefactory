@@ -126,6 +126,30 @@ export default function Settings() {
             </div>
           </section>
 
+          <section>
+            <h2 className="mb-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Releases
+            </h2>
+            <div className="flex flex-col gap-4 rounded border border-border p-4">
+              <label className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm">Automatic release creation</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Evaluate merged PRs and publish GitHub releases automatically when the agent decides they are release-worthy.
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={config?.autoCreateReleases ?? true}
+                  onChange={(e) => updateConfigMutation.mutate({ autoCreateReleases: e.target.checked })}
+                  disabled={updateConfigMutation.isPending}
+                  className="mt-1 accent-foreground"
+                  data-testid="checkbox-auto-create-releases"
+                />
+              </label>
+            </div>
+          </section>
+
           {/* GitHub Token */}
           <section>
             <h2 className="mb-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">

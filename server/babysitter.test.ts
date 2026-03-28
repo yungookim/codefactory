@@ -120,6 +120,40 @@ function makeGitRunCommand(params?: {
   };
 }
 
+function makeWatcherGitHubService(overrides?: Record<string, unknown>) {
+  return {
+    buildOctokit: async () => ({}) as never,
+    fetchFeedbackItemsForPR: async () => [],
+    fetchPullSummary: async () => {
+      throw new Error("unused");
+    },
+    fetchPullCloseState: async () => ({
+      number: 42,
+      title: "Example PR",
+      url: "https://github.com/octo/example/pull/42",
+      author: "octocat",
+      baseRef: "main",
+      headRef: "feature/example",
+      headSha: "head123",
+      merged: true,
+      mergedAt: "2026-03-28T12:00:00.000Z",
+      closedAt: "2026-03-28T12:00:00.000Z",
+      mergeCommitSha: "merge123",
+    }),
+    listFailingStatuses: async () => [],
+    checkCISettled: async () => true,
+    listOpenPullsForRepo: async () => [],
+    postFollowUpForFeedbackItem: async () => undefined,
+    resolveReviewThread: async () => undefined,
+    resolveGitHubAuthToken: async () => undefined,
+    addReactionToComment: async () => undefined,
+    postStatusReplyForFeedbackItem: async () => null,
+    updateStatusReply: async () => undefined,
+    postPRComment: async () => undefined,
+    ...overrides,
+  };
+}
+
 test("pollForCICompletion tolerates transient status API errors and eventually succeeds", async () => {
   const storage = new MemStorage();
   const logs: Array<{ level: "info" | "warn" | "error"; message: string }> = [];
@@ -297,6 +331,221 @@ test("syncFeedbackForPR logs completion even when no new feedback items arrive",
 
   assert.equal(updated.status, "watching");
   assert.equal(logs.at(-1)?.message, "GitHub sync complete: 1 feedback item (0 new)");
+});
+
+test("syncAndBabysitTrackedRepos queues release evaluation for merged archived PRs", async () => {
+  const storage = new MemStorage();
+  const queued: Array<Record<string, string | number>> = [];
+
+  const pr = await storage.addPR({
+    number: 42,
+    title: "Example PR",
+    repo: "octo/example",
+    branch: "feature/example",
+    author: "octocat",
+    url: "https://github.com/octo/example/pull/42",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    makeWatcherGitHubService(),
+    {
+      resolveAgent: async () => "codex",
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+    },
+    {
+      enqueueMergedPullReleaseEvaluation: async (input) => {
+        queued.push(input as Record<string, string | number>);
+      },
+    },
+  );
+
+  await babysitter.syncAndBabysitTrackedRepos();
+
+  const updated = await storage.getPR(pr.id);
+  const logs = await storage.getLogs(pr.id);
+  assert.equal(updated?.status, "archived");
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0]?.triggerMergeSha, "merge123");
+  assert.ok(logs.some((log) => log.message.includes("queued release evaluation")));
+});
+
+test("syncAndBabysitTrackedRepos does not queue release evaluation for closed-unmerged PRs", async () => {
+  const storage = new MemStorage();
+  const queued: Array<Record<string, string | number>> = [];
+
+  const pr = await storage.addPR({
+    number: 42,
+    title: "Example PR",
+    repo: "octo/example",
+    branch: "feature/example",
+    author: "octocat",
+    url: "https://github.com/octo/example/pull/42",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    makeWatcherGitHubService({
+      fetchPullCloseState: async () => ({
+        number: 42,
+        title: "Example PR",
+        url: "https://github.com/octo/example/pull/42",
+        author: "octocat",
+        baseRef: "main",
+        headRef: "feature/example",
+        headSha: "head123",
+        merged: false,
+        mergedAt: null,
+        closedAt: "2026-03-28T12:00:00.000Z",
+        mergeCommitSha: null,
+      }),
+    }),
+    {
+      resolveAgent: async () => "codex",
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+    },
+    {
+      enqueueMergedPullReleaseEvaluation: async (input) => {
+        queued.push(input as Record<string, string | number>);
+      },
+    },
+  );
+
+  await babysitter.syncAndBabysitTrackedRepos();
+
+  const updated = await storage.getPR(pr.id);
+  const logs = await storage.getLogs(pr.id);
+  assert.equal(updated?.status, "archived");
+  assert.equal(queued.length, 0);
+  assert.ok(logs.some((log) => log.message.includes("closed without merge")));
+});
+
+test("syncAndBabysitTrackedRepos respects autoCreateReleases when a merged PR is archived", async () => {
+  const storage = new MemStorage();
+  const queued: Array<Record<string, string | number>> = [];
+  await storage.updateConfig({ autoCreateReleases: false });
+
+  await storage.addPR({
+    number: 42,
+    title: "Example PR",
+    repo: "octo/example",
+    branch: "feature/example",
+    author: "octocat",
+    url: "https://github.com/octo/example/pull/42",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    makeWatcherGitHubService(),
+    {
+      resolveAgent: async () => "codex",
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+    },
+    {
+      enqueueMergedPullReleaseEvaluation: async (input) => {
+        queued.push(input as Record<string, string | number>);
+      },
+    },
+  );
+
+  await babysitter.syncAndBabysitTrackedRepos();
+
+  assert.equal(queued.length, 0);
+});
+
+test("syncAndBabysitTrackedRepos skips release evaluation when merged PR metadata is incomplete", async () => {
+  const storage = new MemStorage();
+  const queued: Array<Record<string, string | number>> = [];
+
+  const pr = await storage.addPR({
+    number: 42,
+    title: "Example PR",
+    repo: "octo/example",
+    branch: "feature/example",
+    author: "octocat",
+    url: "https://github.com/octo/example/pull/42",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    makeWatcherGitHubService({
+      fetchPullCloseState: async () => ({
+        number: 42,
+        title: "Example PR",
+        url: "https://github.com/octo/example/pull/42",
+        author: "octocat",
+        baseRef: "",
+        headRef: "feature/example",
+        headSha: "",
+        merged: true,
+        mergedAt: null,
+        closedAt: null,
+        mergeCommitSha: null,
+      }),
+    }),
+    {
+      resolveAgent: async () => "codex",
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+    },
+    {
+      enqueueMergedPullReleaseEvaluation: async (input) => {
+        queued.push(input as Record<string, string | number>);
+      },
+    },
+  );
+
+  await babysitter.syncAndBabysitTrackedRepos();
+
+  const logs = await storage.getLogs(pr.id);
+  assert.equal(queued.length, 0);
+  assert.ok(logs.some((log) => log.message.includes("release evaluation was not queued because GitHub did not return")));
+  assert.ok(logs.some((log) => log.message.includes("base branch")));
+  assert.ok(logs.some((log) => log.message.includes("commit SHA")));
+  assert.ok(logs.some((log) => log.message.includes("merge timestamp")));
 });
 
 test("babysitPR skips new runs while drain mode is enabled", async () => {

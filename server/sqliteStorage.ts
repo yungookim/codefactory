@@ -2,15 +2,29 @@ import { mkdirSync } from "fs";
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 import { docsAssessmentSchema, feedbackStatusEnum } from "@shared/schema";
-import type { AgentRun, AgentRunStatus, Config, FeedbackItem, LogEntry, PR, PRQuestion, RuntimeState, SocialChangelog } from "@shared/schema";
+import type {
+  AgentRun,
+  AgentRunStatus,
+  Config,
+  FeedbackItem,
+  LogEntry,
+  PR,
+  PRQuestion,
+  ReleaseRun,
+  ReleaseRunStatus,
+  RuntimeState,
+  SocialChangelog,
+} from "@shared/schema";
 import {
   applyConfigUpdate,
   applyPRQuestionUpdate,
   applyPRUpdate,
+  applyReleaseRunUpdate,
   applySocialChangelogUpdate,
   createLogEntry,
   createPR,
   createPRQuestion,
+  createReleaseRun,
   createSocialChangelog,
 } from "@shared/models";
 import type { IStorage } from "./storage";
@@ -27,6 +41,7 @@ type ConfigRow = {
   poll_interval_ms: number;
   max_changes_per_run: number;
   auto_resolve_merge_conflicts: number;
+  auto_create_releases: number;
   auto_update_docs: number;
   trusted_reviewers_json: string;
   ignored_bots_json: string;
@@ -144,6 +159,31 @@ type SocialChangelogRow = {
   status: SocialChangelog["status"];
   error: string | null;
   created_at: string;
+  completed_at: string | null;
+};
+
+type ReleaseRunRow = {
+  id: string;
+  repo: string;
+  base_branch: string;
+  trigger_pr_number: number;
+  trigger_pr_title: string;
+  trigger_pr_url: string;
+  trigger_merge_sha: string;
+  trigger_merged_at: string;
+  status: ReleaseRunStatus;
+  decision_reason: string | null;
+  recommended_bump: "patch" | "minor" | "major" | null;
+  proposed_version: string | null;
+  release_title: string | null;
+  release_notes: string | null;
+  included_prs_json: string;
+  target_sha: string | null;
+  github_release_id: number | null;
+  github_release_url: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
   completed_at: string | null;
 };
 
@@ -293,6 +333,7 @@ export class SqliteStorage implements IStorage {
         poll_interval_ms INTEGER NOT NULL,
         max_changes_per_run INTEGER NOT NULL,
         auto_resolve_merge_conflicts INTEGER NOT NULL DEFAULT 1,
+        auto_create_releases INTEGER NOT NULL DEFAULT 1,
         auto_update_docs INTEGER NOT NULL DEFAULT 1,
         trusted_reviewers_json TEXT NOT NULL,
         ignored_bots_json TEXT NOT NULL
@@ -407,11 +448,40 @@ export class SqliteStorage implements IStorage {
         UNIQUE(date, trigger_count)
       );
 
+      CREATE TABLE IF NOT EXISTS release_runs (
+        id TEXT PRIMARY KEY,
+        repo TEXT NOT NULL,
+        base_branch TEXT NOT NULL,
+        trigger_pr_number INTEGER NOT NULL,
+        trigger_pr_title TEXT NOT NULL,
+        trigger_pr_url TEXT NOT NULL,
+        trigger_merge_sha TEXT NOT NULL,
+        trigger_merged_at TEXT NOT NULL,
+        status TEXT NOT NULL,
+        decision_reason TEXT,
+        recommended_bump TEXT,
+        proposed_version TEXT,
+        release_title TEXT,
+        release_notes TEXT,
+        included_prs_json TEXT NOT NULL,
+        target_sha TEXT,
+        github_release_id INTEGER,
+        github_release_url TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT,
+        UNIQUE(repo, trigger_pr_number, trigger_merge_sha)
+      );
+
       CREATE INDEX IF NOT EXISTS idx_feedback_items_pr_id ON feedback_items(pr_id);
       CREATE INDEX IF NOT EXISTS idx_logs_pr_id_timestamp ON logs(pr_id, timestamp);
       CREATE INDEX IF NOT EXISTS idx_agent_runs_status_updated_at ON agent_runs(status, updated_at);
       CREATE INDEX IF NOT EXISTS idx_pr_questions_pr_id ON pr_questions(pr_id);
       CREATE INDEX IF NOT EXISTS idx_social_changelogs_date ON social_changelogs(date);
+      CREATE INDEX IF NOT EXISTS idx_release_runs_created_at ON release_runs(created_at);
+      CREATE INDEX IF NOT EXISTS idx_release_runs_status_created_at ON release_runs(status, created_at);
+      CREATE INDEX IF NOT EXISTS idx_release_runs_repo_trigger_merge_sha ON release_runs(repo, trigger_merge_sha);
     `);
 
     this.ensureColumn("feedback_items", "reply_kind", "TEXT NOT NULL DEFAULT 'general_comment'");
@@ -424,6 +494,7 @@ export class SqliteStorage implements IStorage {
     this.ensureColumn("feedback_items", "status", "TEXT NOT NULL DEFAULT 'pending'");
     this.ensureColumn("feedback_items", "status_reason", "TEXT");
     this.ensureColumn("config", "auto_resolve_merge_conflicts", "INTEGER NOT NULL DEFAULT 1");
+    this.ensureColumn("config", "auto_create_releases", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("config", "auto_update_docs", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("prs", "docs_assessment_json", "TEXT");
 
@@ -468,7 +539,8 @@ export class SqliteStorage implements IStorage {
       pollIntervalMs: row.poll_interval_ms,
       maxChangesPerRun: row.max_changes_per_run,
       autoResolveMergeConflicts: Boolean(row.auto_resolve_merge_conflicts),
-      autoUpdateDocs: Boolean(row.auto_update_docs),
+      autoCreateReleases: Boolean(row.auto_create_releases ?? 1),
+      autoUpdateDocs: Boolean(row.auto_update_docs ?? 1),
       watchedRepos,
       trustedReviewers: JSON.parse(row.trusted_reviewers_json),
       ignoredBots: JSON.parse(row.ignored_bots_json),
@@ -492,10 +564,11 @@ export class SqliteStorage implements IStorage {
           poll_interval_ms,
           max_changes_per_run,
           auto_resolve_merge_conflicts,
+          auto_create_releases,
           auto_update_docs,
           trusted_reviewers_json,
           ignored_bots_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           github_token = excluded.github_token,
           coding_agent = excluded.coding_agent,
@@ -505,6 +578,7 @@ export class SqliteStorage implements IStorage {
           poll_interval_ms = excluded.poll_interval_ms,
           max_changes_per_run = excluded.max_changes_per_run,
           auto_resolve_merge_conflicts = excluded.auto_resolve_merge_conflicts,
+          auto_create_releases = excluded.auto_create_releases,
           auto_update_docs = excluded.auto_update_docs,
           trusted_reviewers_json = excluded.trusted_reviewers_json,
           ignored_bots_json = excluded.ignored_bots_json
@@ -518,6 +592,7 @@ export class SqliteStorage implements IStorage {
         config.pollIntervalMs,
         config.maxChangesPerRun,
         Number(config.autoResolveMergeConflicts),
+        Number(config.autoCreateReleases),
         Number(config.autoUpdateDocs),
         JSON.stringify(config.trustedReviewers),
         JSON.stringify(config.ignoredBots),
@@ -949,7 +1024,8 @@ export class SqliteStorage implements IStorage {
   async getConfig(): Promise<Config> {
     const row = this.get<ConfigRow>(`
       SELECT github_token, coding_agent, model, max_turns, batch_window_ms,
-             poll_interval_ms, max_changes_per_run, auto_resolve_merge_conflicts, auto_update_docs,
+             poll_interval_ms, max_changes_per_run, auto_resolve_merge_conflicts, auto_create_releases,
+             auto_update_docs,
              trusted_reviewers_json, ignored_bots_json
       FROM config
       WHERE id = 1
@@ -1160,6 +1236,177 @@ export class SqliteStorage implements IStorage {
       createdAt: row.created_at,
       completedAt: row.completed_at,
     };
+  }
+
+  private parseReleaseRunRow(row: ReleaseRunRow): ReleaseRun {
+    return {
+      id: row.id,
+      repo: row.repo,
+      baseBranch: row.base_branch,
+      triggerPrNumber: row.trigger_pr_number,
+      triggerPrTitle: row.trigger_pr_title,
+      triggerPrUrl: row.trigger_pr_url,
+      triggerMergeSha: row.trigger_merge_sha,
+      triggerMergedAt: row.trigger_merged_at,
+      status: row.status,
+      decisionReason: row.decision_reason,
+      recommendedBump: row.recommended_bump,
+      proposedVersion: row.proposed_version,
+      releaseTitle: row.release_title,
+      releaseNotes: row.release_notes,
+      includedPrs: JSON.parse(row.included_prs_json) as ReleaseRun["includedPrs"],
+      targetSha: row.target_sha,
+      githubReleaseId: row.github_release_id,
+      githubReleaseUrl: row.github_release_url,
+      error: row.error,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      completedAt: row.completed_at,
+    };
+  }
+
+  async getReleaseRun(id: string): Promise<ReleaseRun | undefined> {
+    const row = this.get<ReleaseRunRow>(`
+      SELECT id, repo, base_branch, trigger_pr_number, trigger_pr_title, trigger_pr_url,
+             trigger_merge_sha, trigger_merged_at, status, decision_reason, recommended_bump,
+             proposed_version, release_title, release_notes, included_prs_json, target_sha,
+             github_release_id, github_release_url, error, created_at, updated_at, completed_at
+      FROM release_runs
+      WHERE id = ?
+    `, id);
+    return row ? this.parseReleaseRunRow(row) : undefined;
+  }
+
+  async getReleaseRunByRepoAndMergeSha(repo: string, triggerMergeSha: string): Promise<ReleaseRun | undefined> {
+    const row = this.get<ReleaseRunRow>(`
+      SELECT id, repo, base_branch, trigger_pr_number, trigger_pr_title, trigger_pr_url,
+             trigger_merge_sha, trigger_merged_at, status, decision_reason, recommended_bump,
+             proposed_version, release_title, release_notes, included_prs_json, target_sha,
+             github_release_id, github_release_url, error, created_at, updated_at, completed_at
+      FROM release_runs
+      WHERE repo = ? AND trigger_merge_sha = ?
+      ORDER BY datetime(created_at) DESC, rowid DESC
+      LIMIT 1
+    `, repo, triggerMergeSha);
+    return row ? this.parseReleaseRunRow(row) : undefined;
+  }
+
+  async getReleaseRunByTrigger(repo: string, triggerPrNumber: number, triggerMergeSha: string): Promise<ReleaseRun | undefined> {
+    const row = this.get<ReleaseRunRow>(`
+      SELECT id, repo, base_branch, trigger_pr_number, trigger_pr_title, trigger_pr_url,
+             trigger_merge_sha, trigger_merged_at, status, decision_reason, recommended_bump,
+             proposed_version, release_title, release_notes, included_prs_json, target_sha,
+             github_release_id, github_release_url, error, created_at, updated_at, completed_at
+      FROM release_runs
+      WHERE repo = ? AND trigger_pr_number = ? AND trigger_merge_sha = ?
+      ORDER BY datetime(created_at) DESC, rowid DESC
+      LIMIT 1
+    `, repo, triggerPrNumber, triggerMergeSha);
+    return row ? this.parseReleaseRunRow(row) : undefined;
+  }
+
+  async listReleaseRuns(filters?: { status?: ReleaseRunStatus; repo?: string }): Promise<ReleaseRun[]> {
+    const clauses: string[] = [];
+    const values: Array<string | ReleaseRunStatus> = [];
+
+    if (filters?.status) {
+      clauses.push("status = ?");
+      values.push(filters.status);
+    }
+
+    if (filters?.repo) {
+      clauses.push("repo = ?");
+      values.push(filters.repo);
+    }
+
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.all<ReleaseRunRow>(`
+      SELECT id, repo, base_branch, trigger_pr_number, trigger_pr_title, trigger_pr_url,
+             trigger_merge_sha, trigger_merged_at, status, decision_reason, recommended_bump,
+             proposed_version, release_title, release_notes, included_prs_json, target_sha,
+             github_release_id, github_release_url, error, created_at, updated_at, completed_at
+      FROM release_runs
+      ${whereClause}
+      ORDER BY datetime(created_at) DESC, rowid DESC
+    `, ...values);
+
+    return rows.map((row) => this.parseReleaseRunRow(row));
+  }
+
+  async createReleaseRun(data: Omit<ReleaseRun, "id" | "createdAt" | "updatedAt">): Promise<ReleaseRun> {
+    const entry = createReleaseRun(data);
+    this.run(`
+      INSERT INTO release_runs (
+        id, repo, base_branch, trigger_pr_number, trigger_pr_title, trigger_pr_url,
+        trigger_merge_sha, trigger_merged_at, status, decision_reason, recommended_bump,
+        proposed_version, release_title, release_notes, included_prs_json, target_sha,
+        github_release_id, github_release_url, error, created_at, updated_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+      entry.id,
+      entry.repo,
+      entry.baseBranch,
+      entry.triggerPrNumber,
+      entry.triggerPrTitle,
+      entry.triggerPrUrl,
+      entry.triggerMergeSha,
+      entry.triggerMergedAt,
+      entry.status,
+      entry.decisionReason,
+      entry.recommendedBump,
+      entry.proposedVersion,
+      entry.releaseTitle,
+      entry.releaseNotes,
+      JSON.stringify(entry.includedPrs),
+      entry.targetSha,
+      entry.githubReleaseId,
+      entry.githubReleaseUrl,
+      entry.error,
+      entry.createdAt,
+      entry.updatedAt,
+      entry.completedAt,
+    );
+    return entry;
+  }
+
+  async updateReleaseRun(id: string, updates: Partial<ReleaseRun>): Promise<ReleaseRun | undefined> {
+    const existing = await this.getReleaseRun(id);
+    if (!existing) return undefined;
+    const next = applyReleaseRunUpdate(existing, updates);
+
+    this.run(`
+      UPDATE release_runs
+      SET repo = ?, base_branch = ?, trigger_pr_number = ?, trigger_pr_title = ?, trigger_pr_url = ?,
+          trigger_merge_sha = ?, trigger_merged_at = ?, status = ?, decision_reason = ?,
+          recommended_bump = ?, proposed_version = ?, release_title = ?, release_notes = ?,
+          included_prs_json = ?, target_sha = ?, github_release_id = ?, github_release_url = ?,
+          error = ?, created_at = ?, updated_at = ?, completed_at = ?
+      WHERE id = ?
+    `,
+      next.repo,
+      next.baseBranch,
+      next.triggerPrNumber,
+      next.triggerPrTitle,
+      next.triggerPrUrl,
+      next.triggerMergeSha,
+      next.triggerMergedAt,
+      next.status,
+      next.decisionReason,
+      next.recommendedBump,
+      next.proposedVersion,
+      next.releaseTitle,
+      next.releaseNotes,
+      JSON.stringify(next.includedPrs),
+      next.targetSha,
+      next.githubReleaseId,
+      next.githubReleaseUrl,
+      next.error,
+      next.createdAt,
+      next.updatedAt,
+      next.completedAt,
+      id,
+    );
+    return next;
   }
 
   close(): void {

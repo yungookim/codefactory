@@ -1,4 +1,15 @@
-import type { AgentRun, AgentRunStatus, Config, LogEntry, PR, PRQuestion, RuntimeState, SocialChangelog } from "@shared/schema";
+import type {
+  AgentRun,
+  AgentRunStatus,
+  Config,
+  LogEntry,
+  PR,
+  PRQuestion,
+  ReleaseRun,
+  ReleaseRunStatus,
+  RuntimeState,
+  SocialChangelog,
+} from "@shared/schema";
 export { MemStorage } from "./memoryStorage";
 import { SqliteStorage } from "./sqliteStorage";
 
@@ -45,6 +56,17 @@ export interface IStorage {
   getSocialChangelogForDateAndCount(date: string, triggerCount: number): Promise<SocialChangelog | undefined>;
   createSocialChangelog(data: Omit<SocialChangelog, "id" | "createdAt">): Promise<SocialChangelog>;
   updateSocialChangelog(id: string, updates: Partial<SocialChangelog>): Promise<SocialChangelog | undefined>;
+
+  // Release runs
+  getReleaseRun(id: string): Promise<ReleaseRun | undefined>;
+  getReleaseRunByRepoAndMergeSha(repo: string, triggerMergeSha: string): Promise<ReleaseRun | undefined>;
+  getReleaseRunByTrigger(repo: string, triggerPrNumber: number, triggerMergeSha: string): Promise<ReleaseRun | undefined>;
+  listReleaseRuns(filters?: {
+    status?: ReleaseRunStatus;
+    repo?: string;
+  }): Promise<ReleaseRun[]>;
+  createReleaseRun(data: Omit<ReleaseRun, "id" | "createdAt" | "updatedAt">): Promise<ReleaseRun>;
+  updateReleaseRun(id: string, updates: Partial<ReleaseRun>): Promise<ReleaseRun | undefined>;
 
   // Durable agent run journal
   getAgentRun(id: string): Promise<AgentRun | undefined>;
