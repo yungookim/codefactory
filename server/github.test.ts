@@ -32,6 +32,8 @@ const config: Config = {
   batchWindowMs: 300000,
   pollIntervalMs: 120000,
   maxChangesPerRun: 20,
+  autoResolveMergeConflicts: true,
+  autoUpdateDocs: true,
   watchedRepos: [],
   trustedReviewers: [],
   ignoredBots: ["dependabot[bot]", "codecov[bot]", "github-actions[bot]"],

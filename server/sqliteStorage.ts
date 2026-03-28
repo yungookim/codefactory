@@ -1,7 +1,7 @@
 import { mkdirSync } from "fs";
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
-import { feedbackStatusEnum } from "@shared/schema";
+import { docsAssessmentSchema, feedbackStatusEnum } from "@shared/schema";
 import type {
   AgentRun,
   AgentRunStatus,
@@ -42,6 +42,7 @@ type ConfigRow = {
   max_changes_per_run: number;
   auto_resolve_merge_conflicts: number;
   auto_create_releases: number;
+  auto_update_docs: number;
   trusted_reviewers_json: string;
   ignored_bots_json: string;
 };
@@ -78,6 +79,7 @@ type PRRow = {
   tests_passed: number | null;
   lint_passed: number | null;
   last_checked: string | null;
+  docs_assessment_json: string | null;
   added_at: string;
 };
 
@@ -332,6 +334,7 @@ export class SqliteStorage implements IStorage {
         max_changes_per_run INTEGER NOT NULL,
         auto_resolve_merge_conflicts INTEGER NOT NULL DEFAULT 1,
         auto_create_releases INTEGER NOT NULL DEFAULT 1,
+        auto_update_docs INTEGER NOT NULL DEFAULT 1,
         trusted_reviewers_json TEXT NOT NULL,
         ignored_bots_json TEXT NOT NULL
       );
@@ -355,6 +358,7 @@ export class SqliteStorage implements IStorage {
         tests_passed INTEGER,
         lint_passed INTEGER,
         last_checked TEXT,
+        docs_assessment_json TEXT,
         added_at TEXT NOT NULL,
         UNIQUE(repo, number)
       );
@@ -491,6 +495,8 @@ export class SqliteStorage implements IStorage {
     this.ensureColumn("feedback_items", "status_reason", "TEXT");
     this.ensureColumn("config", "auto_resolve_merge_conflicts", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("config", "auto_create_releases", "INTEGER NOT NULL DEFAULT 1");
+    this.ensureColumn("config", "auto_update_docs", "INTEGER NOT NULL DEFAULT 1");
+    this.ensureColumn("prs", "docs_assessment_json", "TEXT");
 
     const configExists = this.get<{ present: number }>("SELECT 1 AS present FROM config WHERE id = 1");
     if (!configExists) {
@@ -534,6 +540,7 @@ export class SqliteStorage implements IStorage {
       maxChangesPerRun: row.max_changes_per_run,
       autoResolveMergeConflicts: Boolean(row.auto_resolve_merge_conflicts),
       autoCreateReleases: Boolean(row.auto_create_releases ?? 1),
+      autoUpdateDocs: Boolean(row.auto_update_docs ?? 1),
       watchedRepos,
       trustedReviewers: JSON.parse(row.trusted_reviewers_json),
       ignoredBots: JSON.parse(row.ignored_bots_json),
@@ -558,9 +565,10 @@ export class SqliteStorage implements IStorage {
           max_changes_per_run,
           auto_resolve_merge_conflicts,
           auto_create_releases,
+          auto_update_docs,
           trusted_reviewers_json,
           ignored_bots_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           github_token = excluded.github_token,
           coding_agent = excluded.coding_agent,
@@ -571,6 +579,7 @@ export class SqliteStorage implements IStorage {
           max_changes_per_run = excluded.max_changes_per_run,
           auto_resolve_merge_conflicts = excluded.auto_resolve_merge_conflicts,
           auto_create_releases = excluded.auto_create_releases,
+          auto_update_docs = excluded.auto_update_docs,
           trusted_reviewers_json = excluded.trusted_reviewers_json,
           ignored_bots_json = excluded.ignored_bots_json
       `,
@@ -584,6 +593,7 @@ export class SqliteStorage implements IStorage {
         config.maxChangesPerRun,
         Number(config.autoResolveMergeConflicts),
         Number(config.autoCreateReleases),
+        Number(config.autoUpdateDocs),
         JSON.stringify(config.trustedReviewers),
         JSON.stringify(config.ignoredBots),
       );
@@ -617,8 +627,21 @@ export class SqliteStorage implements IStorage {
       testsPassed: row.tests_passed === null ? null : Boolean(row.tests_passed),
       lintPassed: row.lint_passed === null ? null : Boolean(row.lint_passed),
       lastChecked: row.last_checked,
+      docsAssessment: this.parseDocsAssessment(row.docs_assessment_json),
       addedAt: row.added_at,
     };
+  }
+
+  private parseDocsAssessment(raw: string | null): PR["docsAssessment"] {
+    if (!raw) {
+      return null;
+    }
+
+    try {
+      return docsAssessmentSchema.parse(JSON.parse(raw));
+    } catch {
+      return null;
+    }
   }
 
   private parseRuntimeStateRow(row: RuntimeStateRow | undefined): RuntimeState {
@@ -739,7 +762,7 @@ export class SqliteStorage implements IStorage {
   async getPRs(): Promise<PR[]> {
     const rows = this.all<PRRow>(`
       SELECT id, number, title, repo, branch, author, url, status, accepted, rejected, flagged,
-             tests_passed, lint_passed, last_checked, added_at
+             tests_passed, lint_passed, last_checked, docs_assessment_json, added_at
       FROM prs
       WHERE status != 'archived'
       ORDER BY datetime(added_at) DESC
@@ -753,7 +776,7 @@ export class SqliteStorage implements IStorage {
   async getArchivedPRs(): Promise<PR[]> {
     const rows = this.all<PRRow>(`
       SELECT id, number, title, repo, branch, author, url, status, accepted, rejected, flagged,
-             tests_passed, lint_passed, last_checked, added_at
+             tests_passed, lint_passed, last_checked, docs_assessment_json, added_at
       FROM prs
       WHERE status = 'archived'
       ORDER BY datetime(added_at) DESC
@@ -767,7 +790,7 @@ export class SqliteStorage implements IStorage {
   async getPR(id: string): Promise<PR | undefined> {
     const row = this.get<PRRow>(`
       SELECT id, number, title, repo, branch, author, url, status, accepted, rejected, flagged,
-             tests_passed, lint_passed, last_checked, added_at
+             tests_passed, lint_passed, last_checked, docs_assessment_json, added_at
       FROM prs
       WHERE id = ?
     `, id);
@@ -783,7 +806,7 @@ export class SqliteStorage implements IStorage {
   async getPRByRepoAndNumber(repo: string, number: number): Promise<PR | undefined> {
     const row = this.get<PRRow>(`
       SELECT id, number, title, repo, branch, author, url, status, accepted, rejected, flagged,
-             tests_passed, lint_passed, last_checked, added_at
+             tests_passed, lint_passed, last_checked, docs_assessment_json, added_at
       FROM prs
       WHERE repo = ? AND number = ?
     `, repo, number);
@@ -803,8 +826,8 @@ export class SqliteStorage implements IStorage {
       this.run(`
         INSERT INTO prs (
           id, number, title, repo, branch, author, url, status, accepted, rejected, flagged,
-          tests_passed, lint_passed, last_checked, added_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          tests_passed, lint_passed, last_checked, docs_assessment_json, added_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
         full.id,
         full.number,
@@ -820,6 +843,7 @@ export class SqliteStorage implements IStorage {
         full.testsPassed === null ? null : Number(full.testsPassed),
         full.lintPassed === null ? null : Number(full.lintPassed),
         full.lastChecked,
+        full.docsAssessment ? JSON.stringify(full.docsAssessment) : null,
         full.addedAt,
       );
 
@@ -840,7 +864,7 @@ export class SqliteStorage implements IStorage {
       this.run(`
         UPDATE prs
         SET number = ?, title = ?, repo = ?, branch = ?, author = ?, url = ?, status = ?,
-            accepted = ?, rejected = ?, flagged = ?, tests_passed = ?, lint_passed = ?, last_checked = ?
+            accepted = ?, rejected = ?, flagged = ?, tests_passed = ?, lint_passed = ?, last_checked = ?, docs_assessment_json = ?
         WHERE id = ?
       `,
         updated.number,
@@ -856,6 +880,7 @@ export class SqliteStorage implements IStorage {
         updated.testsPassed === null ? null : Number(updated.testsPassed),
         updated.lintPassed === null ? null : Number(updated.lintPassed),
         updated.lastChecked,
+        updated.docsAssessment ? JSON.stringify(updated.docsAssessment) : null,
         id,
       );
 
@@ -1000,6 +1025,7 @@ export class SqliteStorage implements IStorage {
     const row = this.get<ConfigRow>(`
       SELECT github_token, coding_agent, model, max_turns, batch_window_ms,
              poll_interval_ms, max_changes_per_run, auto_resolve_merge_conflicts, auto_create_releases,
+             auto_update_docs,
              trusted_reviewers_json, ignored_bots_json
       FROM config
       WHERE id = 1

@@ -329,6 +329,7 @@ describe("MemStorage", () => {
       assert.equal(config.codingAgent, DEFAULT_CONFIG.codingAgent);
       assert.equal(config.maxTurns, DEFAULT_CONFIG.maxTurns);
       assert.equal(config.autoCreateReleases, DEFAULT_CONFIG.autoCreateReleases);
+      assert.equal(config.autoUpdateDocs, DEFAULT_CONFIG.autoUpdateDocs);
       assert.deepEqual(config.watchedRepos, []);
     });
   });
@@ -339,6 +340,7 @@ describe("MemStorage", () => {
       assert.equal(updated.maxTurns, 25);
       // Other fields preserved
       assert.equal(updated.codingAgent, "claude");
+      assert.equal(updated.autoUpdateDocs, true);
       assert.equal(updated.autoCreateReleases, true);
     });
 

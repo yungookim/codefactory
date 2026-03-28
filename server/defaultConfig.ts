@@ -9,6 +9,7 @@ export const DEFAULT_CONFIG: Config = {
   maxChangesPerRun: 20,
   autoResolveMergeConflicts: true,
   autoCreateReleases: true,
+  autoUpdateDocs: true,
   watchedRepos: [],
   trustedReviewers: [],
   ignoredBots: ["dependabot[bot]", "codecov[bot]", "github-actions[bot]"],
