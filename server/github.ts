@@ -1,7 +1,8 @@
 import { Octokit } from "@octokit/rest";
-import type { Config, FeedbackItem } from "@shared/schema";
+import type { CheckSnapshot, Config, FeedbackItem } from "@shared/schema";
 import { z } from "zod";
 import { runCommand } from "./agentRunner";
+import { normalizeCheckSnapshotsFromRef } from "./ciCheckIngestor";
 import { renderGitHubMarkdown } from "./markdown";
 
 export type ParsedPRUrl = {
@@ -35,6 +36,28 @@ export type GitHubStatusFailure = {
   context: string;
   description: string;
   targetUrl: string | null;
+};
+
+type GitHubCommitStatusResponse = {
+  state?: string | null;
+  context?: string | null;
+  description?: string | null;
+  target_url?: string | null;
+  updated_at?: string | null;
+};
+
+type GitHubCheckRunResponse = {
+  name?: string | null;
+  status?: string | null;
+  conclusion?: string | null;
+  html_url?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  updated_at?: string | null;
+  output?: {
+    title?: string | null;
+    summary?: string | null;
+  } | null;
 };
 
 export type GitHubPullCloseState = {
@@ -235,6 +258,35 @@ type ReviewThreadNode = {
 
 export function buildFeedbackAuditToken(feedbackId: string): string {
   return `codefactory-feedback:${feedbackId}`;
+}
+
+export async function fetchCheckSnapshotsForRef(
+  octokit: Octokit,
+  repo: ParsedRepoSlug,
+  prId: string,
+  headSha: string,
+): Promise<CheckSnapshot[]> {
+  if (!headSha) return [];
+
+  const [statusResponse, checkRunsResponse] = await Promise.all([
+    withGitHubErrorHandling("commit statuses", repo, () => octokit.repos.getCombinedStatusForRef({
+      owner: repo.owner,
+      repo: repo.repo,
+      ref: headSha,
+    })),
+    withGitHubErrorHandling("check runs", repo, () => octokit.checks.listForRef({
+      owner: repo.owner,
+      repo: repo.repo,
+      ref: headSha,
+    })),
+  ]);
+
+  return normalizeCheckSnapshotsFromRef({
+    prId,
+    sha: headSha,
+    statuses: (statusResponse.data.statuses ?? []) as GitHubCommitStatusResponse[],
+    checkRuns: (checkRunsResponse.data.check_runs ?? []) as GitHubCheckRunResponse[],
+  });
 }
 
 export async function resolveGitHubAuthToken(config: Config): Promise<string | undefined> {
