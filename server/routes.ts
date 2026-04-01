@@ -1,10 +1,11 @@
-import type { Express } from "express";
+import type { Express, Response } from "express";
 import type { Server } from "http";
 import { z } from "zod";
 import { addPRSchema, askQuestionSchema, configSchema } from "@shared/schema";
 import { storage } from "./storage";
 import { PRBabysitter } from "./babysitter";
-import { applyEvaluationDecision, applyFlagDecision, applyManualDecision } from "./feedbackLifecycle";
+import { applyEvaluationDecision, applyFlagDecision } from "./feedbackLifecycle";
+import { applyManualFeedbackDecision } from "./manualFeedback";
 import { createWatcherScheduler } from "./watcherScheduler";
 import { answerPRQuestion } from "./prQuestionAgent";
 import { ReleaseManager } from "./releaseManager";
@@ -23,6 +24,19 @@ import {
   parseRepoSlug,
   resolveNextSemverTag,
 } from "./github";
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function sendGitHubAwareError(res: Response, error: unknown): void {
+  if (error instanceof GitHubIntegrationError) {
+    res.status(error.statusCode).json({ error: error.message });
+    return;
+  }
+
+  res.status(500).json({ error: getErrorMessage(error) });
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -305,13 +319,7 @@ export async function registerRoutes(
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: err.errors[0].message });
       }
-
-      if (err instanceof GitHubIntegrationError) {
-        return res.status(err.statusCode).json({ error: err.message });
-      }
-
-      const message = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: message });
+      sendGitHubAwareError(res, err);
     }
   });
 
@@ -363,13 +371,10 @@ export async function registerRoutes(
       const updated = await babysitter.syncFeedbackForPR(pr.id);
       res.json(updated);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       await storage.updatePR(pr.id, { status: "error", lastChecked: new Date().toISOString() });
       await storage.addLog(pr.id, "error", `Fetch failed: ${message}`);
-      if (error instanceof GitHubIntegrationError) {
-        return res.status(error.statusCode).json({ error: message });
-      }
-      res.status(500).json({ error: message });
+      sendGitHubAwareError(res, error);
     }
   });
 
@@ -454,26 +459,27 @@ export async function registerRoutes(
   });
 
   app.patch("/api/prs/:id/feedback/:feedbackId", async (req, res) => {
-    const pr = await storage.getPR(req.params.id);
-    if (!pr) return res.status(404).json({ error: "PR not found" });
+    try {
+      const pr = await storage.getPR(req.params.id);
+      if (!pr) return res.status(404).json({ error: "PR not found" });
 
-    const { decision } = req.body;
-    if (!["accept", "reject", "flag"].includes(decision)) {
-      return res.status(400).json({ error: "Invalid decision" });
+      const { decision } = req.body;
+      if (!["accept", "reject", "flag"].includes(decision)) {
+        return res.status(400).json({ error: "Invalid decision" });
+      }
+
+      const manualDecision = decision as "accept" | "reject" | "flag";
+
+      const updated = await applyManualFeedbackDecision({
+        storage,
+        pr,
+        feedbackId: req.params.feedbackId,
+        decision: manualDecision,
+      });
+      res.json(updated);
+    } catch (err: unknown) {
+      sendGitHubAwareError(res, err);
     }
-
-    const feedbackItems = pr.feedbackItems.map((item) =>
-      item.id === req.params.feedbackId
-        ? applyManualDecision(item, decision as "accept" | "reject" | "flag")
-        : item,
-    );
-
-    const accepted = feedbackItems.filter((i) => i.decision === "accept").length;
-    const rejected = feedbackItems.filter((i) => i.decision === "reject").length;
-    const flagged = feedbackItems.filter((i) => i.decision === "flag").length;
-
-    const updated = await storage.updatePR(pr.id, { feedbackItems, accepted, rejected, flagged });
-    res.json(updated);
   });
 
   app.post("/api/prs/:id/feedback/:feedbackId/retry", async (req, res) => {
@@ -565,11 +571,7 @@ export async function registerRoutes(
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: err.errors[0].message });
       }
-      if (err instanceof GitHubIntegrationError) {
-        return res.status(err.statusCode).json({ error: err.message });
-      }
-      const message = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: message });
+      sendGitHubAwareError(res, err);
     }
   });
 

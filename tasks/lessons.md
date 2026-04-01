@@ -1,5 +1,13 @@
 # Lessons Learned
 
+## 2026-04-01 - Treat local feedback closure states as GitHub conversation closure triggers
+- Pattern: I initially scoped PR conversation cleanup too narrowly and paused on whether manual rejection should resolve GitHub review threads immediately.
+- Rule: In oh-my-pr, any feedback item transition to a terminal closed state owned by the app (`rejected` or `resolved`) should immediately attempt to resolve the corresponding GitHub review thread when one exists.
+- Prevention checklist:
+  - When implementing feedback-state transitions, map each terminal local state to its required remote GitHub side effect before coding.
+  - Do not limit conversation cleanup to babysitter-authored follow-ups if the UI can also close items manually.
+  - Verify both manual and automated paths converge on the same review-thread resolution behavior.
+
 ## 2026-04-01 - Default to removing the named UI surface, not its whole container
 - Pattern: I treated a request to remove the `"AI code review not detected"` dialog as possibly meaning the entire onboarding banner, even after locating the text inside a shared panel with unrelated GitHub setup content.
 - Rule: When the user names a specific dialog, heading, or message inside a composite UI, default to removing only that named surface and preserving adjacent sections unless they explicitly ask for broader cleanup.
