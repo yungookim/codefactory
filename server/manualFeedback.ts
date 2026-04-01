@@ -54,7 +54,7 @@ export async function applyManualFeedbackDecision(params: {
   );
 
   const updatedItem = feedbackItems.find((item) => item.id === feedbackId);
-  if (updatedItem && shouldResolveReviewConversation(updatedItem) && updatedItem.threadId) {
+  if (updatedItem?.threadId && shouldResolveReviewConversation(updatedItem)) {
     const parsedPr = parsePRUrl(pr.url);
     if (!parsedPr) {
       throw new GitHubIntegrationError(`Invalid PR URL: ${pr.url}`, 500);
