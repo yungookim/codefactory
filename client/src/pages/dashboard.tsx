@@ -72,6 +72,14 @@ function FeedbackStatusTag({ status }: { status: FeedbackItem["status"] }) {
   );
 }
 
+function WatchPausedIndicator() {
+  return (
+    <span className="border border-border px-1.5 py-0 text-[10px] uppercase tracking-wider text-muted-foreground">
+      watch paused
+    </span>
+  );
+}
+
 function ReadyToMergeIndicator({
   href,
   testId,
@@ -196,11 +204,7 @@ function PRRow({ pr, isSelected, onSelect }: { pr: PR; isSelected: boolean; onSe
               {pr.repo}
             </a>
             <span>{formatStatusLabel(pr.status)}</span>
-            {!watchEnabled && (
-              <span className="border border-border px-1.5 py-0 text-[10px] uppercase tracking-wider text-muted-foreground">
-                watch paused
-              </span>
-            )}
+            {!watchEnabled && <WatchPausedIndicator />}
             {pr.feedbackItems.length > 0 && (() => {
               const counts = countActiveFeedbackStatuses(pr.feedbackItems);
               const parts: string[] = [];
@@ -931,11 +935,7 @@ export default function Dashboard() {
                       <StatusDot status={selectedPR.status} />
                       <span className="truncate font-medium">{selectedPR.title}</span>
                       <AgentIndicator pr={selectedPR} />
-                      {!selectedPRWatchEnabled && (
-                        <span className="border border-border px-1.5 py-0 text-[10px] uppercase tracking-wider text-muted-foreground">
-                          watch paused
-                        </span>
-                      )}
+                      {!selectedPRWatchEnabled && <WatchPausedIndicator />}
                       <a
                         href={selectedPR.url}
                         target="_blank"
@@ -947,11 +947,7 @@ export default function Dashboard() {
                     </div>
                     <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
                       <span>status: {formatStatusLabel(selectedPR.status)}</span>
-                      {!selectedPRWatchEnabled && (
-                        <span className="border border-border px-1.5 py-0 text-[10px] uppercase tracking-wider text-muted-foreground">
-                          watch paused
-                        </span>
-                      )}
+                      {!selectedPRWatchEnabled && <WatchPausedIndicator />}
                       <span>{selectedPR.feedbackItems.length} items</span>
                       {selectedPR.feedbackItems.length > 0 && (() => {
                         const counts = countActiveFeedbackStatuses(selectedPR.feedbackItems);
