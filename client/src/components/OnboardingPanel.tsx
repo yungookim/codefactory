@@ -4,6 +4,29 @@ import { useQuery } from "@tanstack/react-query";
 type OnboardingStatus = {
   githubConnected: boolean;
   githubError?: string;
+  repos: RepoOnboardingStatus[];
+};
+
+type RepoOnboardingStatus = {
+  repo: string;
+  accessible: boolean;
+  error?: string;
+};
+
+export function getOnboardingPanelState(status: OnboardingStatus) {
+  const inaccessibleRepos = status.githubConnected
+    ? status.repos.filter((repo) => !repo.accessible)
+    : [];
+  const hasIssues = !status.githubConnected || inaccessibleRepos.length > 0;
+  const summary = !status.githubConnected
+    ? "GitHub not connected"
+    : `${inaccessibleRepos.length} inaccessible repo${inaccessibleRepos.length === 1 ? "" : "s"}`;
+
+  return {
+    hasIssues,
+    inaccessibleRepos,
+    summary,
+  };
 };
 
 function InlineCode({ children }: { children: string }) {
@@ -102,7 +125,11 @@ export function OnboardingPanel() {
     refetchInterval: 30000,
   });
 
-  if (isLoading || !status || status.githubConnected || dismissed) return null;
+  if (isLoading || !status) return null;
+
+  const { hasIssues, inaccessibleRepos, summary } = getOnboardingPanelState(status);
+
+  if (!hasIssues || dismissed) return null;
 
   return (
     <div className="shrink-0 border-b border-amber-500/30 bg-amber-500/5">
@@ -115,7 +142,7 @@ export function OnboardingPanel() {
           <span className="text-[11px] font-medium uppercase tracking-wider text-amber-400">
             Setup needed
           </span>
-          <span className="text-[11px] text-muted-foreground">GitHub not connected</span>
+          <span className="text-[11px] text-muted-foreground">{summary}</span>
           <span className="text-[10px] text-muted-foreground">{expanded ? "▲" : "▼"}</span>
         </button>
         <button
@@ -139,6 +166,33 @@ export function OnboardingPanel() {
             </div>
             <GitHubSetupSection />
           </div>
+
+          {status.githubConnected && inaccessibleRepos.length > 0 && (
+            <div className="space-y-4">
+              <div className="text-[11px] font-medium uppercase tracking-wider">
+                Repository access issues
+              </div>
+              <div className="space-y-3">
+                {inaccessibleRepos.map((repoStatus) => (
+                  <div key={repoStatus.repo} className="space-y-1">
+                    <div className="text-[11px] font-medium">
+                      <a
+                        href={`https://github.com/${repoStatus.repo}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline underline-offset-2"
+                      >
+                        {repoStatus.repo}
+                      </a>
+                    </div>
+                    <p className="text-[12px] text-destructive">
+                      Cannot access this repository: {repoStatus.error ?? "unknown error"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
