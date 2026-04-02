@@ -5,6 +5,7 @@ import {
   GitHubIntegrationError,
   buildFeedbackAuditToken,
   checkOnboardingStatus,
+  fetchCheckSnapshotsForRef,
   createGitHubRelease,
   fetchFeedbackItemsForPR,
   fetchPullCloseState,
@@ -33,7 +34,13 @@ const config: Config = {
   pollIntervalMs: 120000,
   maxChangesPerRun: 20,
   autoResolveMergeConflicts: true,
+  autoCreateReleases: true,
   autoUpdateDocs: true,
+  autoHealCI: false,
+  maxHealingAttemptsPerSession: 3,
+  maxHealingAttemptsPerFingerprint: 2,
+  maxConcurrentHealingRuns: 1,
+  healingCooldownMs: 300000,
   watchedRepos: [],
   trustedReviewers: [],
   ignoredBots: ["dependabot[bot]", "codecov[bot]", "github-actions[bot]"],
@@ -143,6 +150,68 @@ test("checkOnboardingStatus reads workflow files with authenticated API content 
   } finally {
     (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
   }
+});
+
+test("fetchCheckSnapshotsForRef normalizes commit statuses and check runs", async () => {
+  const octokit = {
+    repos: {
+      getCombinedStatusForRef: async () => ({
+        data: {
+          statuses: [
+            {
+              context: "lint",
+              description: "Lint passed",
+              state: "success",
+              target_url: "https://example.com/status/1",
+              updated_at: "2026-04-01T12:01:00.000Z",
+            },
+            {
+              context: "build",
+              description: "Build failed",
+              state: "failure",
+              target_url: "https://example.com/status/2",
+              updated_at: "2026-04-01T12:02:00.000Z",
+            },
+          ],
+        },
+      }),
+    },
+    checks: {
+      listForRef: async () => ({
+        data: {
+          check_runs: [
+            {
+              name: "tests",
+              status: "completed",
+              conclusion: "failure",
+              html_url: "https://example.com/check/1",
+              output: {
+                title: "Tests failed",
+                summary: "The test job failed",
+              },
+              completed_at: "2026-04-01T12:03:00.000Z",
+            },
+          ],
+        },
+      }),
+    },
+  };
+
+  const snapshots = await fetchCheckSnapshotsForRef(
+    octokit as never,
+    { owner: "owner", repo: "repo" },
+    "pr-1",
+    "abc123",
+  );
+
+  assert.equal(snapshots.length, 3);
+  assert.deepEqual(
+    snapshots.map((snapshot) => snapshot.provider),
+    ["github.commit_status", "github.commit_status", "github.check_run"],
+  );
+  assert.equal(snapshots[1]?.context, "build");
+  assert.equal(snapshots[2]?.conclusion, "failure");
+  assert.equal(snapshots[2]?.targetUrl, "https://example.com/check/1");
 });
 
 test("fetchFeedbackItemsForPR keeps review bots that are not explicitly ignored", async () => {
