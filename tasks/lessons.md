@@ -1,5 +1,13 @@
 # Lessons Learned
 
+## 2026-04-02 - Re-anchor design scope to the branch the user selects
+- Pattern: I inspected newer background-job code on a feature branch, then the user corrected me to work from current `main`, which meant some of the async surfaces I had reasoned about were not actually present in the implementation target.
+- Rule: When the user specifies a branch or says to work from `main`, verify the feature set on that exact branch before finalizing architecture or scope.
+- Prevention checklist:
+  - Re-check `git rev-parse --abbrev-ref HEAD` and the worktree base immediately after any branch-scope correction.
+  - Re-read the actual implementation files on the selected branch instead of assuming earlier exploration still applies.
+  - Restate which job types exist on the target branch before proposing queue coverage or migrations.
+
 ## 2026-04-01 - Treat local feedback closure states as GitHub conversation closure triggers
 - Pattern: I initially scoped PR conversation cleanup too narrowly and paused on whether manual rejection should resolve GitHub review threads immediately.
 - Rule: In oh-my-pr, any feedback item transition to a terminal closed state owned by the app (`rejected` or `resolved`) should immediately attempt to resolve the corresponding GitHub review thread when one exists.
