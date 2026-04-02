@@ -336,6 +336,156 @@ test("SqliteStorage upsertAgentRun preserves the original createdAt", async () =
   storage.close();
 });
 
+test("SqliteStorage persists background jobs and requeues expired leases", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codefactory-storage-"));
+  const first = new SqliteStorage(root);
+
+  try {
+    const lowPriority = await first.enqueueBackgroundJob({
+      kind: "babysit_pr",
+      targetId: "pr-low",
+      dedupeKey: "babysit_pr:pr-low",
+      payload: { prId: "pr-low" },
+      priority: 200,
+      availableAt: "2026-04-02T10:00:00.000Z",
+    });
+    const highPriority = await first.enqueueBackgroundJob({
+      kind: "babysit_pr",
+      targetId: "pr-high",
+      dedupeKey: "babysit_pr:pr-high",
+      payload: { prId: "pr-high" },
+      priority: 50,
+      availableAt: "2026-04-02T10:00:00.000Z",
+    });
+    const duplicate = await first.enqueueBackgroundJob({
+      kind: "babysit_pr",
+      targetId: "pr-high",
+      dedupeKey: "babysit_pr:pr-high",
+      payload: { prId: "pr-high", duplicate: true },
+      priority: 25,
+      availableAt: "2026-04-02T10:00:00.000Z",
+    });
+
+    assert.equal(duplicate.id, highPriority.id);
+
+    const claimed = await first.claimNextBackgroundJob({
+      workerId: "worker-1",
+      leaseToken: "lease-1",
+      leaseExpiresAt: "2026-04-02T10:00:30.000Z",
+      now: "2026-04-02T10:00:00.000Z",
+    });
+    assert.equal(claimed?.id, highPriority.id);
+    assert.equal(claimed?.attemptCount, 1);
+
+    const heartbeat = await first.heartbeatBackgroundJob(
+      highPriority.id,
+      "lease-1",
+      "2026-04-02T10:00:10.000Z",
+      "2026-04-02T10:00:40.000Z",
+    );
+    assert.equal(heartbeat?.heartbeatAt, "2026-04-02T10:00:10.000Z");
+    first.close();
+
+    const second = new SqliteStorage(root);
+    try {
+      const persisted = await second.getBackgroundJob(highPriority.id);
+      assert.equal(persisted?.status, "leased");
+      assert.equal(persisted?.leaseToken, "lease-1");
+
+      const reclaimedCount = await second.requeueExpiredBackgroundJobs("2026-04-02T10:00:41.000Z");
+      assert.equal(reclaimedCount, 1);
+
+      const requeued = await second.getBackgroundJob(highPriority.id);
+      assert.equal(requeued?.status, "queued");
+      assert.equal(requeued?.leaseToken, null);
+
+      const reclaimedClaim = await second.claimNextBackgroundJob({
+        workerId: "worker-2",
+        leaseToken: "lease-2",
+        leaseExpiresAt: "2026-04-02T10:01:10.000Z",
+        now: "2026-04-02T10:00:41.000Z",
+      });
+      assert.equal(reclaimedClaim?.id, highPriority.id);
+      assert.equal(reclaimedClaim?.attemptCount, 2);
+
+      const failed = await second.failBackgroundJob(
+        highPriority.id,
+        "lease-2",
+        "boom",
+        "2026-04-02T10:00:50.000Z",
+      );
+      assert.equal(failed?.status, "failed");
+      assert.equal(failed?.lastError, "boom");
+
+      const cancelSource = await second.enqueueBackgroundJob({
+        kind: "generate_social_changelog",
+        targetId: "changelog-1",
+        dedupeKey: "generate_social_changelog:changelog-1",
+        payload: { changelogId: "changelog-1" },
+        availableAt: "2026-04-02T10:01:00.000Z",
+      });
+
+      const cancelClaim = await second.claimNextBackgroundJob({
+        workerId: "worker-3",
+        leaseToken: "lease-3",
+        leaseExpiresAt: "2026-04-02T10:01:40.000Z",
+        now: "2026-04-02T10:01:00.000Z",
+        kinds: ["generate_social_changelog"],
+      });
+      assert.equal(cancelClaim?.id, cancelSource.id);
+
+      const canceled = await second.cancelBackgroundJob(
+        cancelSource.id,
+        "lease-3",
+        "no-op",
+        "2026-04-02T10:01:10.000Z",
+      );
+      assert.equal(canceled?.status, "canceled");
+
+      const completedSource = await second.enqueueBackgroundJob({
+        kind: "answer_pr_question",
+        targetId: "question-1",
+        dedupeKey: "answer_pr_question:question-1",
+        payload: { questionId: "question-1" },
+        availableAt: "2026-04-02T10:02:00.000Z",
+      });
+
+      const completedClaim = await second.claimNextBackgroundJob({
+        workerId: "worker-4",
+        leaseToken: "lease-4",
+        leaseExpiresAt: "2026-04-02T10:02:40.000Z",
+        now: "2026-04-02T10:02:00.000Z",
+        kinds: ["answer_pr_question"],
+      });
+      assert.equal(completedClaim?.id, completedSource.id);
+
+      const completed = await second.completeBackgroundJob(
+        completedSource.id,
+        "lease-4",
+        "2026-04-02T10:02:10.000Z",
+      );
+      assert.equal(completed?.status, "completed");
+
+      const failedJobs = await second.listBackgroundJobs({ status: "failed" });
+      assert.equal(failedJobs.length, 1);
+      assert.equal(failedJobs[0]?.id, highPriority.id);
+
+      const queuedJobs = await second.listBackgroundJobs({ status: "queued" });
+      assert.equal(queuedJobs.length, 1);
+      assert.equal(queuedJobs[0]?.id, lowPriority.id);
+    } finally {
+      second.close();
+    }
+  } finally {
+    // `first` may already be closed after restart simulation.
+    try {
+      first.close();
+    } catch {
+      // ignore duplicate close in tests
+    }
+  }
+});
+
 test("SqliteStorage release run lookup is idempotent and list is newest-first", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codefactory-storage-"));
   const storage = new SqliteStorage(root);

@@ -1,6 +1,9 @@
 import type {
   AgentRun,
   AgentRunStatus,
+  BackgroundJob,
+  BackgroundJobKind,
+  BackgroundJobStatus,
   Config,
   LogEntry,
   NewPR,
@@ -50,6 +53,35 @@ export interface IStorage {
   // Runtime lifecycle
   getRuntimeState(): Promise<RuntimeState>;
   updateRuntimeState(updates: Partial<RuntimeState>): Promise<RuntimeState>;
+
+  // Background jobs
+  getBackgroundJob(id: string): Promise<BackgroundJob | undefined>;
+  listBackgroundJobs(filters?: {
+    kind?: BackgroundJobKind;
+    status?: BackgroundJobStatus;
+    dedupeKey?: string;
+    targetId?: string;
+  }): Promise<BackgroundJob[]>;
+  enqueueBackgroundJob(data: {
+    kind: BackgroundJobKind;
+    targetId: string;
+    dedupeKey: string;
+    payload?: Record<string, unknown>;
+    priority?: number;
+    availableAt?: string;
+  }): Promise<BackgroundJob>;
+  claimNextBackgroundJob(params: {
+    workerId: string;
+    leaseToken: string;
+    leaseExpiresAt: string;
+    now: string;
+    kinds?: BackgroundJobKind[];
+  }): Promise<BackgroundJob | undefined>;
+  heartbeatBackgroundJob(id: string, leaseToken: string, heartbeatAt: string, leaseExpiresAt: string): Promise<BackgroundJob | undefined>;
+  completeBackgroundJob(id: string, leaseToken: string, completedAt: string): Promise<BackgroundJob | undefined>;
+  failBackgroundJob(id: string, leaseToken: string, error: string, completedAt: string): Promise<BackgroundJob | undefined>;
+  cancelBackgroundJob(id: string, leaseToken: string, error: string | null, completedAt: string): Promise<BackgroundJob | undefined>;
+  requeueExpiredBackgroundJobs(now: string): Promise<number>;
 
   // Social media changelogs
   getSocialChangelogs(): Promise<SocialChangelog[]>;

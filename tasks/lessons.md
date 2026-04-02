@@ -1,5 +1,13 @@
 # Lessons Learned
 
+## 2026-04-02 - Honor explicit checkpoint and hang-reporting requests as runtime requirements
+- Pattern: Mid-implementation, the user had to explicitly ask for brief checkpoint updates and for hangs to be reported immediately if tests stall.
+- Rule: When the user sets expectations for progress cadence or hang reporting, adopt those expectations immediately and treat them as part of the task contract.
+- Prevention checklist:
+  - Restate the requested update cadence or hang-handling behavior in the next progress update.
+  - Report the exact command and suspected stuck test immediately if a verification run does not advance normally.
+  - Use concise checkpoint updates at natural task boundaries without waiting for the user to prompt again.
+
 ## 2026-04-02 - Re-anchor design scope to the branch the user selects
 - Pattern: I inspected newer background-job code on a feature branch, then the user corrected me to work from current `main`, which meant some of the async surfaces I had reasoned about were not actually present in the implementation target.
 - Rule: When the user specifies a branch or says to work from `main`, verify the feature set on that exact branch before finalizing architecture or scope.

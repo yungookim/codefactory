@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import {
   agentRunSchema,
+  backgroundJobSchema,
   configSchema,
   feedbackItemSchema,
   logEntrySchema,
@@ -11,6 +12,7 @@ import {
 } from "./schema";
 import type {
   AgentRun,
+  BackgroundJob,
   Config,
   FeedbackItem,
   LogEntry,
@@ -123,6 +125,48 @@ export function touchAgentRun(run: AgentRun, updates: Partial<AgentRun>): AgentR
     id: run.id,
     prId: run.prId,
     createdAt: run.createdAt,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+// ── Background jobs ───────────────────────────────────────────────────────────
+
+export function createBackgroundJob(
+  data: Omit<
+    BackgroundJob,
+    "id" | "status" | "priority" | "leaseOwner" | "leaseToken" | "leaseExpiresAt" | "heartbeatAt" |
+    "attemptCount" | "lastError" | "createdAt" | "updatedAt" | "completedAt"
+  > & {
+    priority?: number;
+  },
+): BackgroundJob {
+  const now = new Date().toISOString();
+  return backgroundJobSchema.parse({
+    ...data,
+    id: randomUUID(),
+    status: "queued",
+    priority: data.priority ?? 100,
+    leaseOwner: null,
+    leaseToken: null,
+    leaseExpiresAt: null,
+    heartbeatAt: null,
+    attemptCount: 0,
+    lastError: null,
+    createdAt: now,
+    updatedAt: now,
+    completedAt: null,
+  });
+}
+
+export function applyBackgroundJobUpdate(
+  existing: BackgroundJob,
+  updates: Partial<BackgroundJob>,
+): BackgroundJob {
+  return backgroundJobSchema.parse({
+    ...existing,
+    ...updates,
+    id: existing.id,
+    createdAt: existing.createdAt,
     updatedAt: new Date().toISOString(),
   });
 }
