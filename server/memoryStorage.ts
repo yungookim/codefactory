@@ -1,6 +1,9 @@
 import type {
   AgentRun,
   AgentRunStatus,
+  BackgroundJob,
+  BackgroundJobKind,
+  BackgroundJobStatus,
   Config,
   CheckSnapshot,
   LogEntry,
@@ -19,6 +22,7 @@ import type {
 } from "@shared/schema";
 import {
   applyConfigUpdate,
+  applyBackgroundJobUpdate,
   applyPRQuestionUpdate,
   applyPRUpdate,
   applyHealingAttemptUpdate,
@@ -26,6 +30,7 @@ import {
   applyReleaseRunUpdate,
   applySocialChangelogUpdate,
   createLogEntry,
+  createBackgroundJob,
   createCheckSnapshot,
   createFailureFingerprint,
   createHealingAttempt,
@@ -56,6 +61,7 @@ export class MemStorage implements IStorage {
   private releaseRuns: Map<string, ReleaseRun> = new Map();
   private agentRuns: Map<string, AgentRun> = new Map();
   private socialChangelogs: Map<string, SocialChangelog> = new Map();
+  private backgroundJobs: Map<string, BackgroundJob> = new Map();
 
   private cloneHealingSession(session: HealingSession): HealingSession {
     return { ...session };
@@ -83,6 +89,13 @@ export class MemStorage implements IStorage {
     return {
       ...run,
       includedPrs: run.includedPrs.map((pr) => ({ ...pr })),
+    };
+  }
+
+  private cloneBackgroundJob(job: BackgroundJob): BackgroundJob {
+    return {
+      ...job,
+      payload: { ...job.payload },
     };
   }
 
@@ -317,6 +330,217 @@ export class MemStorage implements IStorage {
     };
 
     return { ...this.runtimeState };
+  }
+
+  async getBackgroundJob(id: string): Promise<BackgroundJob | undefined> {
+    const job = this.backgroundJobs.get(id);
+    return job ? this.cloneBackgroundJob(job) : undefined;
+  }
+
+  async listBackgroundJobs(filters?: {
+    kind?: BackgroundJobKind;
+    status?: BackgroundJobStatus;
+    dedupeKey?: string;
+    targetId?: string;
+  }): Promise<BackgroundJob[]> {
+    return Array.from(this.backgroundJobs.values())
+      .filter((job) => {
+        if (filters?.kind && job.kind !== filters.kind) return false;
+        if (filters?.status && job.status !== filters.status) return false;
+        if (filters?.dedupeKey && job.dedupeKey !== filters.dedupeKey) return false;
+        if (filters?.targetId && job.targetId !== filters.targetId) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        if (a.priority !== b.priority) {
+          return a.priority - b.priority;
+        }
+
+        const availableDiff = new Date(a.availableAt).getTime() - new Date(b.availableAt).getTime();
+        if (availableDiff !== 0) {
+          return availableDiff;
+        }
+
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      })
+      .map((job) => this.cloneBackgroundJob(job));
+  }
+
+  async enqueueBackgroundJob(data: {
+    kind: BackgroundJobKind;
+    targetId: string;
+    dedupeKey: string;
+    payload?: Record<string, unknown>;
+    priority?: number;
+    availableAt?: string;
+  }): Promise<BackgroundJob> {
+    const existing = Array.from(this.backgroundJobs.values()).find(
+      (job) =>
+        job.dedupeKey === data.dedupeKey
+        && (job.status === "queued" || job.status === "leased"),
+    );
+    if (existing) {
+      return this.cloneBackgroundJob(existing);
+    }
+
+    const entry = createBackgroundJob({
+      kind: data.kind,
+      targetId: data.targetId,
+      dedupeKey: data.dedupeKey,
+      payload: data.payload ?? {},
+      priority: data.priority,
+      availableAt: data.availableAt ?? new Date().toISOString(),
+    });
+    this.backgroundJobs.set(entry.id, entry);
+    return this.cloneBackgroundJob(entry);
+  }
+
+  async claimNextBackgroundJob(params: {
+    workerId: string;
+    leaseToken: string;
+    leaseExpiresAt: string;
+    now: string;
+    kinds?: BackgroundJobKind[];
+  }): Promise<BackgroundJob | undefined> {
+    const job = Array.from(this.backgroundJobs.values())
+      .filter((entry) => {
+        if (entry.status !== "queued") return false;
+        if (new Date(entry.availableAt).getTime() > new Date(params.now).getTime()) return false;
+        if (params.kinds && !params.kinds.includes(entry.kind)) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        if (a.priority !== b.priority) {
+          return a.priority - b.priority;
+        }
+
+        const availableDiff = new Date(a.availableAt).getTime() - new Date(b.availableAt).getTime();
+        if (availableDiff !== 0) {
+          return availableDiff;
+        }
+
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      })[0];
+
+    if (!job) {
+      return undefined;
+    }
+
+    const updated = applyBackgroundJobUpdate(job, {
+      status: "leased",
+      leaseOwner: params.workerId,
+      leaseToken: params.leaseToken,
+      leaseExpiresAt: params.leaseExpiresAt,
+      heartbeatAt: params.now,
+      attemptCount: job.attemptCount + 1,
+      completedAt: null,
+    });
+    this.backgroundJobs.set(updated.id, updated);
+    return this.cloneBackgroundJob(updated);
+  }
+
+  async heartbeatBackgroundJob(
+    id: string,
+    leaseToken: string,
+    heartbeatAt: string,
+    leaseExpiresAt: string,
+  ): Promise<BackgroundJob | undefined> {
+    const existing = this.backgroundJobs.get(id);
+    if (!existing || existing.status !== "leased" || existing.leaseToken !== leaseToken) {
+      return undefined;
+    }
+
+    const updated = applyBackgroundJobUpdate(existing, {
+      heartbeatAt,
+      leaseExpiresAt,
+    });
+    this.backgroundJobs.set(id, updated);
+    return this.cloneBackgroundJob(updated);
+  }
+
+  async completeBackgroundJob(id: string, leaseToken: string, completedAt: string): Promise<BackgroundJob | undefined> {
+    const existing = this.backgroundJobs.get(id);
+    if (!existing || existing.status !== "leased" || existing.leaseToken !== leaseToken) {
+      return undefined;
+    }
+
+    const updated = applyBackgroundJobUpdate(existing, {
+      status: "completed",
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      heartbeatAt: null,
+      lastError: null,
+      completedAt,
+    });
+    this.backgroundJobs.set(id, updated);
+    return this.cloneBackgroundJob(updated);
+  }
+
+  async failBackgroundJob(id: string, leaseToken: string, error: string, completedAt: string): Promise<BackgroundJob | undefined> {
+    const existing = this.backgroundJobs.get(id);
+    if (!existing || existing.status !== "leased" || existing.leaseToken !== leaseToken) {
+      return undefined;
+    }
+
+    const updated = applyBackgroundJobUpdate(existing, {
+      status: "failed",
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      heartbeatAt: null,
+      lastError: error,
+      completedAt,
+    });
+    this.backgroundJobs.set(id, updated);
+    return this.cloneBackgroundJob(updated);
+  }
+
+  async cancelBackgroundJob(
+    id: string,
+    leaseToken: string,
+    error: string | null,
+    completedAt: string,
+  ): Promise<BackgroundJob | undefined> {
+    const existing = this.backgroundJobs.get(id);
+    if (!existing || existing.status !== "leased" || existing.leaseToken !== leaseToken) {
+      return undefined;
+    }
+
+    const updated = applyBackgroundJobUpdate(existing, {
+      status: "canceled",
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      heartbeatAt: null,
+      lastError: error,
+      completedAt,
+    });
+    this.backgroundJobs.set(id, updated);
+    return this.cloneBackgroundJob(updated);
+  }
+
+  async requeueExpiredBackgroundJobs(now: string): Promise<number> {
+    const expired = Array.from(this.backgroundJobs.values()).filter(
+      (job) =>
+        job.status === "leased"
+        && job.leaseExpiresAt !== null
+        && new Date(job.leaseExpiresAt).getTime() <= new Date(now).getTime(),
+    );
+
+    for (const job of expired) {
+      const updated = applyBackgroundJobUpdate(job, {
+        status: "queued",
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        heartbeatAt: null,
+        completedAt: null,
+      });
+      this.backgroundJobs.set(updated.id, updated);
+    }
+
+    return expired.length;
   }
 
   async getReleaseRun(id: string): Promise<ReleaseRun | undefined> {

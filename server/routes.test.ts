@@ -1,184 +1,228 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { PassThrough } from "node:stream";
 import test from "node:test";
-import express, { type Express } from "express";
-import { registerRoutes } from "./routes";
+import express from "express";
+import type { NewPR } from "@shared/schema";
 import { MemStorage } from "./memoryStorage";
+import { registerRoutes } from "./routes";
 
-async function getJson(app: Express, pathname: string): Promise<{
-  status: number;
-  body: unknown;
-}> {
-  return new Promise((resolve, reject) => {
-    const req = Object.assign(new PassThrough(), {
-      method: "GET",
-      url: pathname,
-      originalUrl: pathname,
-      headers: {},
-      connection: { remoteAddress: "127.0.0.1" },
-      socket: { remoteAddress: "127.0.0.1" },
-      httpVersion: "1.1",
-    });
-
-    const headers = new Map<string, string | string[] | number>();
-    const chunks: Buffer[] = [];
-    const res = {
-      statusCode: 200,
-      locals: {},
-      req,
-      app,
-      setHeader(name: string, value: string | string[] | number) {
-        headers.set(name.toLowerCase(), value);
-      },
-      getHeader(name: string) {
-        return headers.get(name.toLowerCase());
-      },
-      removeHeader(name: string) {
-        headers.delete(name.toLowerCase());
-      },
-      writeHead(statusCode: number, reasonOrHeaders?: string | Record<string, unknown>, headersArg?: Record<string, unknown>) {
-        this.statusCode = statusCode;
-        const maybeHeaders = typeof reasonOrHeaders === "object" && reasonOrHeaders !== null
-          ? reasonOrHeaders
-          : headersArg;
-        if (maybeHeaders) {
-          for (const [name, value] of Object.entries(maybeHeaders)) {
-            this.setHeader(name, value as string);
-          }
-        }
-        return this;
-      },
-      write(chunk: string | Buffer) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-        return true;
-      },
-      end(chunk?: string | Buffer) {
-        if (chunk) {
-          this.write(chunk);
-        }
-        try {
-          const raw = Buffer.concat(chunks).toString("utf8");
-          resolve({
-            status: this.statusCode,
-            body: raw ? JSON.parse(raw) : null,
-          });
-        } catch (error) {
-          reject(error);
-        }
-      },
-    };
-
-    Object.setPrototypeOf(req, app.request);
-    Object.setPrototypeOf(res, app.response);
-    (req as typeof req & { res: unknown }).res = res;
-
-    app.handle(req as never, res as never, (error: unknown) => {
-      if (error) {
-        reject(error);
-      }
-    });
+async function seedPR(storage: MemStorage, overrides: Partial<NewPR> = {}) {
+  return storage.addPR({
+    number: 42,
+    title: "feat: add widget",
+    repo: "acme/widgets",
+    branch: "feat/widget",
+    author: "alice",
+    url: "https://github.com/acme/widgets/pull/42",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+    ...overrides,
   });
 }
 
-async function startApp(storage: MemStorage): Promise<Express> {
+async function createHarness(storage = new MemStorage()) {
   const app = express();
   app.use(express.json());
 
   const server = createServer(app);
   await registerRoutes(server, app, {
     storage,
+    startBackgroundServices: false,
     startWatcher: false,
   });
-  return app;
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected an ephemeral test server address");
+  }
+
+  return {
+    storage,
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    async close(): Promise<void> {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      });
+    },
+  };
 }
 
-test("GET /api/healing-sessions returns persisted healing sessions", async () => {
-  const storage = new MemStorage();
-  const pr = await storage.addPR({
-    number: 52,
-    title: "Healing route",
-    repo: "alex-morgan-o/lolodex",
-    branch: "feature/healing-route",
-    author: "octocat",
-    url: "https://github.com/alex-morgan-o/lolodex/pull/52",
-    status: "watching",
-    feedbackItems: [],
-    accepted: 0,
-    rejected: 0,
-    flagged: 0,
-    testsPassed: null,
-    lintPassed: null,
-    lastChecked: null,
-  });
-  const session = await storage.createHealingSession({
-    prId: pr.id,
-    repo: pr.repo,
-    prNumber: pr.number,
-    initialHeadSha: "abc123",
-    currentHeadSha: "abc123",
-    state: "awaiting_repair_slot",
-    endedAt: null,
-    blockedReason: null,
-    escalationReason: null,
-    latestFingerprint: "github.check_run:typescript:build",
-    attemptCount: 0,
-    lastImprovementScore: null,
-  });
+test("POST /api/prs/:id/questions enqueues a durable answer_pr_question job", async () => {
+  const harness = await createHarness();
+  const pr = await seedPR(harness.storage);
 
-  const app = await startApp(storage);
-  const response = await getJson(app, "/api/healing-sessions");
-  assert.equal(response.status, 200);
-  const sessions = response.body as Array<{ id: string; prId: string; state: string }>;
-  assert.equal(sessions.length, 1);
-  assert.equal(sessions[0]?.id, session.id);
-  assert.equal(sessions[0]?.prId, pr.id);
-  assert.equal(sessions[0]?.state, "awaiting_repair_slot");
+  try {
+    const response = await fetch(`${harness.baseUrl}/api/prs/${pr.id}/questions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ question: "What changed?" }),
+    });
+
+    assert.equal(response.status, 201);
+    const created = await response.json() as { id: string; status: string };
+    assert.equal(created.status, "pending");
+
+    const questions = await harness.storage.getQuestions(pr.id);
+    assert.equal(questions.length, 1);
+    assert.equal(questions[0].status, "pending");
+    assert.equal(questions[0].answer, null);
+
+    const jobs = await harness.storage.listBackgroundJobs({
+      kind: "answer_pr_question",
+      status: "queued",
+    });
+    assert.equal(jobs.length, 1);
+    assert.equal(jobs[0].targetId, created.id);
+    assert.equal(jobs[0].payload.prId, pr.id);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("POST /api/prs/:id/babysit enqueues a durable babysit_pr job", async () => {
+  const harness = await createHarness();
+  const pr = await seedPR(harness.storage);
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/api/prs/${pr.id}/babysit`, {
+      method: "POST",
+    });
+
+    assert.equal(response.status, 200);
+
+    const jobs = await harness.storage.listBackgroundJobs({
+      kind: "babysit_pr",
+      status: "queued",
+    });
+    assert.equal(jobs.length, 1);
+    assert.equal(jobs[0].targetId, pr.id);
+    assert.equal(jobs[0].payload.preferredAgent, "claude");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("POST /api/repos/sync enqueues a durable sync_watched_repos job", async () => {
+  const harness = await createHarness();
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/api/repos/sync`, {
+      method: "POST",
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json() as { ok: boolean };
+    assert.equal(body.ok, true);
+
+    const jobs = await harness.storage.listBackgroundJobs({
+      kind: "sync_watched_repos",
+      status: "queued",
+    });
+    assert.equal(jobs.length, 1);
+    assert.equal(jobs[0].targetId, "runtime:1");
+    assert.equal(jobs[0].dedupeKey, "sync_watched_repos");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("GET /api/healing-sessions returns persisted healing sessions", async () => {
+  const harness = await createHarness();
+
+  try {
+    const pr = await seedPR(harness.storage, {
+      number: 52,
+      title: "Healing route",
+      repo: "alex-morgan-o/lolodex",
+      branch: "feature/healing-route",
+      author: "octocat",
+      url: "https://github.com/alex-morgan-o/lolodex/pull/52",
+    });
+    const session = await harness.storage.createHealingSession({
+      prId: pr.id,
+      repo: pr.repo,
+      prNumber: pr.number,
+      initialHeadSha: "abc123",
+      currentHeadSha: "abc123",
+      state: "awaiting_repair_slot",
+      endedAt: null,
+      blockedReason: null,
+      escalationReason: null,
+      latestFingerprint: "github.check_run:typescript:build",
+      attemptCount: 0,
+      lastImprovementScore: null,
+    });
+
+    const response = await fetch(`${harness.baseUrl}/api/healing-sessions`);
+    assert.equal(response.status, 200);
+    const sessions = await response.json() as Array<{ id: string; prId: string; state: string }>;
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]?.id, session.id);
+    assert.equal(sessions[0]?.prId, pr.id);
+    assert.equal(sessions[0]?.state, "awaiting_repair_slot");
+  } finally {
+    await harness.close();
+  }
 });
 
 test("GET /api/healing-sessions/:id returns a specific session and 404s when missing", async () => {
-  const storage = new MemStorage();
-  const pr = await storage.addPR({
-    number: 53,
-    title: "Healing detail route",
-    repo: "alex-morgan-o/lolodex",
-    branch: "feature/healing-detail",
-    author: "octocat",
-    url: "https://github.com/alex-morgan-o/lolodex/pull/53",
-    status: "watching",
-    feedbackItems: [],
-    accepted: 0,
-    rejected: 0,
-    flagged: 0,
-    testsPassed: null,
-    lintPassed: null,
-    lastChecked: null,
-  });
-  const session = await storage.createHealingSession({
-    prId: pr.id,
-    repo: pr.repo,
-    prNumber: pr.number,
-    initialHeadSha: "def456",
-    currentHeadSha: "def456",
-    state: "blocked",
-    endedAt: new Date().toISOString(),
-    blockedReason: "External CI failure",
-    escalationReason: null,
-    latestFingerprint: "github.check_run:missing-secret:deploy",
-    attemptCount: 0,
-    lastImprovementScore: null,
-  });
+  const harness = await createHarness();
 
-  const app = await startApp(storage);
-  const okResponse = await getJson(app, `/api/healing-sessions/${session.id}`);
-  assert.equal(okResponse.status, 200);
-  const payload = okResponse.body as { id: string; state: string; blockedReason: string | null };
-  assert.equal(payload.id, session.id);
-  assert.equal(payload.state, "blocked");
-  assert.equal(payload.blockedReason, "External CI failure");
+  try {
+    const pr = await seedPR(harness.storage, {
+      number: 53,
+      title: "Healing detail route",
+      repo: "alex-morgan-o/lolodex",
+      branch: "feature/healing-detail",
+      author: "octocat",
+      url: "https://github.com/alex-morgan-o/lolodex/pull/53",
+    });
+    const session = await harness.storage.createHealingSession({
+      prId: pr.id,
+      repo: pr.repo,
+      prNumber: pr.number,
+      initialHeadSha: "def456",
+      currentHeadSha: "def456",
+      state: "blocked",
+      endedAt: new Date().toISOString(),
+      blockedReason: "External CI failure",
+      escalationReason: null,
+      latestFingerprint: "github.check_run:missing-secret:deploy",
+      attemptCount: 0,
+      lastImprovementScore: null,
+    });
 
-  const missingResponse = await getJson(app, "/api/healing-sessions/does-not-exist");
-  assert.equal(missingResponse.status, 404);
-  const missingPayload = missingResponse.body as { error: string };
-  assert.equal(missingPayload.error, "Healing session not found");
+    const okResponse = await fetch(`${harness.baseUrl}/api/healing-sessions/${session.id}`);
+    assert.equal(okResponse.status, 200);
+    const payload = await okResponse.json() as { id: string; state: string; blockedReason: string | null };
+    assert.equal(payload.id, session.id);
+    assert.equal(payload.state, "blocked");
+    assert.equal(payload.blockedReason, "External CI failure");
+
+    const missingResponse = await fetch(`${harness.baseUrl}/api/healing-sessions/does-not-exist`);
+    assert.equal(missingResponse.status, 404);
+    const missingPayload = await missingResponse.json() as { error: string };
+    assert.equal(missingPayload.error, "Healing session not found");
+  } finally {
+    await harness.close();
+  }
 });

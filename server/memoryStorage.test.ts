@@ -49,6 +49,25 @@ function makeAgentRun(overrides: Partial<AgentRun> = {}): AgentRun {
   };
 }
 
+function makeBackgroundJobInput(overrides: Partial<{
+  kind: "sync_watched_repos" | "babysit_pr" | "process_release_run" | "answer_pr_question" | "generate_social_changelog";
+  targetId: string;
+  dedupeKey: string;
+  payload: Record<string, unknown>;
+  priority: number;
+  availableAt: string;
+}> = {}) {
+  return {
+    kind: "babysit_pr" as const,
+    targetId: "pr-1",
+    dedupeKey: "babysit_pr:pr-1",
+    payload: { prId: "pr-1" },
+    priority: 100,
+    availableAt: "2026-04-02T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
 function makeHealingSession(overrides: Partial<HealingSession> = {}): Omit<HealingSession, "id" | "startedAt" | "updatedAt"> {
   return {
     prId: "pr-1",
@@ -434,6 +453,147 @@ describe("MemStorage", () => {
       });
       const fetched = await storage.getConfig();
       assert.deepEqual(updated, fetched);
+    });
+  });
+
+  // ── Background jobs ─────────────────────────────────────
+
+  describe("background jobs", () => {
+    it("dedupes active jobs by dedupe key", async () => {
+      const first = await storage.enqueueBackgroundJob(makeBackgroundJobInput());
+      const second = await storage.enqueueBackgroundJob(makeBackgroundJobInput({
+        payload: { prId: "pr-1", duplicate: true },
+      }));
+
+      assert.equal(first.id, second.id);
+      assert.equal(second.status, "queued");
+
+      const jobs = await storage.listBackgroundJobs({ dedupeKey: "babysit_pr:pr-1" });
+      assert.equal(jobs.length, 1);
+    });
+
+    it("claims by priority, heartbeats, requeues expired leases, and fails jobs", async () => {
+      const lowPriority = await storage.enqueueBackgroundJob(makeBackgroundJobInput({
+        targetId: "pr-low",
+        dedupeKey: "babysit_pr:pr-low",
+        priority: 200,
+        payload: { prId: "pr-low" },
+      }));
+      const highPriority = await storage.enqueueBackgroundJob(makeBackgroundJobInput({
+        targetId: "pr-high",
+        dedupeKey: "babysit_pr:pr-high",
+        priority: 50,
+        payload: { prId: "pr-high" },
+      }));
+
+      const claimed = await storage.claimNextBackgroundJob({
+        workerId: "worker-1",
+        leaseToken: "lease-1",
+        leaseExpiresAt: "2026-04-02T10:00:30.000Z",
+        now: "2026-04-02T10:00:00.000Z",
+      });
+
+      assert.equal(claimed?.id, highPriority.id);
+      assert.equal(claimed?.status, "leased");
+      assert.equal(claimed?.attemptCount, 1);
+
+      const heartbeat = await storage.heartbeatBackgroundJob(
+        highPriority.id,
+        "lease-1",
+        "2026-04-02T10:00:10.000Z",
+        "2026-04-02T10:00:40.000Z",
+      );
+      assert.equal(heartbeat?.heartbeatAt, "2026-04-02T10:00:10.000Z");
+      assert.equal(heartbeat?.leaseExpiresAt, "2026-04-02T10:00:40.000Z");
+
+      const wrongLease = await storage.completeBackgroundJob(
+        highPriority.id,
+        "wrong-lease",
+        "2026-04-02T10:00:20.000Z",
+      );
+      assert.equal(wrongLease, undefined);
+
+      const reclaimed = await storage.requeueExpiredBackgroundJobs("2026-04-02T10:00:41.000Z");
+      assert.equal(reclaimed, 1);
+
+      const requeued = await storage.getBackgroundJob(highPriority.id);
+      assert.equal(requeued?.status, "queued");
+      assert.equal(requeued?.leaseToken, null);
+
+      const reclaimedClaim = await storage.claimNextBackgroundJob({
+        workerId: "worker-2",
+        leaseToken: "lease-2",
+        leaseExpiresAt: "2026-04-02T10:01:10.000Z",
+        now: "2026-04-02T10:00:41.000Z",
+      });
+      assert.equal(reclaimedClaim?.id, highPriority.id);
+      assert.equal(reclaimedClaim?.attemptCount, 2);
+
+      const failed = await storage.failBackgroundJob(
+        highPriority.id,
+        "lease-2",
+        "boom",
+        "2026-04-02T10:00:50.000Z",
+      );
+      assert.equal(failed?.status, "failed");
+      assert.equal(failed?.lastError, "boom");
+
+      const failedJobs = await storage.listBackgroundJobs({ status: "failed" });
+      assert.equal(failedJobs.length, 1);
+      assert.equal(failedJobs[0]?.id, highPriority.id);
+
+      const queuedJobs = await storage.listBackgroundJobs({ status: "queued" });
+      assert.equal(queuedJobs.length, 1);
+      assert.equal(queuedJobs[0]?.id, lowPriority.id);
+    });
+
+    it("completes and cancels leased jobs with the matching lease token", async () => {
+      const completeJob = await storage.enqueueBackgroundJob(makeBackgroundJobInput({
+        targetId: "question-1",
+        dedupeKey: "answer_pr_question:question-1",
+        kind: "answer_pr_question",
+        payload: { questionId: "question-1" },
+      }));
+
+      await storage.claimNextBackgroundJob({
+        workerId: "worker-1",
+        leaseToken: "lease-complete",
+        leaseExpiresAt: "2026-04-02T10:00:30.000Z",
+        now: "2026-04-02T10:00:00.000Z",
+        kinds: ["answer_pr_question"],
+      });
+
+      const completed = await storage.completeBackgroundJob(
+        completeJob.id,
+        "lease-complete",
+        "2026-04-02T10:00:15.000Z",
+      );
+      assert.equal(completed?.status, "completed");
+      assert.equal(completed?.completedAt, "2026-04-02T10:00:15.000Z");
+
+      const cancelJob = await storage.enqueueBackgroundJob(makeBackgroundJobInput({
+        targetId: "changelog-1",
+        dedupeKey: "generate_social_changelog:changelog-1",
+        kind: "generate_social_changelog",
+        payload: { changelogId: "changelog-1" },
+      }));
+
+      await storage.claimNextBackgroundJob({
+        workerId: "worker-2",
+        leaseToken: "lease-cancel",
+        leaseExpiresAt: "2026-04-02T10:01:30.000Z",
+        now: "2026-04-02T10:01:00.000Z",
+        kinds: ["generate_social_changelog"],
+      });
+
+      const canceled = await storage.cancelBackgroundJob(
+        cancelJob.id,
+        "lease-cancel",
+        "no-op",
+        "2026-04-02T10:01:15.000Z",
+      );
+      assert.equal(canceled?.status, "canceled");
+      assert.equal(canceled?.lastError, "no-op");
     });
   });
 

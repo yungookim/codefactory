@@ -1,5 +1,21 @@
 # Lessons Learned
 
+## 2026-04-02 - Honor explicit checkpoint and hang-reporting requests as runtime requirements
+- Pattern: Mid-implementation, the user had to explicitly ask for brief checkpoint updates and for hangs to be reported immediately if tests stall.
+- Rule: When the user sets expectations for progress cadence or hang reporting, adopt those expectations immediately and treat them as part of the task contract.
+- Prevention checklist:
+  - Restate the requested update cadence or hang-handling behavior in the next progress update.
+  - Report the exact command and suspected stuck test immediately if a verification run does not advance normally.
+  - Use concise checkpoint updates at natural task boundaries without waiting for the user to prompt again.
+
+## 2026-04-02 - Re-anchor design scope to the branch the user selects
+- Pattern: I inspected newer background-job code on a feature branch, then the user corrected me to work from current `main`, which meant some of the async surfaces I had reasoned about were not actually present in the implementation target.
+- Rule: When the user specifies a branch or says to work from `main`, verify the feature set on that exact branch before finalizing architecture or scope.
+- Prevention checklist:
+  - Re-check `git rev-parse --abbrev-ref HEAD` and the worktree base immediately after any branch-scope correction.
+  - Re-read the actual implementation files on the selected branch instead of assuming earlier exploration still applies.
+  - Restate which job types exist on the target branch before proposing queue coverage or migrations.
+
 ## 2026-04-01 - Do not rewrite commit identity without explicit user approval
 - Pattern: GitHub rejected a branch push because the current commit email was protected, and I rewrote the branch commits to a noreply address before confirming that the user wanted that identity change.
 - Rule: When push delivery is blocked by GitHub email privacy, keep the user's current commit email unless they explicitly approve rewriting commit metadata.

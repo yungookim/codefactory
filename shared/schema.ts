@@ -126,6 +126,45 @@ export const runtimeStateSchema = z.object({
 });
 export type RuntimeState = z.infer<typeof runtimeStateSchema>;
 
+export const backgroundJobKindEnum = z.enum([
+  "sync_watched_repos",
+  "babysit_pr",
+  "process_release_run",
+  "answer_pr_question",
+  "generate_social_changelog",
+]);
+export type BackgroundJobKind = z.infer<typeof backgroundJobKindEnum>;
+
+export const backgroundJobStatusEnum = z.enum([
+  "queued",
+  "leased",
+  "completed",
+  "failed",
+  "canceled",
+]);
+export type BackgroundJobStatus = z.infer<typeof backgroundJobStatusEnum>;
+
+export const backgroundJobSchema = z.object({
+  id: z.string(),
+  kind: backgroundJobKindEnum,
+  targetId: z.string(),
+  dedupeKey: z.string(),
+  status: backgroundJobStatusEnum,
+  priority: z.number().int(),
+  availableAt: z.string(),
+  leaseOwner: z.string().nullable(),
+  leaseToken: z.string().nullable(),
+  leaseExpiresAt: z.string().nullable(),
+  heartbeatAt: z.string().nullable(),
+  attemptCount: z.number().int().nonnegative(),
+  lastError: z.string().nullable(),
+  payload: z.record(z.string(), z.unknown()),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  completedAt: z.string().nullable(),
+});
+export type BackgroundJob = z.infer<typeof backgroundJobSchema>;
+
 export const questionStatusEnum = z.enum(["pending", "answering", "answered", "error"]);
 export type QuestionStatus = z.infer<typeof questionStatusEnum>;
 

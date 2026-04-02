@@ -25,6 +25,7 @@
    - [Agent models](#agent-models)
    - [Runtime & drain mode](#runtime--drain-mode)
    - [Social changelogs](#social-changelogs)
+   - [Releases](#releases)
    - [Onboarding](#onboarding)
 6. [Data types](#data-types)
 7. [Error handling](#error-handling)
@@ -59,6 +60,14 @@ structured tool calls without writing a single line of HTTP client code.
 │                       ~/.oh-my-pr/
 └─────────────────────────────────┘
 ```
+
+Most long-running runtime actions are **durable and queue-backed**. Repository
+sync, initial and manual babysit/apply runs, feedback retries, PR question
+answering, release processing, and social changelog generation are first
+persisted in SQLite and then claimed by a dispatcher with leases and
+heartbeats. Queued work survives process restarts; on startup, expired leases
+are re-queued, and interrupted babysitter runs are resumed from stored run
+context when possible.
 
 ---
 
@@ -186,27 +195,27 @@ compiled output instead:
 |-----------|-------------|
 | `list_repos` | List all watched repositories |
 | `add_repo` | Add a repo to the watch list |
-| `sync_repos` | Force an immediate sync across all repos |
+| `sync_repos` | Queue an immediate durable sync across all watched repos |
 | `list_prs` | List all tracked pull requests |
 | `list_archived_prs` | List archived (closed/merged) PRs |
 | `get_pr` | Get full PR details including feedback |
-| `add_pr` | Register a PR by GitHub URL |
+| `add_pr` | Register a PR by GitHub URL and queue its initial babysit run |
 | `remove_pr` | Remove a PR from tracking |
 | `fetch_pr_feedback` | Force-refresh GitHub feedback for a PR |
 | `triage_pr` | Auto-triage all un-triaged feedback on a PR |
-| `apply_pr_fixes` | Dispatch AI agent to apply accepted fixes |
-| `babysit_pr` | Run a full babysit cycle on a PR |
+| `apply_pr_fixes` | Queue AI work to apply accepted fixes |
+| `babysit_pr` | Queue a full babysit cycle on a PR |
 | `set_feedback_decision` | Manually override triage for a feedback item |
 | `retry_feedback_item` | Retry a failed/warned feedback item |
 | `list_pr_questions` | List Q&A history for a PR |
-| `ask_pr_question` | Ask the AI agent a question about a PR |
+| `ask_pr_question` | Store a PR question and queue asynchronous answering |
 | `get_logs` | Get activity logs (optional PR filter) |
 | `get_config` | Read current configuration |
 | `update_config` | Partially update configuration |
 | `get_agent_models` | List available AI models |
 | `refresh_agent_models` | Rediscover installed agent models |
-| `get_runtime` | Get runtime state (drain mode, active runs) |
-| `set_drain_mode` | Enable/disable drain mode |
+| `get_runtime` | Get runtime state (drain mode, active queue handlers) |
+| `set_drain_mode` | Enable/disable drain mode for new queue claims |
 | `list_changelogs` | List social-media changelogs |
 | `get_changelog` | Get one changelog by ID |
 | `get_onboarding_status` | Check repo onboarding status |
@@ -253,8 +262,9 @@ Accepts `"owner/repo"` slugs or full `https://github.com/owner/repo` URLs.
 
 #### `POST /api/repos/sync`
 
-Force an immediate babysitter sync cycle across all watched repos.
-Returns `409` when drain mode is active.
+Queue an immediate durable watcher pass across all watched repos. The queued
+sync job performs GitHub reconciliation and then enqueues follow-up babysit,
+release, and changelog work as needed. Returns `409` when drain mode is active.
 
 **Response** `200`
 ```json
@@ -293,7 +303,7 @@ Get a single PR by its internal Code Factory ID.
 #### `POST /api/prs`
 
 Register a GitHub PR by URL. Code Factory fetches the PR summary from GitHub,
-stores it, and immediately starts a babysit run.
+stores it, and queues an initial durable babysit run.
 
 **Body**
 ```json
@@ -360,8 +370,9 @@ Classification rules (keyword-based):
 
 #### `POST /api/prs/:id/apply`
 
-Dispatch the configured AI agent to apply all accepted feedback in an isolated
-git worktree.  Returns `409` when drain mode is active.
+Queue the configured AI agent to apply all accepted feedback in an isolated git
+worktree. The route returns once the durable job has been stored, not when the
+agent run completes. Returns `409` when drain mode is active.
 
 **Response** `200` — updated [PR object](#pr)
 
@@ -369,8 +380,9 @@ git worktree.  Returns `409` when drain mode is active.
 
 #### `POST /api/prs/:id/babysit`
 
-Run a full babysit cycle: sync → triage → apply → report.
-Returns `409` when drain mode is active.
+Queue a full babysit cycle: sync → triage → apply → report. The route returns
+once the durable job has been stored, not when the run finishes. Returns `409`
+when drain mode is active.
 
 **Response** `200` — updated [PR object](#pr)
 
@@ -394,7 +406,8 @@ Valid values: `"accept"` | `"reject"` | `"flag"`
 
 #### `POST /api/prs/:id/feedback/:feedbackId/retry`
 
-Re-queue a failed or warned feedback item.
+Re-queue a failed or warned feedback item by scheduling another durable
+babysit pass for the PR.
 
 **Response** `200` — updated [PR object](#pr)
 **Response** `404` — PR or feedback item not found
@@ -415,7 +428,9 @@ List the full question/answer history for a PR.
 #### `POST /api/prs/:id/questions`
 
 Ask the configured AI agent a question about the PR.  The question is stored
-immediately; the answer is filled in asynchronously.
+immediately; a durable background job fills in the answer asynchronously. Both
+the question row and the queued answer job persist in SQLite, so pending
+questions survive app restarts.
 
 **Body**
 ```json
@@ -529,6 +544,9 @@ Trigger a fresh model discovery scan (runs `claude model list` / `codex --help`)
 
 ### Runtime & drain mode
 
+Runtime state is queue-aware. `activeRuns` counts currently executing queue
+handlers (leased jobs); jobs still waiting in SQLite are not included.
+
 #### `GET /api/runtime`
 
 Get the current runtime state.
@@ -547,7 +565,13 @@ Get the current runtime state.
 
 #### `POST /api/runtime/drain`
 
-Enable or disable drain mode.
+Enable or disable drain mode. When enabled, the dispatcher stops claiming new
+queued jobs but leaves queued rows intact in SQLite. Already-running handlers
+are allowed to finish, and `waitForIdle` also waits on any started babysitter
+or release work before reporting success. Endpoints that explicitly gate manual
+work, such as `POST /api/repos/sync`, `POST /api/prs/:id/apply`, and
+`POST /api/prs/:id/babysit`, return `409` while drain mode is active; other
+APIs may still enqueue work that remains pending until drain mode is disabled.
 
 **Body**
 ```json
@@ -563,7 +587,7 @@ Enable or disable drain mode.
 |----------------|---------|----------|--------------------------------------------------|
 | `enabled`      | boolean | yes      | `true` to enable drain mode, `false` to disable  |
 | `reason`       | string  | no       | Human-readable reason (stored in state)          |
-| `waitForIdle`  | boolean | no       | Block until all active runs finish               |
+| `waitForIdle`  | boolean | no       | Wait until queue workers and started babysitter/release runs go idle |
 | `timeoutMs`    | number  | no       | Max wait in ms when `waitForIdle` is true (≤600s)|
 
 **Response** `200` — drained successfully (or disabled)
@@ -572,6 +596,12 @@ Enable or disable drain mode.
 ---
 
 ### Social changelogs
+
+Social changelog generation is automatic and durable. When a merge-count
+milestone is reached, Code Factory creates a changelog row with
+`status: "generating"` and then fills in `content` from a queued background
+job. If the app restarts before completion, the queued job is reclaimed from
+SQLite.
 
 #### `GET /api/changelogs`
 
@@ -586,6 +616,41 @@ List all generated social-media changelog posts.
 Get a single social-media changelog by ID.
 
 **Response** `200` — [SocialChangelog object](#socialchangelog)
+**Response** `404` — not found
+
+---
+
+### Releases
+
+Release evaluation and publishing are also durable background jobs. When a
+tracked PR is archived as merged and automatic releases are enabled, Code
+Factory persists a release run and queues background processing. Retrying a
+failed release run resets it to `detected` and re-queues processing.
+
+#### `GET /api/releases`
+
+List all persisted release runs, newest first.
+
+**Response** `200` — array of [ReleaseRun objects](#releaserun)
+
+---
+
+#### `GET /api/releases/:id`
+
+Get one release run by its internal Code Factory ID.
+
+**Response** `200` — [ReleaseRun object](#releaserun)
+**Response** `404` — not found
+
+---
+
+#### `POST /api/releases/:id/retry`
+
+Reset an existing release run to `detected` and queue it for durable
+reprocessing. The retry request itself is accepted during drain mode, but the
+queued job will not be claimed until drain mode is disabled.
+
+**Response** `200` — updated [ReleaseRun object](#releaserun)
 **Response** `404` — not found
 
 ---
@@ -733,6 +798,17 @@ Install the Code Factory code-review GitHub Actions workflow on a repository.
 }
 ```
 
+### RuntimeSnapshot
+
+```typescript
+{
+  drainMode: boolean;
+  drainRequestedAt: string | null; // ISO 8601
+  drainReason: string | null;
+  activeRuns: number;              // currently executing durable queue jobs
+}
+```
+
 ### HealingSession
 
 ```typescript
@@ -763,6 +839,42 @@ Install the Code Factory code-review GitHub Actions workflow on a repository.
   latestFingerprint: string | null;
   attemptCount: number;
   lastImprovementScore: number | null;
+}
+```
+
+### ReleaseRun
+
+```typescript
+{
+  id: string;
+  repo: string;                // "owner/repo"
+  baseBranch: string;
+  triggerPrNumber: number;
+  triggerPrTitle: string;
+  triggerPrUrl: string;
+  triggerMergeSha: string;
+  triggerMergedAt: string;     // ISO 8601
+  status: "detected" | "evaluating" | "skipped" | "proposed" | "publishing" | "published" | "error";
+  decisionReason: string | null;
+  recommendedBump: "patch" | "minor" | "major" | null;
+  proposedVersion: string | null;
+  releaseTitle: string | null;
+  releaseNotes: string | null;
+  includedPrs: Array<{
+    number: number;
+    title: string;
+    url: string;
+    author: string;
+    mergedAt: string;          // ISO 8601
+    mergeSha: string;
+  }>;
+  targetSha: string | null;
+  githubReleaseId: number | null;
+  githubReleaseUrl: string | null;
+  error: string | null;
+  createdAt: string;           // ISO 8601
+  updatedAt: string;           // ISO 8601
+  completedAt: string | null;  // ISO 8601
 }
 ```
 

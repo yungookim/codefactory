@@ -1,10 +1,13 @@
 import { mkdirSync } from "fs";
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
-import { docsAssessmentSchema, feedbackStatusEnum } from "@shared/schema";
+import { backgroundJobStatusEnum, docsAssessmentSchema, feedbackStatusEnum } from "@shared/schema";
 import type {
   AgentRun,
   AgentRunStatus,
+  BackgroundJob,
+  BackgroundJobKind,
+  BackgroundJobStatus,
   Config,
   CheckSnapshot,
   FeedbackItem,
@@ -23,6 +26,7 @@ import type {
   SocialChangelog,
 } from "@shared/schema";
 import {
+  applyBackgroundJobUpdate,
   applyConfigUpdate,
   applyHealingAttemptUpdate,
   applyHealingSessionUpdate,
@@ -32,6 +36,7 @@ import {
   applySocialChangelogUpdate,
   createCheckSnapshot,
   createLogEntry,
+  createBackgroundJob,
   createFailureFingerprint,
   createHealingAttempt,
   createHealingSession,
@@ -167,6 +172,26 @@ type QuestionRow = {
   error: string | null;
   created_at: string;
   answered_at: string | null;
+};
+
+type BackgroundJobRow = {
+  id: string;
+  kind: BackgroundJobKind;
+  target_id: string;
+  dedupe_key: string;
+  status: BackgroundJobStatus;
+  priority: number;
+  available_at: string;
+  lease_owner: string | null;
+  lease_token: string | null;
+  lease_expires_at: string | null;
+  heartbeat_at: string | null;
+  attempt_count: number;
+  last_error: string | null;
+  payload_json: string;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
 };
 
 type SocialChangelogRow = {
@@ -508,6 +533,26 @@ export class SqliteStorage implements IStorage {
         FOREIGN KEY(pr_id) REFERENCES prs(id) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS background_jobs (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        dedupe_key TEXT NOT NULL,
+        status TEXT NOT NULL,
+        priority INTEGER NOT NULL DEFAULT 100,
+        available_at TEXT NOT NULL,
+        lease_owner TEXT,
+        lease_token TEXT,
+        lease_expires_at TEXT,
+        heartbeat_at TEXT,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT
+      );
+
       CREATE TABLE IF NOT EXISTS pr_questions (
         id TEXT PRIMARY KEY,
         pr_id TEXT NOT NULL,
@@ -629,6 +674,10 @@ export class SqliteStorage implements IStorage {
       CREATE INDEX IF NOT EXISTS idx_feedback_items_pr_id ON feedback_items(pr_id);
       CREATE INDEX IF NOT EXISTS idx_logs_pr_id_timestamp ON logs(pr_id, timestamp);
       CREATE INDEX IF NOT EXISTS idx_agent_runs_status_updated_at ON agent_runs(status, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_background_jobs_status_available_at ON background_jobs(status, available_at, priority, created_at);
+      CREATE INDEX IF NOT EXISTS idx_background_jobs_lease_expires_at ON background_jobs(status, lease_expires_at);
+      CREATE INDEX IF NOT EXISTS idx_background_jobs_kind_status ON background_jobs(kind, status);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_background_jobs_dedupe_active ON background_jobs(dedupe_key) WHERE status IN ('queued', 'leased');
       CREATE INDEX IF NOT EXISTS idx_pr_questions_pr_id ON pr_questions(pr_id);
       CREATE INDEX IF NOT EXISTS idx_social_changelogs_date ON social_changelogs(date);
       CREATE INDEX IF NOT EXISTS idx_healing_sessions_pr_id ON healing_sessions(pr_id);
@@ -858,6 +907,76 @@ export class SqliteStorage implements IStorage {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
+  }
+
+  private parseBackgroundJobRow(row: BackgroundJobRow): BackgroundJob {
+    return {
+      id: row.id,
+      kind: row.kind,
+      targetId: row.target_id,
+      dedupeKey: row.dedupe_key,
+      status: backgroundJobStatusEnum.parse(row.status),
+      priority: row.priority,
+      availableAt: row.available_at,
+      leaseOwner: row.lease_owner,
+      leaseToken: row.lease_token,
+      leaseExpiresAt: row.lease_expires_at,
+      heartbeatAt: row.heartbeat_at,
+      attemptCount: row.attempt_count,
+      lastError: row.last_error,
+      payload: JSON.parse(row.payload_json) as Record<string, unknown>,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      completedAt: row.completed_at,
+    };
+  }
+
+  private finalizeBackgroundJob(
+    id: string,
+    leaseToken: string,
+    status: "completed" | "failed" | "canceled",
+    error: string | null,
+    completedAt: string,
+  ): BackgroundJob | undefined {
+    return this.withWriteTransaction(() => {
+      const current = this.get<BackgroundJobRow>(`
+        SELECT id, kind, target_id, dedupe_key, status, priority, available_at,
+               lease_owner, lease_token, lease_expires_at, heartbeat_at, attempt_count,
+               last_error, payload_json, created_at, updated_at, completed_at
+        FROM background_jobs
+        WHERE id = ? AND status = 'leased' AND lease_token = ?
+      `, id, leaseToken);
+
+      if (!current) {
+        return undefined;
+      }
+
+      const updated = applyBackgroundJobUpdate(this.parseBackgroundJobRow(current), {
+        status,
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        heartbeatAt: null,
+        lastError: error,
+        completedAt,
+      });
+
+      this.run(`
+        UPDATE background_jobs
+        SET status = ?, lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
+            heartbeat_at = NULL, last_error = ?, completed_at = ?, updated_at = ?
+        WHERE id = ? AND status = 'leased' AND lease_token = ?
+      `,
+        updated.status,
+        updated.lastError,
+        updated.completedAt,
+        updated.updatedAt,
+        id,
+        leaseToken,
+      );
+
+      return updated;
+    });
   }
 
   private parseHealingSessionRow(row: HealingSessionRow): HealingSession {
@@ -1657,6 +1776,277 @@ export class SqliteStorage implements IStorage {
     );
 
     return next;
+  }
+
+  async getBackgroundJob(id: string): Promise<BackgroundJob | undefined> {
+    const row = this.get<BackgroundJobRow>(`
+      SELECT id, kind, target_id, dedupe_key, status, priority, available_at,
+             lease_owner, lease_token, lease_expires_at, heartbeat_at, attempt_count,
+             last_error, payload_json, created_at, updated_at, completed_at
+      FROM background_jobs
+      WHERE id = ?
+    `, id);
+
+    return row ? this.parseBackgroundJobRow(row) : undefined;
+  }
+
+  async listBackgroundJobs(filters?: {
+    kind?: BackgroundJobKind;
+    status?: BackgroundJobStatus;
+    dedupeKey?: string;
+    targetId?: string;
+  }): Promise<BackgroundJob[]> {
+    const clauses: string[] = [];
+    const values: Array<string> = [];
+
+    if (filters?.kind) {
+      clauses.push("kind = ?");
+      values.push(filters.kind);
+    }
+
+    if (filters?.status) {
+      clauses.push("status = ?");
+      values.push(filters.status);
+    }
+
+    if (filters?.dedupeKey) {
+      clauses.push("dedupe_key = ?");
+      values.push(filters.dedupeKey);
+    }
+
+    if (filters?.targetId) {
+      clauses.push("target_id = ?");
+      values.push(filters.targetId);
+    }
+
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+
+    const rows = this.all<BackgroundJobRow>(`
+      SELECT id, kind, target_id, dedupe_key, status, priority, available_at,
+             lease_owner, lease_token, lease_expires_at, heartbeat_at, attempt_count,
+             last_error, payload_json, created_at, updated_at, completed_at
+      FROM background_jobs
+      ${whereClause}
+      ORDER BY priority ASC, datetime(available_at) ASC, datetime(created_at) ASC
+    `, ...values);
+
+    return rows.map((row) => this.parseBackgroundJobRow(row));
+  }
+
+  async enqueueBackgroundJob(data: {
+    kind: BackgroundJobKind;
+    targetId: string;
+    dedupeKey: string;
+    payload?: Record<string, unknown>;
+    priority?: number;
+    availableAt?: string;
+  }): Promise<BackgroundJob> {
+    const existing = this.get<BackgroundJobRow>(`
+      SELECT id, kind, target_id, dedupe_key, status, priority, available_at,
+             lease_owner, lease_token, lease_expires_at, heartbeat_at, attempt_count,
+             last_error, payload_json, created_at, updated_at, completed_at
+      FROM background_jobs
+      WHERE dedupe_key = ? AND status IN ('queued', 'leased')
+      ORDER BY datetime(created_at) ASC
+      LIMIT 1
+    `, data.dedupeKey);
+    if (existing) {
+      return this.parseBackgroundJobRow(existing);
+    }
+
+    const entry = createBackgroundJob({
+      kind: data.kind,
+      targetId: data.targetId,
+      dedupeKey: data.dedupeKey,
+      payload: data.payload ?? {},
+      priority: data.priority,
+      availableAt: data.availableAt ?? new Date().toISOString(),
+    });
+
+    try {
+      this.run(`
+        INSERT INTO background_jobs (
+          id, kind, target_id, dedupe_key, status, priority, available_at,
+          lease_owner, lease_token, lease_expires_at, heartbeat_at, attempt_count,
+          last_error, payload_json, created_at, updated_at, completed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+        entry.id,
+        entry.kind,
+        entry.targetId,
+        entry.dedupeKey,
+        entry.status,
+        entry.priority,
+        entry.availableAt,
+        entry.leaseOwner,
+        entry.leaseToken,
+        entry.leaseExpiresAt,
+        entry.heartbeatAt,
+        entry.attemptCount,
+        entry.lastError,
+        JSON.stringify(entry.payload),
+        entry.createdAt,
+        entry.updatedAt,
+        entry.completedAt,
+      );
+    } catch {
+      const deduped = this.get<BackgroundJobRow>(`
+        SELECT id, kind, target_id, dedupe_key, status, priority, available_at,
+               lease_owner, lease_token, lease_expires_at, heartbeat_at, attempt_count,
+               last_error, payload_json, created_at, updated_at, completed_at
+        FROM background_jobs
+        WHERE dedupe_key = ? AND status IN ('queued', 'leased')
+        ORDER BY datetime(created_at) ASC
+        LIMIT 1
+      `, data.dedupeKey);
+      if (!deduped) {
+        throw new Error(`Failed to enqueue background job for dedupe key ${data.dedupeKey}`);
+      }
+      return this.parseBackgroundJobRow(deduped);
+    }
+
+    return entry;
+  }
+
+  async claimNextBackgroundJob(params: {
+    workerId: string;
+    leaseToken: string;
+    leaseExpiresAt: string;
+    now: string;
+    kinds?: BackgroundJobKind[];
+  }): Promise<BackgroundJob | undefined> {
+    return this.withWriteTransaction(() => {
+      const clauses = [
+        "status = 'queued'",
+        "datetime(available_at) <= datetime(?)",
+      ];
+      const values: Array<SQLInputValue> = [params.now];
+
+      if (params.kinds && params.kinds.length > 0) {
+        clauses.push(`kind IN (${params.kinds.map(() => "?").join(", ")})`);
+        values.push(...params.kinds);
+      }
+
+      const candidate = this.get<BackgroundJobRow>(`
+        SELECT id, kind, target_id, dedupe_key, status, priority, available_at,
+               lease_owner, lease_token, lease_expires_at, heartbeat_at, attempt_count,
+               last_error, payload_json, created_at, updated_at, completed_at
+        FROM background_jobs
+        WHERE ${clauses.join(" AND ")}
+        ORDER BY priority ASC, datetime(available_at) ASC, datetime(created_at) ASC
+        LIMIT 1
+      `, ...values);
+
+      if (!candidate) {
+        return undefined;
+      }
+
+      const updated = applyBackgroundJobUpdate(this.parseBackgroundJobRow(candidate), {
+        status: "leased",
+        leaseOwner: params.workerId,
+        leaseToken: params.leaseToken,
+        leaseExpiresAt: params.leaseExpiresAt,
+        heartbeatAt: params.now,
+        attemptCount: candidate.attempt_count + 1,
+        completedAt: null,
+      });
+
+      const result = this.run(`
+        UPDATE background_jobs
+        SET status = ?, lease_owner = ?, lease_token = ?, lease_expires_at = ?, heartbeat_at = ?,
+            attempt_count = ?, updated_at = ?, completed_at = ?
+        WHERE id = ? AND status = 'queued'
+      `,
+        updated.status,
+        updated.leaseOwner,
+        updated.leaseToken,
+        updated.leaseExpiresAt,
+        updated.heartbeatAt,
+        updated.attemptCount,
+        updated.updatedAt,
+        updated.completedAt,
+        updated.id,
+      );
+
+      if (result.changes === 0) {
+        return undefined;
+      }
+
+      return updated;
+    });
+  }
+
+  async heartbeatBackgroundJob(
+    id: string,
+    leaseToken: string,
+    heartbeatAt: string,
+    leaseExpiresAt: string,
+  ): Promise<BackgroundJob | undefined> {
+    return this.withWriteTransaction(() => {
+      const current = this.get<BackgroundJobRow>(`
+        SELECT id, kind, target_id, dedupe_key, status, priority, available_at,
+               lease_owner, lease_token, lease_expires_at, heartbeat_at, attempt_count,
+               last_error, payload_json, created_at, updated_at, completed_at
+        FROM background_jobs
+        WHERE id = ? AND status = 'leased' AND lease_token = ?
+      `, id, leaseToken);
+
+      if (!current) {
+        return undefined;
+      }
+
+      const updated = applyBackgroundJobUpdate(this.parseBackgroundJobRow(current), {
+        heartbeatAt,
+        leaseExpiresAt,
+      });
+
+      this.run(`
+        UPDATE background_jobs
+        SET lease_expires_at = ?, heartbeat_at = ?, updated_at = ?
+        WHERE id = ? AND status = 'leased' AND lease_token = ?
+      `,
+        updated.leaseExpiresAt,
+        updated.heartbeatAt,
+        updated.updatedAt,
+        id,
+        leaseToken,
+      );
+
+      return updated;
+    });
+  }
+
+  async completeBackgroundJob(id: string, leaseToken: string, completedAt: string): Promise<BackgroundJob | undefined> {
+    return this.finalizeBackgroundJob(id, leaseToken, "completed", null, completedAt);
+  }
+
+  async failBackgroundJob(id: string, leaseToken: string, error: string, completedAt: string): Promise<BackgroundJob | undefined> {
+    return this.finalizeBackgroundJob(id, leaseToken, "failed", error, completedAt);
+  }
+
+  async cancelBackgroundJob(
+    id: string,
+    leaseToken: string,
+    error: string | null,
+    completedAt: string,
+  ): Promise<BackgroundJob | undefined> {
+    return this.finalizeBackgroundJob(id, leaseToken, "canceled", error, completedAt);
+  }
+
+  async requeueExpiredBackgroundJobs(now: string): Promise<number> {
+    const result = this.run(`
+      UPDATE background_jobs
+      SET status = 'queued',
+          lease_owner = NULL,
+          lease_token = NULL,
+          lease_expires_at = NULL,
+          heartbeat_at = NULL,
+          updated_at = ?,
+          completed_at = NULL
+      WHERE status = 'leased' AND lease_expires_at IS NOT NULL AND datetime(lease_expires_at) <= datetime(?)
+    `, now, now);
+
+    return Number(result.changes);
   }
 
   async getAgentRun(id: string): Promise<AgentRun | undefined> {

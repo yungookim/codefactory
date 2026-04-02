@@ -3,6 +3,7 @@ import type { Config, ReleaseRun, ReleaseRunIncludedPR } from "@shared/schema";
 import type { CodingAgent } from "./agentRunner";
 import { parseRepoSlug } from "./github";
 import type { IStorage } from "./storage";
+import { buildBackgroundJobDedupeKey, type ScheduleBackgroundJob } from "./backgroundJobQueue";
 import {
   evaluateReleaseWorthinessWithAgent,
   type ReleaseAgentPullSummary,
@@ -52,8 +53,8 @@ export class ReleaseManager {
   private readonly storage: IStorage;
   private readonly github: ReleaseGitHubService;
   private readonly evaluateRelease: typeof evaluateReleaseWorthinessWithAgent;
+  private readonly scheduleBackgroundJob?: ScheduleBackgroundJob;
   private readonly inProgress = new Set<string>();
-  private readonly backgroundJobs = new Set<Promise<void>>();
   private readonly repoLocks = new Map<string, Promise<void>>();
 
   constructor(
@@ -61,11 +62,13 @@ export class ReleaseManager {
     params: {
       github: ReleaseGitHubService;
       evaluateRelease?: typeof evaluateReleaseWorthinessWithAgent;
+      scheduleBackgroundJob?: ScheduleBackgroundJob;
     },
   ) {
     this.storage = storage;
     this.github = params.github;
     this.evaluateRelease = params.evaluateRelease ?? evaluateReleaseWorthinessWithAgent;
+    this.scheduleBackgroundJob = params.scheduleBackgroundJob;
   }
 
   getActiveRunCount(): number {
@@ -75,7 +78,7 @@ export class ReleaseManager {
   async waitForIdle(timeoutMs = 120_000): Promise<boolean> {
     const startedAt = Date.now();
 
-    while (this.inProgress.size > 0 || this.backgroundJobs.size > 0) {
+    while (this.inProgress.size > 0) {
       if (Date.now() - startedAt >= timeoutMs) {
         return false;
       }
@@ -342,13 +345,19 @@ export class ReleaseManager {
   }
 
   private scheduleProcessing(id: string): void {
-    const job = this.processReleaseRun(id)
-      .then(() => undefined)
-      .catch(() => undefined)
-      .finally(() => {
-        this.backgroundJobs.delete(job);
+    if (this.scheduleBackgroundJob) {
+      this.scheduleBackgroundJob(
+        "process_release_run",
+        id,
+        buildBackgroundJobDedupeKey("process_release_run", id),
+        { releaseRunId: id },
+      ).catch((error) => {
+        console.error(`Failed to schedule release run ${id}:`, error);
       });
-    this.backgroundJobs.add(job);
+      return;
+    }
+
+    void this.processReleaseRun(id).catch(() => undefined);
   }
 }
 

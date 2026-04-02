@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { CheckSnapshot, FeedbackItem } from "@shared/schema";
 import { PRBabysitter } from "./babysitter";
+import { BackgroundJobQueue } from "./backgroundJobQueue";
 import { MemStorage } from "./memoryStorage";
 
 function makeFeedbackItem(overrides: Partial<FeedbackItem> = {}): FeedbackItem {
@@ -396,6 +397,125 @@ test("syncAndBabysitTrackedRepos queues release evaluation for merged archived P
   assert.equal(queued.length, 1);
   assert.equal(queued[0]?.triggerMergeSha, "merge123");
   assert.ok(logs.some((log) => log.message.includes("queued release evaluation")));
+});
+
+test("syncAndBabysitTrackedRepos enqueues social changelog generation as a background job", async () => {
+  const storage = new MemStorage();
+  const backgroundJobQueue = new BackgroundJobQueue(storage);
+
+  await storage.addPR({
+    number: 42,
+    title: "Example PR",
+    repo: "octo/example",
+    branch: "feature/example",
+    author: "octocat",
+    url: "https://github.com/octo/example/pull/42",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+    watchEnabled: false,
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    makeWatcherGitHubService({
+      listMergedPullsToday: async () => Array.from({ length: 5 }, (_, index) => ({
+        number: index + 1,
+        title: `Merged PR ${index + 1}`,
+        url: `https://github.com/octo/example/pull/${index + 1}`,
+        author: "octocat",
+        repo: "octo/example",
+        mergedAt: `2026-03-28T1${index}:00:00.000Z`,
+      })),
+    }),
+    {
+      resolveAgent: async () => "codex",
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+    },
+    undefined,
+    async (...args) => backgroundJobQueue.enqueue(...args),
+  );
+
+  await babysitter.syncAndBabysitTrackedRepos();
+
+  const changelogs = await storage.getSocialChangelogs();
+  assert.equal(changelogs.length, 1);
+  assert.equal(changelogs[0].triggerCount, 5);
+  assert.equal(changelogs[0].status, "generating");
+
+  const jobs = await storage.listBackgroundJobs({
+    kind: "generate_social_changelog",
+    targetId: changelogs[0].id,
+  });
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].status, "queued");
+});
+
+test("syncAndBabysitTrackedRepos enqueues babysit_pr jobs when a background scheduler is provided", async () => {
+  const storage = new MemStorage();
+  const backgroundJobQueue = new BackgroundJobQueue(storage);
+
+  const pr = await storage.addPR({
+    number: 42,
+    title: "Example PR",
+    repo: "octo/example",
+    branch: "feature/example",
+    author: "octocat",
+    url: "https://github.com/octo/example/pull/42",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+    watchEnabled: true,
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    makeWatcherGitHubService({
+      listOpenPullsForRepo: async () => [{
+        number: 42,
+        title: "Example PR",
+        branch: "feature/example",
+        author: "octocat",
+        url: "https://github.com/octo/example/pull/42",
+      }],
+    }),
+    {
+      resolveAgent: async () => "codex",
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+    },
+    undefined,
+    async (...args) => backgroundJobQueue.enqueue(...args),
+  );
+
+  babysitter.babysitPR = async () => {
+    throw new Error("watcher should not invoke babysitPR directly when a scheduler is provided");
+  };
+
+  await babysitter.syncAndBabysitTrackedRepos();
+
+  const jobs = await storage.listBackgroundJobs({
+    kind: "babysit_pr",
+    targetId: pr.id,
+    status: "queued",
+  });
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].payload.preferredAgent, "claude");
 });
 
 test("syncAndBabysitTrackedRepos repairs missing review-thread metadata on archived PRs", async () => {
@@ -2821,6 +2941,65 @@ test("resumeInterruptedRuns skips prompt replay when the PR head already moved",
   assert.ok(logs.some((log) => log.phase === "run.replay" && log.message.includes("Skipping forced prompt replay")));
 
   delete process.env.CODEFACTORY_HOME;
+});
+
+test("resumeInterruptedRuns enqueues babysit_pr jobs when a background scheduler is provided", async () => {
+  const storage = new MemStorage();
+  const backgroundJobQueue = new BackgroundJobQueue(storage);
+  const pr = await storage.addPR({
+    number: 106,
+    title: "Queued recovery PR",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/queued-recovery",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+  await storage.upsertAgentRun({
+    id: "run-replay-queued",
+    prId: pr.id,
+    preferredAgent: "codex",
+    resolvedAgent: "codex",
+    status: "running",
+    phase: "run.agent-running",
+    prompt: "REPLAY EXACT PROMPT",
+    initialHeadSha: "abc123",
+    metadata: { recoveryMode: true },
+    lastError: null,
+    createdAt: "2026-03-18T10:00:00.000Z",
+    updatedAt: "2026-03-18T10:01:00.000Z",
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    makeWatcherGitHubService(),
+    {
+      resolveAgent: async () => "codex",
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+    },
+    undefined,
+    async (...args) => backgroundJobQueue.enqueue(...args),
+  );
+
+  await babysitter.resumeInterruptedRuns();
+
+  const jobs = await storage.listBackgroundJobs({
+    kind: "babysit_pr",
+    targetId: pr.id,
+    status: "queued",
+  });
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].payload.preferredAgent, "codex");
 });
 
 test("babysitPR resolves lingering review threads without reposting an existing audit trail", async () => {

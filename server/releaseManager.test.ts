@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Octokit } from "@octokit/rest";
+import type { Config, ReleaseRun } from "@shared/schema";
+import type { ReleaseAgentPullSummary, ReleaseEvaluationDecision } from "./releaseAgent";
+import { BackgroundJobQueue, buildBackgroundJobDedupeKey } from "./backgroundJobQueue";
 import { MemStorage } from "./memoryStorage";
 import { ReleaseManager, type ReleaseGitHubService } from "./releaseManager";
-import type { Config } from "@shared/schema";
-import type { ReleaseAgentPullSummary, ReleaseEvaluationDecision } from "./releaseAgent";
 
 function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
@@ -72,20 +73,66 @@ function makeGitHubService(overrides: Partial<ReleaseGitHubService> = {}): Relea
   };
 }
 
-test("ReleaseManager publishes a release for a positive agent decision", async () => {
+function makeReleaseRun(overrides: Partial<ReleaseRun> = {}): ReleaseRun {
+  const now = "2026-03-28T18:00:00.000Z";
+  return {
+    id: "release-run-1",
+    repo: "yungookim/oh-my-pr",
+    baseBranch: "main",
+    triggerPrNumber: 74,
+    triggerPrTitle: "Retryable release",
+    triggerPrUrl: "https://github.com/yungookim/oh-my-pr/pull/74",
+    triggerMergeSha: "retry-sha",
+    triggerMergedAt: now,
+    status: "error",
+    decisionReason: null,
+    recommendedBump: null,
+    proposedVersion: null,
+    releaseTitle: null,
+    releaseNotes: null,
+    includedPrs: [],
+    targetSha: "retry-sha",
+    githubReleaseId: null,
+    githubReleaseUrl: null,
+    error: "temporary GitHub failure",
+    completedAt: now,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function createQueuedManager(params?: {
+  storage?: MemStorage;
+  github?: Partial<ReleaseGitHubService>;
+  evaluateRelease?: () => Promise<ReleaseEvaluationDecision>;
+}) {
+  const storage = params?.storage ?? new MemStorage();
+  const queue = new BackgroundJobQueue(storage);
+  const manager = new ReleaseManager(storage, {
+    github: makeGitHubService(params?.github),
+    evaluateRelease: params?.evaluateRelease,
+    scheduleBackgroundJob: queue.enqueue.bind(queue),
+  });
+
+  return { storage, queue, manager };
+}
+
+test("ReleaseManager enqueues a durable release job and still executes the release flow", async () => {
   const storage = new MemStorage();
   await storage.updateConfig(makeConfig());
 
   let createCalls = 0;
-  const manager = new ReleaseManager(storage, {
-    github: makeGitHubService({
+  const { manager } = createQueuedManager({
+    storage,
+    github: {
       createGitHubRelease: async (_octokit, _repo, params) => {
         createCalls += 1;
         assert.equal(params.tagName, "v1.3.0");
         assert.equal(params.targetCommitish, "abc123");
         return makePublishedRelease(params.tagName);
       },
-    }),
+    },
     evaluateRelease: async (): Promise<ReleaseEvaluationDecision> => ({
       shouldRelease: true,
       reason: "User-facing release automation",
@@ -105,9 +152,19 @@ test("ReleaseManager publishes a release for a positive agent decision", async (
     triggerMergedAt: "2026-03-28T15:00:00.000Z",
   });
 
-  await manager.waitForIdle();
+  const queuedJobs = await storage.listBackgroundJobs({
+    kind: "process_release_run",
+    status: "queued",
+  });
+  assert.equal(queuedJobs.length, 1);
+  assert.equal(queuedJobs[0].targetId, created.id);
+  assert.equal(queuedJobs[0].dedupeKey, buildBackgroundJobDedupeKey("process_release_run", created.id));
+  assert.equal(await manager.waitForIdle(), true);
+
+  const processed = await manager.processReleaseRun(created.id);
   const stored = await storage.getReleaseRun(created.id);
 
+  assert.ok(processed);
   assert.ok(stored);
   assert.equal(stored.status, "published");
   assert.equal(stored.recommendedBump, "minor");
@@ -117,53 +174,13 @@ test("ReleaseManager publishes a release for a positive agent decision", async (
   assert.equal(createCalls, 1);
 });
 
-test("ReleaseManager marks runs skipped when the agent rejects release creation", async () => {
-  const storage = new MemStorage();
-  await storage.updateConfig(makeConfig());
-
-  let createCalls = 0;
-  const manager = new ReleaseManager(storage, {
-    github: makeGitHubService({
-      createGitHubRelease: async () => {
-        createCalls += 1;
-        return makePublishedRelease();
-      },
-    }),
-    evaluateRelease: async (): Promise<ReleaseEvaluationDecision> => ({
-      shouldRelease: false,
-      reason: "No user-visible changes.",
-      bump: null,
-      title: null,
-      notes: null,
-    }),
-  });
-
-  const created = await manager.enqueueMergedPullReleaseEvaluation({
-    repo: "yungookim/oh-my-pr",
-    baseBranch: "main",
-    triggerPrNumber: 72,
-    triggerPrTitle: "Refactor internals",
-    triggerPrUrl: "https://github.com/yungookim/oh-my-pr/pull/72",
-    triggerMergeSha: "skip123",
-    triggerMergedAt: "2026-03-28T16:00:00.000Z",
-  });
-
-  await manager.waitForIdle();
-  const stored = await storage.getReleaseRun(created.id);
-
-  assert.ok(stored);
-  assert.equal(stored.status, "skipped");
-  assert.equal(stored.decisionReason, "No user-visible changes.");
-  assert.equal(createCalls, 0);
-});
-
-test("ReleaseManager deduplicates runs for the same repo and merge sha", async () => {
+test("ReleaseManager reuses an active release row and the durable process job", async () => {
   const storage = new MemStorage();
   await storage.updateConfig(makeConfig());
 
   let evaluateCalls = 0;
-  const manager = new ReleaseManager(storage, {
-    github: makeGitHubService(),
+  const { manager } = createQueuedManager({
+    storage,
     evaluateRelease: async (): Promise<ReleaseEvaluationDecision> => {
       evaluateCalls += 1;
       return {
@@ -195,56 +212,81 @@ test("ReleaseManager deduplicates runs for the same repo and merge sha", async (
     triggerMergedAt: "2026-03-28T17:00:00.000Z",
   });
 
-  await manager.waitForIdle();
+  const jobs = await storage.listBackgroundJobs({
+    kind: "process_release_run",
+    status: "queued",
+  });
   const runs = await storage.listReleaseRuns();
 
   assert.equal(first.id, second.id);
   assert.equal(runs.length, 1);
-  assert.equal(evaluateCalls, 1);
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].targetId, first.id);
+  assert.equal(evaluateCalls, 0);
+  assert.equal(await manager.waitForIdle(), true);
 });
 
-test("ReleaseManager can retry a failed run", async () => {
+test("ReleaseManager retryReleaseRun resets state and enqueues the durable process job", async () => {
   const storage = new MemStorage();
   await storage.updateConfig(makeConfig());
 
-  let failFirst = true;
-  const manager = new ReleaseManager(storage, {
-    github: makeGitHubService({
-      createGitHubRelease: async (_octokit, _repo, params) => {
-        if (failFirst) {
-          failFirst = false;
-          throw new Error("temporary GitHub failure");
-        }
-        return makePublishedRelease(params.tagName);
-      },
-    }),
-    evaluateRelease: async (): Promise<ReleaseEvaluationDecision> => ({
-      shouldRelease: true,
-      reason: "Worth a patch release",
-      bump: "patch",
-      title: "Patch release",
-      notes: "Patch notes",
-    }),
+  const queuedRun = await storage.createReleaseRun(makeReleaseRun());
+  const { manager } = createQueuedManager({ storage });
+
+  const retried = await manager.retryReleaseRun(queuedRun.id);
+  const jobs = await storage.listBackgroundJobs({
+    kind: "process_release_run",
+    status: "queued",
   });
+  const stored = await storage.getReleaseRun(queuedRun.id);
 
-  const created = await manager.enqueueMergedPullReleaseEvaluation({
-    repo: "yungookim/oh-my-pr",
-    baseBranch: "main",
-    triggerPrNumber: 74,
-    triggerPrTitle: "Retryable release",
-    triggerPrUrl: "https://github.com/yungookim/oh-my-pr/pull/74",
-    triggerMergeSha: "retry-sha",
-    triggerMergedAt: "2026-03-28T18:00:00.000Z",
-  });
-
-  await manager.waitForIdle();
-  let stored = await storage.getReleaseRun(created.id);
-  assert.equal(stored?.status, "error");
-
-  const retried = await manager.retryReleaseRun(created.id);
   assert.ok(retried);
-  await manager.waitForIdle();
+  assert.ok(stored);
+  assert.equal(retried?.status, "detected");
+  assert.equal(retried?.error, null);
+  assert.equal(retried?.completedAt, null);
+  assert.equal(stored.status, "detected");
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].targetId, queuedRun.id);
+  assert.equal(jobs[0].dedupeKey, buildBackgroundJobDedupeKey("process_release_run", queuedRun.id));
+  assert.equal(await manager.waitForIdle(), true);
+});
 
-  stored = await storage.getReleaseRun(created.id);
-  assert.equal(stored?.status, "published");
+test("ReleaseManager logs release job scheduling failures", async () => {
+  const storage = new MemStorage();
+  await storage.updateConfig(makeConfig());
+
+  const schedulingError = new Error("queue unavailable");
+  const manager = new ReleaseManager(storage, {
+    github: makeGitHubService(),
+    scheduleBackgroundJob: async () => {
+      throw schedulingError;
+    },
+  });
+
+  const originalConsoleError = console.error;
+  const logged: unknown[][] = [];
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+
+  try {
+    const created = await manager.enqueueMergedPullReleaseEvaluation({
+      repo: "yungookim/oh-my-pr",
+      baseBranch: "main",
+      triggerPrNumber: 75,
+      triggerPrTitle: "Queue failure logging",
+      triggerPrUrl: "https://github.com/yungookim/oh-my-pr/pull/75",
+      triggerMergeSha: "queue-failure-sha",
+      triggerMergedAt: "2026-03-28T19:00:00.000Z",
+    });
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(logged.length, 1);
+    assert.equal(logged[0][0], `Failed to schedule release run ${created.id}:`);
+    assert.equal(logged[0][1], schedulingError);
+  } finally {
+    console.error = originalConsoleError;
+  }
 });
