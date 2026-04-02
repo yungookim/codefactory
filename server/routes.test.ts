@@ -101,3 +101,50 @@ test("POST /api/prs/:id/questions enqueues a durable answer_pr_question job", as
     await harness.close();
   }
 });
+
+test("POST /api/prs/:id/babysit enqueues a durable babysit_pr job", async () => {
+  const harness = await createHarness();
+  const prId = await seedPR(harness.storage);
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/api/prs/${prId}/babysit`, {
+      method: "POST",
+    });
+
+    assert.equal(response.status, 200);
+
+    const jobs = await harness.storage.listBackgroundJobs({
+      kind: "babysit_pr",
+      status: "queued",
+    });
+    assert.equal(jobs.length, 1);
+    assert.equal(jobs[0].targetId, prId);
+    assert.equal(jobs[0].payload.preferredAgent, "claude");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("POST /api/repos/sync enqueues a durable sync_watched_repos job", async () => {
+  const harness = await createHarness();
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/api/repos/sync`, {
+      method: "POST",
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json() as { ok: boolean };
+    assert.equal(body.ok, true);
+
+    const jobs = await harness.storage.listBackgroundJobs({
+      kind: "sync_watched_repos",
+      status: "queued",
+    });
+    assert.equal(jobs.length, 1);
+    assert.equal(jobs[0].targetId, "runtime:1");
+    assert.equal(jobs[0].dedupeKey, "sync_watched_repos");
+  } finally {
+    await harness.close();
+  }
+});

@@ -61,6 +61,82 @@ test("answer_pr_question handler delegates for non-terminal questions", async ()
   });
 });
 
+test("sync_watched_repos handler delegates to the babysitter", async () => {
+  const storage = new MemStorage();
+  const queue = new BackgroundJobQueue(storage);
+  const job = await queue.enqueue("sync_watched_repos", "runtime:1", "sync_watched_repos", {});
+  let syncCalls = 0;
+
+  const handlers = createBackgroundJobHandlers({
+    storage,
+    babysitter: {
+      runQueuedBabysitPR: async () => undefined,
+      syncAndBabysitTrackedRepos: async () => {
+        syncCalls += 1;
+      },
+    },
+  });
+
+  await handlers.sync_watched_repos!(job);
+
+  assert.equal(syncCalls, 1);
+});
+
+test("babysit_pr handler delegates to the babysitter with the queued preferred agent", async () => {
+  const storage = new MemStorage();
+  const prId = await seedPR(storage);
+  const queue = new BackgroundJobQueue(storage);
+  const job = await queue.enqueue(
+    "babysit_pr",
+    prId,
+    `babysit_pr:${prId}`,
+    { preferredAgent: "codex" },
+  );
+  const calls: Array<{ prId: string; preferredAgent: string }> = [];
+
+  const handlers = createBackgroundJobHandlers({
+    storage,
+    babysitter: {
+      syncAndBabysitTrackedRepos: async () => undefined,
+      runQueuedBabysitPR: async (queuedPrId, preferredAgent) => {
+        calls.push({ prId: queuedPrId, preferredAgent });
+      },
+    },
+  });
+
+  await handlers.babysit_pr!(job);
+
+  assert.deepEqual(calls, [{
+    prId,
+    preferredAgent: "codex",
+  }]);
+});
+
+test("babysit_pr handler cancels jobs whose PR row is missing", async () => {
+  const storage = new MemStorage();
+  const queue = new BackgroundJobQueue(storage);
+  const job = await queue.enqueue(
+    "babysit_pr",
+    "missing-pr",
+    "babysit_pr:missing-pr",
+    { preferredAgent: "claude" },
+  );
+
+  const handlers = createBackgroundJobHandlers({
+    storage,
+    babysitter: {
+      syncAndBabysitTrackedRepos: async () => undefined,
+      runQueuedBabysitPR: async () => undefined,
+    },
+  });
+
+  await assert.rejects(
+    handlers.babysit_pr!(job),
+    (error: unknown) => error instanceof CancelBackgroundJobError
+      && error.message.includes("missing-pr"),
+  );
+});
+
 test("answer_pr_question handler no-ops for terminal questions", async () => {
   const storage = new MemStorage();
   const prId = await seedPR(storage);
@@ -204,4 +280,51 @@ test("generate_social_changelog handler delegates for non-terminal rows", async 
     date: "2026-04-02",
     preferredAgent: "claude",
   });
+});
+
+test("process_release_run handler delegates to ReleaseManager for active rows", async () => {
+  const storage = new MemStorage();
+  const releaseRun = await storage.createReleaseRun({
+    repo: "acme/widgets",
+    baseBranch: "main",
+    triggerPrNumber: 42,
+    triggerPrTitle: "feat: add widget",
+    triggerPrUrl: "https://github.com/acme/widgets/pull/42",
+    triggerMergeSha: "merge-sha",
+    triggerMergedAt: "2026-04-02T12:00:00.000Z",
+    status: "detected",
+    decisionReason: null,
+    recommendedBump: null,
+    proposedVersion: null,
+    releaseTitle: null,
+    releaseNotes: null,
+    includedPrs: [],
+    targetSha: "merge-sha",
+    githubReleaseId: null,
+    githubReleaseUrl: null,
+    error: null,
+    completedAt: null,
+  });
+  const queue = new BackgroundJobQueue(storage);
+  const job = await queue.enqueue(
+    "process_release_run",
+    releaseRun.id,
+    `process_release_run:${releaseRun.id}`,
+    {},
+  );
+  const processedIds: string[] = [];
+
+  const handlers = createBackgroundJobHandlers({
+    storage,
+    releaseManager: {
+      processReleaseRun: async (id) => {
+        processedIds.push(id);
+        return releaseRun;
+      },
+    },
+  });
+
+  await handlers.process_release_run!(job);
+
+  assert.deepEqual(processedIds, [releaseRun.id]);
 });

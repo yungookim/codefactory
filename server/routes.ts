@@ -118,6 +118,7 @@ export async function registerRoutes(
         };
       },
     },
+    scheduleBackgroundJob,
   });
   const babysitter = dependencies.babysitter ?? new PRBabysitter(
     storage,
@@ -129,13 +130,23 @@ export async function registerRoutes(
   backgroundJobDispatcher = dependencies.backgroundJobDispatcher ?? new BackgroundJobDispatcher({
     storage,
     queue: backgroundJobQueue,
-    handlers: createBackgroundJobHandlers({ storage }),
+    handlers: createBackgroundJobHandlers({
+      storage,
+      babysitter,
+      releaseManager,
+    }),
   });
   let watcherTimer: NodeJS.Timeout | null = null;
   let watcherIntervalMs = 0;
 
   const watcherScheduler = dependencies.watcherScheduler ?? createWatcherScheduler(
-    () => babysitter.syncAndBabysitTrackedRepos(),
+    async () => {
+      await scheduleBackgroundJob(
+        "sync_watched_repos",
+        "runtime:1",
+        buildBackgroundJobDedupeKey("sync_watched_repos", "runtime:1"),
+      );
+    },
     (error) => {
       console.error("Repository babysitter watcher failed", error);
     },
@@ -147,7 +158,7 @@ export async function registerRoutes(
     const state = await storage.getRuntimeState();
     return {
       ...state,
-      activeRuns: babysitter.getActiveRunCount(),
+      activeRuns: backgroundJobDispatcher.getActiveRunCount(),
     };
   };
 
@@ -361,7 +372,12 @@ export async function registerRoutes(
         });
       }
 
-      void babysitter.babysitPR(pr.id, config.codingAgent);
+      await scheduleBackgroundJob(
+        "babysit_pr",
+        pr.id,
+        buildBackgroundJobDedupeKey("babysit_pr", pr.id),
+        { preferredAgent: config.codingAgent },
+      );
 
       res.status(201).json(pr);
     } catch (err: unknown) {
@@ -476,8 +492,12 @@ export async function registerRoutes(
     const config = await storage.getConfig();
     await storage.updatePR(pr.id, { status: "processing" });
     await storage.addLog(pr.id, "info", `Launching autonomous babysitter run using ${config.codingAgent}`);
-
-    await babysitter.babysitPR(pr.id, config.codingAgent);
+    await scheduleBackgroundJob(
+      "babysit_pr",
+      pr.id,
+      buildBackgroundJobDedupeKey("babysit_pr", pr.id),
+      { preferredAgent: config.codingAgent },
+    );
 
     const updated = await storage.getPR(pr.id);
     if (!updated) {
@@ -497,7 +517,12 @@ export async function registerRoutes(
 
     const config = await storage.getConfig();
     await storage.addLog(pr.id, "info", `Manual babysitter trigger using ${config.codingAgent}`);
-    await babysitter.babysitPR(pr.id, config.codingAgent);
+    await scheduleBackgroundJob(
+      "babysit_pr",
+      pr.id,
+      buildBackgroundJobDedupeKey("babysit_pr", pr.id),
+      { preferredAgent: config.codingAgent },
+    );
 
     const updated = await storage.getPR(pr.id);
     if (!updated) {
@@ -548,7 +573,12 @@ export async function registerRoutes(
     await storage.addLog(req.params.id, "info", `Feedback item ${req.params.feedbackId} queued for retry`);
 
     const config = await storage.getConfig();
-    void babysitter.babysitPR(req.params.id, config.codingAgent);
+    await scheduleBackgroundJob(
+      "babysit_pr",
+      req.params.id,
+      buildBackgroundJobDedupeKey("babysit_pr", req.params.id),
+      { preferredAgent: config.codingAgent },
+    );
 
     res.json(result.updated);
   });

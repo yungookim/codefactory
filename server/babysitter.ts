@@ -700,9 +700,74 @@ export class PRBabysitter {
     return true;
   }
 
+  async runQueuedBabysitPR(
+    prId: string,
+    preferredAgent: CodingAgent,
+  ): Promise<void> {
+    const interruptedRun = (await this.storage.listAgentRuns({ status: "running", prId }))
+      .slice()
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
+
+    if (!interruptedRun) {
+      await this.babysitPR(prId, preferredAgent, {
+        allowDuringDrain: true,
+      });
+      return;
+    }
+
+    const canReplay = Boolean(
+      interruptedRun.prompt
+      && interruptedRun.resolvedAgent
+      && interruptedRun.initialHeadSha,
+    );
+    if (!canReplay) {
+      const now = new Date().toISOString();
+      await this.storage.upsertAgentRun({
+        ...interruptedRun,
+        status: "failed",
+        phase: "run.failed",
+        lastError: "Interrupted run missing replay context",
+        updatedAt: now,
+      });
+      await this.babysitPR(prId, preferredAgent, {
+        allowDuringDrain: true,
+      });
+      return;
+    }
+
+    await this.babysitPR(prId, interruptedRun.preferredAgent, {
+      runId: interruptedRun.id,
+      recoveryMode: true,
+      forceAgentPrompt: interruptedRun.prompt,
+      forceResolvedAgent: interruptedRun.resolvedAgent,
+      replayInitialHeadSha: interruptedRun.initialHeadSha,
+      allowDuringDrain: true,
+    });
+  }
+
   async resumeInterruptedRuns(): Promise<void> {
     const interruptedRuns = await this.storage.listAgentRuns({ status: "running" });
     if (interruptedRuns.length === 0) {
+      return;
+    }
+
+    if (this.scheduleBackgroundJob) {
+      const queuedPrIds = new Set<string>();
+
+      for (const run of interruptedRuns) {
+        if (queuedPrIds.has(run.prId)) {
+          continue;
+        }
+
+        queuedPrIds.add(run.prId);
+        await this.scheduleBackgroundJob(
+          "babysit_pr",
+          run.prId,
+          buildBackgroundJobDedupeKey("babysit_pr", run.prId),
+          { preferredAgent: run.preferredAgent },
+        );
+      }
+
       return;
     }
 
@@ -1021,7 +1086,16 @@ export class PRBabysitter {
           phase: "watcher",
           metadata: { repo: repoSlug },
         });
-        await this.babysitPR(local.id, config.codingAgent as CodingAgent);
+        if (this.scheduleBackgroundJob) {
+          await this.scheduleBackgroundJob(
+            "babysit_pr",
+            local.id,
+            buildBackgroundJobDedupeKey("babysit_pr", local.id),
+            { preferredAgent: config.codingAgent as CodingAgent },
+          );
+        } else {
+          await this.babysitPR(local.id, config.codingAgent as CodingAgent);
+        }
       }
     }
 
