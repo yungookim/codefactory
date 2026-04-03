@@ -66,6 +66,10 @@ type ConfigRow = {
   max_healing_attempts_per_fingerprint: number;
   max_concurrent_healing_runs: number;
   healing_cooldown_ms: number;
+  auto_heal_deployments: number;
+  deployment_check_delay_ms: number;
+  deployment_check_timeout_ms: number;
+  deployment_check_poll_interval_ms: number;
   trusted_reviewers_json: string;
   ignored_bots_json: string;
 };
@@ -708,6 +712,10 @@ export class SqliteStorage implements IStorage {
     this.ensureColumn("config", "max_healing_attempts_per_fingerprint", "INTEGER NOT NULL DEFAULT 2");
     this.ensureColumn("config", "max_concurrent_healing_runs", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("config", "healing_cooldown_ms", "INTEGER NOT NULL DEFAULT 300000");
+    this.ensureColumn("config", "auto_heal_deployments", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("config", "deployment_check_delay_ms", "INTEGER NOT NULL DEFAULT 60000");
+    this.ensureColumn("config", "deployment_check_timeout_ms", "INTEGER NOT NULL DEFAULT 600000");
+    this.ensureColumn("config", "deployment_check_poll_interval_ms", "INTEGER NOT NULL DEFAULT 15000");
     this.ensureColumn("prs", "watch_enabled", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("prs", "docs_assessment_json", "TEXT");
 
@@ -759,6 +767,10 @@ export class SqliteStorage implements IStorage {
       maxHealingAttemptsPerFingerprint: row.max_healing_attempts_per_fingerprint ?? DEFAULT_CONFIG.maxHealingAttemptsPerFingerprint,
       maxConcurrentHealingRuns: row.max_concurrent_healing_runs ?? DEFAULT_CONFIG.maxConcurrentHealingRuns,
       healingCooldownMs: row.healing_cooldown_ms ?? DEFAULT_CONFIG.healingCooldownMs,
+      autoHealDeployments: Boolean(row.auto_heal_deployments ?? DEFAULT_CONFIG.autoHealDeployments),
+      deploymentCheckDelayMs: row.deployment_check_delay_ms ?? DEFAULT_CONFIG.deploymentCheckDelayMs,
+      deploymentCheckTimeoutMs: row.deployment_check_timeout_ms ?? DEFAULT_CONFIG.deploymentCheckTimeoutMs,
+      deploymentCheckPollIntervalMs: row.deployment_check_poll_interval_ms ?? DEFAULT_CONFIG.deploymentCheckPollIntervalMs,
       watchedRepos,
       trustedReviewers: JSON.parse(row.trusted_reviewers_json),
       ignoredBots: JSON.parse(row.ignored_bots_json),
@@ -789,9 +801,13 @@ export class SqliteStorage implements IStorage {
           max_healing_attempts_per_fingerprint,
           max_concurrent_healing_runs,
           healing_cooldown_ms,
+          auto_heal_deployments,
+          deployment_check_delay_ms,
+          deployment_check_timeout_ms,
+          deployment_check_poll_interval_ms,
           trusted_reviewers_json,
           ignored_bots_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           github_token = excluded.github_token,
           coding_agent = excluded.coding_agent,
@@ -808,6 +824,10 @@ export class SqliteStorage implements IStorage {
           max_healing_attempts_per_fingerprint = excluded.max_healing_attempts_per_fingerprint,
           max_concurrent_healing_runs = excluded.max_concurrent_healing_runs,
           healing_cooldown_ms = excluded.healing_cooldown_ms,
+          auto_heal_deployments = excluded.auto_heal_deployments,
+          deployment_check_delay_ms = excluded.deployment_check_delay_ms,
+          deployment_check_timeout_ms = excluded.deployment_check_timeout_ms,
+          deployment_check_poll_interval_ms = excluded.deployment_check_poll_interval_ms,
           trusted_reviewers_json = excluded.trusted_reviewers_json,
           ignored_bots_json = excluded.ignored_bots_json
       `,
@@ -827,6 +847,10 @@ export class SqliteStorage implements IStorage {
         config.maxHealingAttemptsPerFingerprint,
         config.maxConcurrentHealingRuns,
         config.healingCooldownMs,
+        Number(config.autoHealDeployments),
+        config.deploymentCheckDelayMs,
+        config.deploymentCheckTimeoutMs,
+        config.deploymentCheckPollIntervalMs,
         JSON.stringify(config.trustedReviewers),
         JSON.stringify(config.ignoredBots),
       );
@@ -1401,7 +1425,8 @@ export class SqliteStorage implements IStorage {
              poll_interval_ms, max_changes_per_run, auto_resolve_merge_conflicts, auto_create_releases,
              auto_update_docs, auto_heal_ci, max_healing_attempts_per_session,
              max_healing_attempts_per_fingerprint, max_concurrent_healing_runs, healing_cooldown_ms,
-             trusted_reviewers_json, ignored_bots_json
+             auto_heal_deployments, deployment_check_delay_ms, deployment_check_timeout_ms,
+             deployment_check_poll_interval_ms, trusted_reviewers_json, ignored_bots_json
       FROM config
       WHERE id = 1
     `);
