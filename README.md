@@ -1,4 +1,5 @@
 # Oh-my-PR 
+**This project is going to save you tons of time by automating the whole PR process.**
 
 **Local-first GitHub PR babysitter for Codex and Claude**
 
