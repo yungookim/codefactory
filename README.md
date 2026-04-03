@@ -1,6 +1,6 @@
-# Code Factory
+# Oh-my-PR 
 
-**Local-first GitHub PR babysitter for Codex and Claude.**
+**Local-first GitHub PR babysitter for Codex and Claude**
 
 <p align="center">
   <img width="409" height="409" alt="Code Factory logo" src="https://github.com/user-attachments/assets/ca339a71-40d9-4619-900f-55825f30a57f" />
@@ -12,7 +12,7 @@
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-green.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)](https://www.typescriptlang.org/)
 
-Oh-my-pr babysits your PRs from your local machine, reads all PR comments and CI/CD logs, and gets your PR ready for merge to main. It uses your local Claude Code or Codex to address any issues identified in the PR or CI/CD pipeline, and ensures any documentation is up-to-date. You can push a PR, walkaway, and come back to a clean PR ready to be merged.
+Oh-my-pr babysits your PRs from your local machine, reads all PR comments and CI/CD logs, and gets your PR ready for merge to main. It uses your local Claude Code or Codex to address any issues identified in the PR or CI/CD pipeline and to ensure that any documentation is up to date. You can push a PR, walk away, and come back to a clean PR ready to be merged.
 
 <img width="1365" height="686" alt="Code Factory dashboard" src="https://github.com/user-attachments/assets/66dfa082-c732-4989-8b05-f19aa550acb5" />
 
@@ -20,8 +20,8 @@ Oh-my-pr babysits your PRs from your local machine, reads all PR comments and CI
 
 - Watch multiple repositories or add a single PR by URL.
 - Auto-register open PRs, archive closed or merged PRs, and keep syncing review activity.
-- Evaluate review comments and failing CI statuses, post GitHub follow-ups, resolve review threads, and persist CI healing sessions per PR head.
-- Detect merge conflicts and optionally let the agent resolve them automatically.
+- Evaluate review comments and failing CI statuses, post GitHub follow-ups, resolve review threads, and heal any CI failures.
+- Detect merge conflicts and let the agent resolve them automatically.
 - Ask natural-language questions about any tracked PR from the dashboard or via MCP.
 
 ## How It Works
