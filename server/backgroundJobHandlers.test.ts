@@ -282,6 +282,15 @@ test("generate_social_changelog handler delegates for non-terminal rows", async 
   });
 });
 
+test("heal_deployment handler is registered when deploymentHealingManager is provided", () => {
+  const storage = new MemStorage();
+  const handlers = createBackgroundJobHandlers({
+    storage,
+    deploymentHealingManager: {} as any,
+  });
+  assert.ok(handlers.heal_deployment);
+});
+
 test("process_release_run handler delegates to ReleaseManager for active rows", async () => {
   const storage = new MemStorage();
   const releaseRun = await storage.createReleaseRun({
