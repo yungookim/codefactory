@@ -10,6 +10,9 @@ import type {
   BackgroundJobStatus,
   Config,
   CheckSnapshot,
+  DeploymentHealingSession,
+  DeploymentHealingState,
+  DeploymentPlatform,
   FeedbackItem,
   FailureFingerprint,
   LogEntry,
@@ -28,6 +31,7 @@ import type {
 import {
   applyBackgroundJobUpdate,
   applyConfigUpdate,
+  applyDeploymentHealingSessionUpdate,
   applyHealingAttemptUpdate,
   applyHealingSessionUpdate,
   applyPRQuestionUpdate,
@@ -35,6 +39,7 @@ import {
   applyReleaseRunUpdate,
   applySocialChangelogUpdate,
   createCheckSnapshot,
+  createDeploymentHealingSession,
   createLogEntry,
   createBackgroundJob,
   createFailureFingerprint,
@@ -289,6 +294,26 @@ type ReleaseRunRow = {
   target_sha: string | null;
   github_release_id: number | null;
   github_release_url: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+};
+
+type DeploymentHealingSessionRow = {
+  id: string;
+  repo: string;
+  platform: DeploymentPlatform;
+  trigger_pr_number: number;
+  trigger_pr_title: string;
+  trigger_pr_url: string;
+  merge_sha: string;
+  deployment_id: string | null;
+  deployment_log: string | null;
+  fix_branch: string | null;
+  fix_pr_number: number | null;
+  fix_pr_url: string | null;
+  state: DeploymentHealingState;
   error: string | null;
   created_at: string;
   updated_at: string;
@@ -673,6 +698,27 @@ export class SqliteStorage implements IStorage {
         updated_at TEXT NOT NULL,
         completed_at TEXT,
         UNIQUE(repo, trigger_pr_number, trigger_merge_sha)
+      );
+
+      CREATE TABLE IF NOT EXISTS deployment_healing_sessions (
+        id TEXT PRIMARY KEY,
+        repo TEXT NOT NULL,
+        platform TEXT NOT NULL,
+        trigger_pr_number INTEGER NOT NULL,
+        trigger_pr_title TEXT NOT NULL,
+        trigger_pr_url TEXT NOT NULL,
+        merge_sha TEXT NOT NULL,
+        deployment_id TEXT,
+        deployment_log TEXT,
+        fix_branch TEXT,
+        fix_pr_number INTEGER,
+        fix_pr_url TEXT,
+        state TEXT NOT NULL,
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT,
+        UNIQUE(repo, merge_sha)
       );
 
       CREATE INDEX IF NOT EXISTS idx_feedback_items_pr_id ON feedback_items(pr_id);
@@ -2400,6 +2446,141 @@ export class SqliteStorage implements IStorage {
       next.targetSha,
       next.githubReleaseId,
       next.githubReleaseUrl,
+      next.error,
+      next.createdAt,
+      next.updatedAt,
+      next.completedAt,
+      id,
+    );
+    return next;
+  }
+
+  // ── Deployment healing ─────────────────────────────────────────────────────
+
+  private parseDeploymentHealingSessionRow(row: DeploymentHealingSessionRow): DeploymentHealingSession {
+    return {
+      id: row.id,
+      repo: row.repo,
+      platform: row.platform,
+      triggerPrNumber: row.trigger_pr_number,
+      triggerPrTitle: row.trigger_pr_title,
+      triggerPrUrl: row.trigger_pr_url,
+      mergeSha: row.merge_sha,
+      deploymentId: row.deployment_id,
+      deploymentLog: row.deployment_log,
+      fixBranch: row.fix_branch,
+      fixPrNumber: row.fix_pr_number,
+      fixPrUrl: row.fix_pr_url,
+      state: row.state,
+      error: row.error,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      completedAt: row.completed_at,
+    };
+  }
+
+  async getDeploymentHealingSession(id: string): Promise<DeploymentHealingSession | undefined> {
+    const row = this.get<DeploymentHealingSessionRow>(`
+      SELECT id, repo, platform, trigger_pr_number, trigger_pr_title, trigger_pr_url,
+             merge_sha, deployment_id, deployment_log, fix_branch, fix_pr_number, fix_pr_url,
+             state, error, created_at, updated_at, completed_at
+      FROM deployment_healing_sessions
+      WHERE id = ?
+    `, id);
+    return row ? this.parseDeploymentHealingSessionRow(row) : undefined;
+  }
+
+  async getDeploymentHealingSessionByRepoAndMergeSha(repo: string, mergeSha: string): Promise<DeploymentHealingSession | undefined> {
+    const row = this.get<DeploymentHealingSessionRow>(`
+      SELECT id, repo, platform, trigger_pr_number, trigger_pr_title, trigger_pr_url,
+             merge_sha, deployment_id, deployment_log, fix_branch, fix_pr_number, fix_pr_url,
+             state, error, created_at, updated_at, completed_at
+      FROM deployment_healing_sessions
+      WHERE repo = ? AND merge_sha = ?
+    `, repo, mergeSha);
+    return row ? this.parseDeploymentHealingSessionRow(row) : undefined;
+  }
+
+  async listDeploymentHealingSessions(filters?: { repo?: string; state?: DeploymentHealingState }): Promise<DeploymentHealingSession[]> {
+    const clauses: string[] = [];
+    const values: Array<string> = [];
+
+    if (filters?.repo) {
+      clauses.push("repo = ?");
+      values.push(filters.repo);
+    }
+
+    if (filters?.state) {
+      clauses.push("state = ?");
+      values.push(filters.state);
+    }
+
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.all<DeploymentHealingSessionRow>(`
+      SELECT id, repo, platform, trigger_pr_number, trigger_pr_title, trigger_pr_url,
+             merge_sha, deployment_id, deployment_log, fix_branch, fix_pr_number, fix_pr_url,
+             state, error, created_at, updated_at, completed_at
+      FROM deployment_healing_sessions
+      ${whereClause}
+      ORDER BY datetime(updated_at) DESC
+    `, ...values);
+
+    return rows.map((row) => this.parseDeploymentHealingSessionRow(row));
+  }
+
+  async createDeploymentHealingSession(data: Omit<DeploymentHealingSession, "id" | "createdAt" | "updatedAt">): Promise<DeploymentHealingSession> {
+    const entry = createDeploymentHealingSession(data);
+    this.run(`
+      INSERT INTO deployment_healing_sessions (
+        id, repo, platform, trigger_pr_number, trigger_pr_title, trigger_pr_url,
+        merge_sha, deployment_id, deployment_log, fix_branch, fix_pr_number, fix_pr_url,
+        state, error, created_at, updated_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+      entry.id,
+      entry.repo,
+      entry.platform,
+      entry.triggerPrNumber,
+      entry.triggerPrTitle,
+      entry.triggerPrUrl,
+      entry.mergeSha,
+      entry.deploymentId,
+      entry.deploymentLog,
+      entry.fixBranch,
+      entry.fixPrNumber,
+      entry.fixPrUrl,
+      entry.state,
+      entry.error,
+      entry.createdAt,
+      entry.updatedAt,
+      entry.completedAt,
+    );
+    return entry;
+  }
+
+  async updateDeploymentHealingSession(id: string, updates: Partial<DeploymentHealingSession>): Promise<DeploymentHealingSession | undefined> {
+    const existing = await this.getDeploymentHealingSession(id);
+    if (!existing) return undefined;
+    const next = applyDeploymentHealingSessionUpdate(existing, updates);
+    this.run(`
+      UPDATE deployment_healing_sessions
+      SET repo = ?, platform = ?, trigger_pr_number = ?, trigger_pr_title = ?, trigger_pr_url = ?,
+          merge_sha = ?, deployment_id = ?, deployment_log = ?, fix_branch = ?, fix_pr_number = ?,
+          fix_pr_url = ?, state = ?, error = ?, created_at = ?, updated_at = ?, completed_at = ?
+      WHERE id = ?
+    `,
+      next.repo,
+      next.platform,
+      next.triggerPrNumber,
+      next.triggerPrTitle,
+      next.triggerPrUrl,
+      next.mergeSha,
+      next.deploymentId,
+      next.deploymentLog,
+      next.fixBranch,
+      next.fixPrNumber,
+      next.fixPrUrl,
+      next.state,
       next.error,
       next.createdAt,
       next.updatedAt,
