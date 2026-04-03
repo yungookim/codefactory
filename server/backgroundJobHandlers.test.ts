@@ -4,6 +4,7 @@ import { CancelBackgroundJobError } from "./backgroundJobDispatcher";
 import { createBackgroundJobHandlers } from "./backgroundJobHandlers";
 import { BackgroundJobQueue } from "./backgroundJobQueue";
 import { MemStorage } from "./memoryStorage";
+import type { DeploymentHealingManager } from "./deploymentHealingManager";
 
 async function seedPR(storage: MemStorage): Promise<string> {
   const pr = await storage.addPR({
@@ -286,7 +287,7 @@ test("heal_deployment handler is registered when deploymentHealingManager is pro
   const storage = new MemStorage();
   const handlers = createBackgroundJobHandlers({
     storage,
-    deploymentHealingManager: {} as any,
+    deploymentHealingManager: {} as unknown as DeploymentHealingManager,
   });
   assert.ok(handlers.heal_deployment);
 });

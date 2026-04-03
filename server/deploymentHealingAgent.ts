@@ -126,10 +126,8 @@ export async function runDeploymentHealingRepair(
     };
   }
 
-  let agentResult: CommandResult = { stdout: "", stderr: "", code: 0 };
-
   try {
-    agentResult = await deps.applyFixesWithAgent({
+    const agentResult = await deps.applyFixesWithAgent({
       agent: input.agent,
       cwd: repoCacheDir,
       prompt,
