@@ -15,7 +15,6 @@ type AppProps = {
   runtime: TuiRuntime;
   screenWidth?: number;
   refreshMs?: number;
-  onExit?: () => void;
 };
 
 function getContextItemCount(contextMode: ContextMode): number {
@@ -230,7 +229,6 @@ export default function App(props: AppProps) {
     }
 
     if (input === "q") {
-      props.onExit?.();
       exit();
       return;
     }

@@ -21,8 +21,6 @@ export type SelectionState = {
   setSelectedFeedbackIndex: (index: number) => void;
   moveUp: () => void;
   moveDown: () => void;
-  moveLeft: () => void;
-  moveRight: () => void;
   toggleExpandedFeedback: (feedbackId: string) => void;
   beginInput: (mode: InputMode) => void;
   updateInput: (nextValue: string) => void;
@@ -132,16 +130,6 @@ export function useSelectionState(params: {
       }
 
       setSelectedContextIndexState((current) => clampIndex(current + 1, params.contextItemCount));
-    },
-    moveLeft() {
-      if (activePane === "feedback") {
-        setFeedbackActionIndexState((current) => Math.max(0, current - 1));
-      }
-    },
-    moveRight() {
-      if (activePane === "feedback") {
-        setFeedbackActionIndexState((current) => current + 1);
-      }
     },
     toggleExpandedFeedback(feedbackId) {
       setExpandedFeedbackIds((current) => {

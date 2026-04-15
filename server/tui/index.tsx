@@ -16,9 +16,6 @@ async function main() {
   const ink = render(
     <App
       runtime={runtime}
-      onExit={() => {
-        runtime.stop();
-      }}
     />,
   );
 
