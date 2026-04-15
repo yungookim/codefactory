@@ -2,34 +2,27 @@
 "use strict";
 
 const pkg = require("../package.json");
-const arg = process.argv[2];
+const { formatCliHelp, parseCliArgs } = require("../dist/cli.cjs");
+const parsed = parseCliArgs(process.argv.slice(2));
 
-if (arg === "--version" || arg === "-v") {
+if (parsed.mode === "version") {
   console.log(pkg.version);
   process.exit(0);
 }
 
-if (arg === "--help" || arg === "-h") {
-  console.log(`
-  oh-my-pr v${pkg.version}
-
-  Autonomous GitHub PR babysitter — watches repos, triages review
-  feedback, and dispatches AI agents to fix code locally.
-
-  Usage:
-    oh-my-pr              Start the dashboard server
-    oh-my-pr --help       Show this help message
-    oh-my-pr --version    Print the version
-
-  Environment variables:
-    PORT                  Server port (default: 5001)
-    GITHUB_TOKEN          GitHub personal access token
-    OH_MY_PR_HOME         Override config/state directory (~/.oh-my-pr)
-
-  https://github.com/yungookim/oh-my-pr
-`);
+if (parsed.mode === "help") {
+  if (parsed.error) {
+    console.error(parsed.error);
+  }
+  console.log(formatCliHelp(pkg.version));
   process.exit(0);
 }
 
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
-require("../dist/index.cjs");
+if (parsed.mode === "web") {
+  require("../dist/index.cjs");
+} else if (parsed.mode === "mcp") {
+  require("../dist/mcp.cjs");
+} else {
+  require("../dist/tui.cjs");
+}
