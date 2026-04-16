@@ -109,9 +109,9 @@ export function getOnboardingPanelState(status: OnboardingStatus) {
   const completedCount = steps.filter((step) => step.complete).length;
   const pendingSteps = steps.filter((step) => !step.complete);
   const dismissalKey = [
-    ...pendingSteps.map((step) => step.id),
-    ...inaccessibleRepos.map((repo) => `access:${repo.repo}:${repo.error ?? ""}`),
-  ].join("|") || "complete";
+    ...pendingSteps.map((step) => step.id.toLowerCase()),
+    ...inaccessibleRepos.map((repo) => "access:" + repo.repo.toLowerCase() + ":" + (repo.error?.slice(0, 100) ?? "").toLowerCase()),
+  ].sort().join("|") || "complete";
   const hasIssues = pendingSteps.length > 0 || inaccessibleRepos.length > 0;
   const summary = pendingSteps.length > 0
     ? `${completedCount} of ${steps.length} complete`

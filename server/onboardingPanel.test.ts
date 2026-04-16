@@ -51,7 +51,7 @@ test("getOnboardingPanelState keeps the panel visible for inaccessible repos aft
       codeReviews: { claude: false, codex: false, gemini: false },
     },
   ]);
-  assert.equal(state.dismissalKey, "workflow|access:octo/inaccessible:Resource not accessible by integration");
+  assert.equal(state.dismissalKey, "access:octo/inaccessible:resource not accessible by integration|workflow");
 });
 
 test("getOnboardingPanelState keeps only workflow pending when repo access works but no review workflow exists", () => {
