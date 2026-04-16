@@ -289,7 +289,6 @@ export function wrapText(input: string, width: number): string[] {
 
       if (current) {
         lines.push(current);
-        current = "";
       }
 
       const chunks = pushWord(word);
