@@ -133,12 +133,15 @@ test("runtime updateConfig persists updates and exposes them through getConfig",
   const updated = await runtime.updateConfig({
     codingAgent: "codex",
     autoUpdateDocs: false,
+    includeRepositoryLinksInGitHubComments: false,
   });
 
   assert.equal(updated.codingAgent, "codex");
   assert.equal(updated.autoUpdateDocs, false);
+  assert.equal(updated.includeRepositoryLinksInGitHubComments, false);
 
   const config = await runtime.getConfig();
   assert.equal(config.codingAgent, "codex");
   assert.equal(config.autoUpdateDocs, false);
+  assert.equal(config.includeRepositoryLinksInGitHubComments, false);
 });

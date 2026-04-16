@@ -58,8 +58,9 @@ import {
 
 const DEFAULT_GIT_USER_NAME = "PR Babysitter";
 const DEFAULT_GIT_USER_EMAIL = "pr-babysitter@local";
+const APP_NAME = "oh-my-pr";
 const APP_REPOSITORY_URL = "https://github.com/yungookim/oh-my-pr";
-const APP_REPOSITORY_LINK = `[oh-my-pr](${APP_REPOSITORY_URL})`;
+const APP_REPOSITORY_LINK = `[${APP_NAME}](${APP_REPOSITORY_URL})`;
 export const APP_COMMENT_FOOTER = `Posted by ${APP_REPOSITORY_LINK}`;
 const AUDIT_TOKEN_PATTERN = /\bcodefactory-feedback:[^\s<>()[\]{}"']+/g;
 
@@ -669,7 +670,16 @@ function computeHealingImprovementScore(
   };
 }
 
-function buildFeedbackFollowUpBody(headSha: string, item: FeedbackItem, agentSummary?: string): string {
+function formatAppName(includeRepositoryLinksInGitHubComments: boolean): string {
+  return includeRepositoryLinksInGitHubComments ? APP_REPOSITORY_LINK : APP_NAME;
+}
+
+function buildFeedbackFollowUpBody(
+  headSha: string,
+  item: FeedbackItem,
+  includeRepositoryLinksInGitHubComments: boolean,
+  agentSummary?: string,
+): string {
   const shortSha = headSha.trim() ? headSha.trim().slice(0, 7) : "";
   const headline = shortSha
     ? `Addressed in commit \`${shortSha}\` by the latest babysitter run.`
@@ -694,7 +704,10 @@ function buildFeedbackFollowUpBody(headSha: string, item: FeedbackItem, agentSum
     parts.push("", agentSummary);
   }
 
-  parts.push("", `<!-- ${item.auditToken} -->`, "", APP_COMMENT_FOOTER);
+  parts.push("", `<!-- ${item.auditToken} -->`);
+  if (includeRepositoryLinksInGitHubComments) {
+    parts.push("", APP_COMMENT_FOOTER);
+  }
 
   return parts.join("\n");
 }
@@ -717,11 +730,15 @@ function isCodeFactoryComment(body: string): boolean {
   return body.includes(CODEFACTORY_COMMENT_MARKER);
 }
 
-function formatAgentCommandGitHubComment(agent: CodingAgent, prompt: string): string {
+function formatAgentCommandGitHubComment(
+  agent: CodingAgent,
+  prompt: string,
+  includeRepositoryLinksInGitHubComments: boolean,
+): string {
   const fence = buildCodeFence(prompt);
   return [
     CODEFACTORY_COMMENT_MARKER,
-    `\ud83e\udd16 **${APP_REPOSITORY_LINK}** dispatched \`${agent}\` with the following prompt:`,
+    `\ud83e\udd16 **${formatAppName(includeRepositoryLinksInGitHubComments)}** dispatched \`${agent}\` with the following prompt:`,
     "",
     "<details>",
     "<summary>Agent prompt (click to expand)</summary>",
@@ -731,31 +748,35 @@ function formatAgentCommandGitHubComment(agent: CodingAgent, prompt: string): st
     fence.close,
     "",
     "</details>",
-    "",
-    APP_COMMENT_FOOTER,
+    ...(includeRepositoryLinksInGitHubComments ? ["", APP_COMMENT_FOOTER] : []),
   ].join("\n");
 }
 
 function appendStatusLine(existingBody: string, line: string): string {
-  const bodyWithoutFooter = removeAppCommentFooter(existingBody);
-  return withAppCommentFooter(bodyWithoutFooter ? `${bodyWithoutFooter}\n${line}` : line);
+  const { bodyWithoutFooter, hadFooter } = splitAppCommentFooter(existingBody);
+  const nextBody = bodyWithoutFooter ? `${bodyWithoutFooter}\n${line}` : line;
+  return hadFooter ? `${nextBody}\n\n${APP_COMMENT_FOOTER}` : nextBody;
 }
 
-function removeAppCommentFooter(body: string): string {
+function splitAppCommentFooter(body: string): { bodyWithoutFooter: string; hadFooter: boolean } {
   if (body === APP_COMMENT_FOOTER) {
-    return "";
+    return { bodyWithoutFooter: "", hadFooter: true };
   }
 
   const suffix = `\n\n${APP_COMMENT_FOOTER}`;
   if (body.endsWith(suffix)) {
-    return body.slice(0, -suffix.length);
+    return { bodyWithoutFooter: body.slice(0, -suffix.length), hadFooter: true };
   }
 
-  return body;
+  return { bodyWithoutFooter: body, hadFooter: false };
 }
 
-function withAppCommentFooter(body: string): string {
-  const bodyWithoutFooter = removeAppCommentFooter(body);
+function withOptionalAppCommentFooter(body: string, includeRepositoryLinksInGitHubComments: boolean): string {
+  if (!includeRepositoryLinksInGitHubComments) {
+    return body;
+  }
+
+  const { bodyWithoutFooter } = splitAppCommentFooter(body);
   return bodyWithoutFooter ? `${bodyWithoutFooter}\n\n${APP_COMMENT_FOOTER}` : APP_COMMENT_FOOTER;
 }
 
@@ -1783,6 +1804,7 @@ export class PRBabysitter {
 
       // Track status reply comments so we can update them with progress.
       const statusReplies = new Map<string, StatusReplyRef>();
+      const includeRepositoryLinksInGitHubComments = config.includeRepositoryLinksInGitHubComments;
       const updateItemStatus = async (feedbackId: string, line: string) => {
         const ref = statusReplies.get(feedbackId);
         if (!ref) return;
@@ -1804,7 +1826,7 @@ export class PRBabysitter {
           await this.github.postPRComment(
             octokit,
             parsedPr,
-            formatAgentCommandGitHubComment(agent, prompt),
+            formatAgentCommandGitHubComment(agent, prompt, includeRepositoryLinksInGitHubComments),
           );
         } catch (error) {
           await logBestEffortFailure(
@@ -1897,7 +1919,7 @@ export class PRBabysitter {
               octokit,
               parsedPr,
               item,
-              withAppCommentFooter(STATUS_MESSAGES.accepted),
+              withOptionalAppCommentFooter(STATUS_MESSAGES.accepted, includeRepositoryLinksInGitHubComments),
             );
             if (ref) {
               statusReplies.set(item.id, ref);
@@ -2745,7 +2767,12 @@ export class PRBabysitter {
             },
           });
 
-          const body = buildFeedbackFollowUpBody(headShaForFollowUp, item, agentSummaries.get(item.auditToken));
+          const body = buildFeedbackFollowUpBody(
+            headShaForFollowUp,
+            item,
+            includeRepositoryLinksInGitHubComments,
+            agentSummaries.get(item.auditToken),
+          );
           await this.github.postFollowUpForFeedbackItem(octokit, parsedPr, item, body, { resolve: shouldResolveThread });
         } else if (shouldResolveThread) {
           // Reply already exists but the conversation thread was not resolved
@@ -2847,15 +2874,14 @@ export class PRBabysitter {
           // Alert the user by posting a comment on the PR.
           try {
             const alertBody = [
-              `## \u26a0\ufe0f ${APP_REPOSITORY_LINK} CI Alert`,
+              `## \u26a0\ufe0f ${formatAppName(includeRepositoryLinksInGitHubComments)} CI Alert`,
               "",
               `The agent pushed changes (commit \`${headShaForFollowUp.slice(0, 7)}\`), but CI/CD checks are still failing:`,
               "",
               ...ciResult.failures.map((f) => `- **${f.context}**: ${f.description}${f.targetUrl ? ` ([details](${f.targetUrl}))` : ""}`),
               "",
               "Manual investigation may be required.",
-              "",
-              APP_COMMENT_FOOTER,
+              ...(includeRepositoryLinksInGitHubComments ? ["", APP_COMMENT_FOOTER] : []),
             ].join("\n");
             await this.github.postPRComment(octokit, parsedPr, alertBody);
           } catch (error) {

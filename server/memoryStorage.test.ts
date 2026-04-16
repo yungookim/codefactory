@@ -421,6 +421,10 @@ describe("MemStorage", () => {
       assert.equal(config.maxTurns, DEFAULT_CONFIG.maxTurns);
       assert.equal(config.autoCreateReleases, DEFAULT_CONFIG.autoCreateReleases);
       assert.equal(config.autoUpdateDocs, DEFAULT_CONFIG.autoUpdateDocs);
+      assert.equal(
+        config.includeRepositoryLinksInGitHubComments,
+        DEFAULT_CONFIG.includeRepositoryLinksInGitHubComments,
+      );
       assert.equal(config.autoHealCI, DEFAULT_CONFIG.autoHealCI);
       assert.equal(config.maxHealingAttemptsPerSession, DEFAULT_CONFIG.maxHealingAttemptsPerSession);
       assert.equal(config.maxHealingAttemptsPerFingerprint, DEFAULT_CONFIG.maxHealingAttemptsPerFingerprint);
@@ -437,6 +441,7 @@ describe("MemStorage", () => {
       // Other fields preserved
       assert.equal(updated.codingAgent, "claude");
       assert.equal(updated.autoUpdateDocs, true);
+      assert.equal(updated.includeRepositoryLinksInGitHubComments, true);
       assert.equal(updated.autoCreateReleases, true);
       assert.equal(updated.autoHealCI, false);
       assert.equal(updated.maxHealingAttemptsPerSession, 3);
@@ -445,6 +450,7 @@ describe("MemStorage", () => {
     it("returns the updated config", async () => {
       const updated = await storage.updateConfig({
         githubToken: "tok_123",
+        includeRepositoryLinksInGitHubComments: false,
         autoHealCI: true,
         maxHealingAttemptsPerSession: 5,
         maxHealingAttemptsPerFingerprint: 4,

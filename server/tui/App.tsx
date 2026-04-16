@@ -23,7 +23,7 @@ function getContextItemCount(contextMode: ContextMode): number {
   }
 
   if (contextMode === "settings") {
-    return 3;
+    return 4;
   }
 
   return 0;
@@ -46,7 +46,7 @@ export default function App(props: AppProps) {
   const selection = useSelectionState({
     prCount: snapshot.prs.length,
     feedbackCount: snapshot.selectedPr?.feedbackItems.length ?? 0,
-    contextItemCount: 3,
+    contextItemCount: 4,
   });
   const contextItemCount = getContextItemCount(selection.contextMode);
 
@@ -153,6 +153,10 @@ export default function App(props: AppProps) {
       updates = { autoResolveMergeConflicts: !current.autoResolveMergeConflicts };
     } else if (selection.selectedContextIndex === 2) {
       updates = { autoUpdateDocs: !current.autoUpdateDocs };
+    } else if (selection.selectedContextIndex === 3) {
+      updates = {
+        includeRepositoryLinksInGitHubComments: !current.includeRepositoryLinksInGitHubComments,
+      };
     }
 
     if (!updates) {

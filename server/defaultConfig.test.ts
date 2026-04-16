@@ -27,6 +27,7 @@ describe("DEFAULT_CONFIG", () => {
       "autoResolveMergeConflicts",
       "autoCreateReleases",
       "autoUpdateDocs",
+      "includeRepositoryLinksInGitHubComments",
       "autoHealCI",
       "maxHealingAttemptsPerSession",
       "maxHealingAttemptsPerFingerprint",
@@ -111,6 +112,10 @@ describe("DEFAULT_CONFIG", () => {
 
   it("enables docs auto-update by default", () => {
     assert.equal(DEFAULT_CONFIG.autoUpdateDocs, true);
+  });
+
+  it("includes repository links in GitHub comments by default", () => {
+    assert.equal(DEFAULT_CONFIG.includeRepositoryLinksInGitHubComments, true);
   });
 
   it("includes deployment-healing defaults", () => {

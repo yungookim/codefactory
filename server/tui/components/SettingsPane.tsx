@@ -10,6 +10,7 @@ export function SettingsPane(props: {
     `Coding agent: ${props.config?.codingAgent ?? "claude"}`,
     `Auto-resolve conflicts: ${props.config?.autoResolveMergeConflicts ? "on" : "off"}`,
     `Auto-update docs: ${props.config?.autoUpdateDocs ? "on" : "off"}`,
+    `Repo links in PR comments: ${props.config?.includeRepositoryLinksInGitHubComments ? "on" : "off"}`,
   ];
 
   return (

@@ -66,6 +66,7 @@ type ConfigRow = {
   auto_resolve_merge_conflicts: number;
   auto_create_releases: number;
   auto_update_docs: number;
+  include_repository_links_in_github_comments: number;
   auto_heal_ci: number;
   max_healing_attempts_per_session: number;
   max_healing_attempts_per_fingerprint: number;
@@ -468,6 +469,7 @@ export class SqliteStorage implements IStorage {
         auto_resolve_merge_conflicts INTEGER NOT NULL DEFAULT 1,
         auto_create_releases INTEGER NOT NULL DEFAULT 1,
         auto_update_docs INTEGER NOT NULL DEFAULT 1,
+        include_repository_links_in_github_comments INTEGER NOT NULL DEFAULT 1,
         auto_heal_ci INTEGER NOT NULL DEFAULT 0,
         max_healing_attempts_per_session INTEGER NOT NULL DEFAULT 3,
         max_healing_attempts_per_fingerprint INTEGER NOT NULL DEFAULT 2,
@@ -753,6 +755,7 @@ export class SqliteStorage implements IStorage {
     this.ensureColumn("config", "auto_resolve_merge_conflicts", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("config", "auto_create_releases", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("config", "auto_update_docs", "INTEGER NOT NULL DEFAULT 1");
+    this.ensureColumn("config", "include_repository_links_in_github_comments", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("config", "auto_heal_ci", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("config", "max_healing_attempts_per_session", "INTEGER NOT NULL DEFAULT 3");
     this.ensureColumn("config", "max_healing_attempts_per_fingerprint", "INTEGER NOT NULL DEFAULT 2");
@@ -808,6 +811,9 @@ export class SqliteStorage implements IStorage {
       autoResolveMergeConflicts: Boolean(row.auto_resolve_merge_conflicts),
       autoCreateReleases: Boolean(row.auto_create_releases ?? 1),
       autoUpdateDocs: Boolean(row.auto_update_docs ?? 1),
+      includeRepositoryLinksInGitHubComments: Boolean(
+        row.include_repository_links_in_github_comments ?? Number(DEFAULT_CONFIG.includeRepositoryLinksInGitHubComments),
+      ),
       autoHealCI: Boolean(row.auto_heal_ci ?? Number(DEFAULT_CONFIG.autoHealCI)),
       maxHealingAttemptsPerSession: row.max_healing_attempts_per_session ?? DEFAULT_CONFIG.maxHealingAttemptsPerSession,
       maxHealingAttemptsPerFingerprint: row.max_healing_attempts_per_fingerprint ?? DEFAULT_CONFIG.maxHealingAttemptsPerFingerprint,
@@ -842,6 +848,7 @@ export class SqliteStorage implements IStorage {
           auto_resolve_merge_conflicts,
           auto_create_releases,
           auto_update_docs,
+          include_repository_links_in_github_comments,
           auto_heal_ci,
           max_healing_attempts_per_session,
           max_healing_attempts_per_fingerprint,
@@ -853,7 +860,7 @@ export class SqliteStorage implements IStorage {
           deployment_check_poll_interval_ms,
           trusted_reviewers_json,
           ignored_bots_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           github_token = excluded.github_token,
           coding_agent = excluded.coding_agent,
@@ -865,6 +872,7 @@ export class SqliteStorage implements IStorage {
           auto_resolve_merge_conflicts = excluded.auto_resolve_merge_conflicts,
           auto_create_releases = excluded.auto_create_releases,
           auto_update_docs = excluded.auto_update_docs,
+          include_repository_links_in_github_comments = excluded.include_repository_links_in_github_comments,
           auto_heal_ci = excluded.auto_heal_ci,
           max_healing_attempts_per_session = excluded.max_healing_attempts_per_session,
           max_healing_attempts_per_fingerprint = excluded.max_healing_attempts_per_fingerprint,
@@ -888,6 +896,7 @@ export class SqliteStorage implements IStorage {
         Number(config.autoResolveMergeConflicts),
         Number(config.autoCreateReleases),
         Number(config.autoUpdateDocs),
+        Number(config.includeRepositoryLinksInGitHubComments),
         Number(config.autoHealCI),
         config.maxHealingAttemptsPerSession,
         config.maxHealingAttemptsPerFingerprint,
@@ -1469,7 +1478,7 @@ export class SqliteStorage implements IStorage {
     const row = this.get<ConfigRow>(`
       SELECT github_token, coding_agent, model, max_turns, batch_window_ms,
              poll_interval_ms, max_changes_per_run, auto_resolve_merge_conflicts, auto_create_releases,
-             auto_update_docs, auto_heal_ci, max_healing_attempts_per_session,
+             auto_update_docs, include_repository_links_in_github_comments, auto_heal_ci, max_healing_attempts_per_session,
              max_healing_attempts_per_fingerprint, max_concurrent_healing_runs, healing_cooldown_ms,
              auto_heal_deployments, deployment_check_delay_ms, deployment_check_timeout_ms,
              deployment_check_poll_interval_ms, trusted_reviewers_json, ignored_bots_json

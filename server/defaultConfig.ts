@@ -10,6 +10,7 @@ export const DEFAULT_CONFIG: Config = {
   autoResolveMergeConflicts: true,
   autoCreateReleases: true,
   autoUpdateDocs: true,
+  includeRepositoryLinksInGitHubComments: true,
   autoHealCI: false,
   maxHealingAttemptsPerSession: 3,
   maxHealingAttemptsPerFingerprint: 2,

@@ -400,6 +400,7 @@ export const configSchema = z.object({
   autoResolveMergeConflicts: z.boolean(),
   autoCreateReleases: z.boolean(),
   autoUpdateDocs: z.boolean(),
+  includeRepositoryLinksInGitHubComments: z.boolean(),
   autoHealCI: z.boolean(),
   maxHealingAttemptsPerSession: z.number(),
   maxHealingAttemptsPerFingerprint: z.number(),
