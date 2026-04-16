@@ -290,6 +290,36 @@ test("SqliteStorage returns defaults when singleton rows are missing", async () 
   }
 });
 
+test("SqliteStorage updateRepoSettings tracks a previously untracked repo", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codefactory-storage-"));
+  const storage = new SqliteStorage(root);
+
+  try {
+    const before = await storage.getConfig();
+    assert.deepEqual(before.watchedRepos, []);
+
+    const updated = await storage.updateRepoSettings("acme/widgets", {
+      autoCreateReleases: false,
+    });
+
+    assert.deepEqual(updated, {
+      repo: "acme/widgets",
+      autoCreateReleases: false,
+    });
+
+    const after = await storage.getConfig();
+    assert.deepEqual(after.watchedRepos, ["acme/widgets"]);
+
+    const repo = await storage.getRepoSettings("acme/widgets");
+    assert.deepEqual(repo, {
+      repo: "acme/widgets",
+      autoCreateReleases: false,
+    });
+  } finally {
+    storage.close();
+  }
+});
+
 test("SqliteStorage defaults watchEnabled to true for new PRs", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codefactory-storage-"));
   const storage = new SqliteStorage(root);
