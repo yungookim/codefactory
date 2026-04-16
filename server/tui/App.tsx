@@ -10,6 +10,7 @@ import { PrListPane } from "./components/PrListPane";
 import { PrDetailPane } from "./components/PrDetailPane";
 import { ContextPane } from "./components/ContextPane";
 import { Footer } from "./components/Footer";
+import { color, glyph } from "./theme";
 
 type AppProps = {
   runtime: TuiRuntime;
@@ -317,17 +318,20 @@ export default function App(props: AppProps) {
     }
 
     return {
-      list: undefined,
+      list: width,
       context: undefined,
     };
   }, [layoutMode]);
 
   if (layoutMode === "compact-warning") {
     return (
-      <Box flexDirection="column" borderStyle="single" paddingX={1}>
-        <Text bold>oh-my-pr tui</Text>
-        <Text>Window too narrow for the terminal UI.</Text>
-        <Text dimColor>Resize to at least 110 columns.</Text>
+      <Box flexDirection="column" borderStyle="round" borderColor={color.warn} paddingX={1}>
+        <Text>
+          <Text color={color.accent} bold>{glyph.focus} </Text>
+          <Text bold>oh-my-pr</Text>
+        </Text>
+        <Text color={color.warn}>Window too narrow for the terminal UI.</Text>
+        <Text color={color.muted}>Resize to at least 110 columns.</Text>
       </Box>
     );
   }
@@ -343,7 +347,8 @@ export default function App(props: AppProps) {
         contextMode={selection.contextMode}
       />
       {snapshot.loading ? (
-        <Box borderStyle="single" paddingX={1}>
+        <Box borderStyle="round" borderColor={color.muted} paddingX={1}>
+          <Text color={color.info}>{glyph.running} </Text>
           <Text>Loading TUI…</Text>
         </Box>
       ) : (

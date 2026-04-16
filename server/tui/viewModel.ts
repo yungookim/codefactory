@@ -154,3 +154,20 @@ export function wrapText(input: string, width: number): string[] {
 export function formatFooterHints(contextMode: "logs" | "ask" | "repos" | "settings"): string {
   return `Tab pane • arrows move • Enter select • r run • w watch • l logs • a ask • o repos • s settings • q quit • pane=${contextMode}`;
 }
+
+export type FooterHint = { key: string; label: string };
+
+export function getFooterHints(): FooterHint[] {
+  return [
+    { key: "Tab", label: "pane" },
+    { key: "↑↓", label: "move" },
+    { key: "⏎", label: "select" },
+    { key: "r", label: "run" },
+    { key: "w", label: "watch" },
+    { key: "l", label: "logs" },
+    { key: "a", label: "ask" },
+    { key: "o", label: "repos" },
+    { key: "s", label: "settings" },
+    { key: "q", label: "quit" },
+  ];
+}
