@@ -383,7 +383,7 @@ export default function App(props: AppProps) {
     return {
       widths: {
         list: width,
-        context: undefined,
+        context: width,
       },
       heights: {
         list: listHeight,
@@ -465,6 +465,7 @@ export default function App(props: AppProps) {
           contextMode={selection.contextMode}
           statusMessage={statusMessage}
           errorMessage={actionError ?? snapshot.error}
+          width={width}
         />
       )}
     </Box>
