@@ -312,7 +312,7 @@ export default function App(props: AppProps) {
   }, { isActive: true });
 
   const paneLayout = useMemo(() => {
-    const mainHeight = Math.max(layoutMode === "stacked" ? 18 : 12, height - 6);
+    const mainHeight = Math.max(layoutMode === "stacked" ? 22 : 12, height - 6);
 
     if (layoutMode === "full") {
       return {

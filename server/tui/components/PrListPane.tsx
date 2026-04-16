@@ -50,7 +50,7 @@ function PrRow(props: { pr: PR; selected: boolean; width: number }) {
       pr.title,
       badgesText,
     ].filter(Boolean).join(" "),
-    width,
+    width - 2,
   );
 
   return (

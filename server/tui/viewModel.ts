@@ -191,7 +191,7 @@ export function getViewportRange(count: number, selectedIndex: number, visibleCo
 }
 
 export function wrapText(input: string, width: number): string[] {
-  if (width <= 1) {
+  if (width < 1) {
     return input ? [input] : [""];
   }
 
