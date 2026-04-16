@@ -1,19 +1,44 @@
 import React from "react";
 import { Box, Text } from "ink";
-import { formatFooterHints } from "../viewModel";
+import { getFooterHints } from "../viewModel";
 import type { ContextMode } from "../useSelectionState";
+import { color, glyph } from "../theme";
 
-export function Footer(props: {
+type FooterProps = {
   contextMode: ContextMode;
   statusMessage: string | null;
   errorMessage: string | null;
-}) {
+};
+
+export function Footer(props: FooterProps) {
+  const hasError = Boolean(props.errorMessage);
+  const statusTone = hasError ? color.err : props.statusMessage ? color.ok : color.muted;
+  const statusText = props.errorMessage ?? props.statusMessage ?? "Ready";
+  const hints = getFooterHints();
+
   return (
-    <Box justifyContent="space-between" borderStyle="single" paddingX={1}>
-      <Text color={props.errorMessage ? "red" : "green"}>
-        {props.errorMessage ?? props.statusMessage ?? "Ready"}
-      </Text>
-      <Text dimColor>{formatFooterHints(props.contextMode)}</Text>
+    <Box
+      justifyContent="space-between"
+      borderStyle="round"
+      borderColor={color.muted}
+      paddingX={1}
+    >
+      <Box>
+        <Text color={statusTone}>{glyph.dot}</Text>
+        <Text> </Text>
+        <Text color={statusTone} bold={hasError}>
+          {statusText}
+        </Text>
+      </Box>
+      <Box>
+        {hints.map((hint, index) => (
+          <React.Fragment key={hint.key}>
+            <Text color={color.accent} inverse bold>{` ${hint.key} `}</Text>
+            <Text color={color.muted}>{` ${hint.label}`}</Text>
+            {index < hints.length - 1 && <Text color={color.muted}>{"  "}</Text>}
+          </React.Fragment>
+        ))}
+      </Box>
     </Box>
   );
 }
