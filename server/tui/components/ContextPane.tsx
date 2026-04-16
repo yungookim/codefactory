@@ -6,8 +6,9 @@ import { LogPane } from "./LogPane";
 import { AskPane } from "./AskPane";
 import { RepoManagerPane } from "./RepoManagerPane";
 import { SettingsPane } from "./SettingsPane";
+import { color } from "../theme";
 
-export function ContextPane(props: {
+type ContextPaneProps = {
   mode: ContextMode;
   active: boolean;
   width?: number;
@@ -18,11 +19,57 @@ export function ContextPane(props: {
   selectedContextIndex: number;
   inputMode: InputMode;
   inputValue: string;
-}) {
+};
+
+const TABS: Array<{ key: ContextMode; label: string; hint: string }> = [
+  { key: "logs", label: "logs", hint: "l" },
+  { key: "ask", label: "ask", hint: "a" },
+  { key: "repos", label: "repos", hint: "o" },
+  { key: "settings", label: "settings", hint: "s" },
+];
+
+function TabStrip(props: { mode: ContextMode; active: boolean }) {
   return (
-    <Box flexDirection="column" borderStyle="single" paddingX={1} width={props.width}>
-      <Text bold color={props.active ? "cyan" : undefined}>Context</Text>
-      <Text dimColor>logs | ask | repos | settings</Text>
+    <Box>
+      {TABS.map((tab, index) => {
+        const isActive = tab.key === props.mode;
+        return (
+          <React.Fragment key={tab.key}>
+            {isActive ? (
+              <Text color={props.active ? color.accent : color.muted} inverse bold>
+                {` ${tab.label} `}
+              </Text>
+            ) : (
+              <Text color={color.muted}>
+                {` ${tab.label} `}
+                <Text dimColor>[{tab.hint}]</Text>
+              </Text>
+            )}
+            {index < TABS.length - 1 && <Text color={color.muted}> </Text>}
+          </React.Fragment>
+        );
+      })}
+    </Box>
+  );
+}
+
+export function ContextPane(props: ContextPaneProps) {
+  const borderColor = props.active ? color.accent : color.muted;
+
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle={props.active ? "round" : "single"}
+      borderColor={borderColor}
+      paddingX={1}
+      width={props.width}
+    >
+      <Box marginBottom={1} justifyContent="space-between">
+        <Text bold color={props.active ? color.accent : undefined}>
+          Context
+        </Text>
+      </Box>
+      <TabStrip mode={props.mode} active={props.active} />
       <Box marginTop={1} flexDirection="column">
         {props.mode === "logs" && <LogPane logs={props.logs} />}
         {props.mode === "ask" && (
