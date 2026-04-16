@@ -759,13 +759,14 @@ function appendStatusLine(existingBody: string, line: string): string {
 }
 
 function splitAppCommentFooter(body: string): { bodyWithoutFooter: string; hadFooter: boolean } {
-  if (body === APP_COMMENT_FOOTER) {
+  const trimmedBody = body.trimEnd();
+  if (trimmedBody === APP_COMMENT_FOOTER) {
     return { bodyWithoutFooter: "", hadFooter: true };
   }
 
-  const suffix = `\n\n${APP_COMMENT_FOOTER}`;
-  if (body.endsWith(suffix)) {
-    return { bodyWithoutFooter: body.slice(0, -suffix.length), hadFooter: true };
+  const suffix = "\n\n" + APP_COMMENT_FOOTER;
+  if (trimmedBody.endsWith(suffix)) {
+    return { bodyWithoutFooter: trimmedBody.slice(0, -suffix.length), hadFooter: true };
   }
 
   return { bodyWithoutFooter: body, hadFooter: false };
