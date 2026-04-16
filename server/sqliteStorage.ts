@@ -1,7 +1,7 @@
 import { mkdirSync } from "fs";
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
-import { backgroundJobStatusEnum, docsAssessmentSchema, feedbackStatusEnum, watchedRepoSchema } from "@shared/schema";
+import { backgroundJobStatusEnum, docsAssessmentSchema, feedbackStatusEnum } from "@shared/schema";
 import type {
   AgentRun,
   AgentRunStatus,
@@ -39,6 +39,7 @@ import {
   applyPRUpdate,
   applyReleaseRunUpdate,
   applySocialChangelogUpdate,
+  applyWatchedRepoUpdate,
   createCheckSnapshot,
   createDeploymentHealingSession,
   createLogEntry,
@@ -924,10 +925,10 @@ export class SqliteStorage implements IStorage {
   }
 
   private parseWatchedRepoRow(row: WatchedRepoRow): WatchedRepo {
-    return watchedRepoSchema.parse({
+    return {
       repo: row.repo,
-      autoCreateReleases: Boolean(row.auto_create_releases ?? 1),
-    });
+      autoCreateReleases: Boolean(row.auto_create_releases),
+    };
   }
 
   private getWatchedRepoRows(): WatchedRepoRow[] {
@@ -1534,11 +1535,7 @@ export class SqliteStorage implements IStorage {
       repo,
       autoCreateReleases: true,
     };
-    const next = watchedRepoSchema.parse({
-      ...existing,
-      ...updates,
-      repo,
-    });
+    const next = applyWatchedRepoUpdate(existing, updates);
 
     this.withWriteTransaction(() => {
       this.run(

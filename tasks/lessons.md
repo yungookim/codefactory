@@ -1,5 +1,13 @@
 # Lessons Learned
 
+## 2026-04-16 - Assume GitHub email privacy is enforced for this repo
+- Pattern: I created the branch commit with `yungookim@gmail.com`, and GitHub rejected the push for `oh-my-pr` with `GH007` because the repository/account privacy settings do not allow publishing that private email.
+- Rule: In `oh-my-pr`, prepare commits with the GitHub noreply email by default before pushing branches unless the user explicitly wants a different public identity.
+- Prevention checklist:
+  - Before the first commit intended for GitHub, check whether the local git email is a private address and switch to the GitHub noreply identity for the commit if needed.
+  - Treat `oh-my-pr` as privacy-protected by default; do not assume a normal push will succeed with `yungookim@gmail.com`.
+  - If an existing commit already uses the private address, ask before rewriting it, but avoid the rewrite path by setting the correct identity up front on new commits.
+
 ## 2026-04-16 - Surface requested onboarding guidance explicitly
 - Pattern: I cleaned up onboarding around checklist steps and install actions, but the user then had to ask for the multi-provider AI review tip and provider links to be shown explicitly during onboarding.
 - Rule: When onboarding touches a setup capability that depends on third-party providers, include the requested explanatory tip and concrete provider links in the onboarding UI instead of assuming buttons or inferred context are sufficient.
