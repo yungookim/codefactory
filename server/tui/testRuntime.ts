@@ -293,6 +293,7 @@ export function createTestRuntime(params?: Partial<TestRuntimeState>): TestTuiRu
       autoResolveMergeConflicts: true,
       autoCreateReleases: true,
       autoUpdateDocs: true,
+      includeRepositoryLinksInGitHubComments: true,
       autoHealCI: false,
       maxHealingAttemptsPerSession: 3,
       maxHealingAttemptsPerFingerprint: 2,

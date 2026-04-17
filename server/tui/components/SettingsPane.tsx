@@ -13,6 +13,7 @@ export function SettingsPane(props: {
     { label: "Coding agent", value: props.config?.codingAgent ?? "claude" },
     { label: "Auto-resolve conflicts", value: Boolean(props.config?.autoResolveMergeConflicts) },
     { label: "Auto-update docs", value: Boolean(props.config?.autoUpdateDocs) },
+    { label: "Repo links in PR comments", value: Boolean(props.config?.includeRepositoryLinksInGitHubComments) },
   ];
 
   return (

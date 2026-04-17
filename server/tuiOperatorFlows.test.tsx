@@ -81,6 +81,15 @@ test("tui settings and watch controls mutate the runtime", async () => {
     await flush();
     assert.match(ui.lastFrame() ?? "", /Coding agent/);
     assert.match(ui.lastFrame() ?? "", /codex/);
+
+    ui.stdin.write("\u001B[B");
+    ui.stdin.write("\u001B[B");
+    ui.stdin.write("\u001B[B");
+    await flush();
+    ui.stdin.write("\r");
+    await flush();
+    assert.match(ui.lastFrame() ?? "", /Repo links in PR/);
+    assert.match(ui.lastFrame() ?? "", /comments[\s\S]*off/);
   } finally {
     ui.unmount();
   }

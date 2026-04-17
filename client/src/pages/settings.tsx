@@ -261,6 +261,26 @@ export default function Settings() {
                 )}
               </div>
 
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm">Repository links in PR comments</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Link oh-my-pr back to its repository in agent-authored GitHub PR comments and footers.
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={config?.includeRepositoryLinksInGitHubComments ?? true}
+                  onChange={(e) =>
+                    updateConfigMutation.mutate({
+                      includeRepositoryLinksInGitHubComments: e.target.checked,
+                    })
+                  }
+                  disabled={updateConfigMutation.isPending}
+                  className="h-4 w-4 accent-foreground"
+                />
+              </div>
+
               <div>
                 <div className="text-sm">Trusted reviewers</div>
                 <div className="text-[11px] text-muted-foreground">

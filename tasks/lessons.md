@@ -1,5 +1,14 @@
 # Lessons Learned
 
+## 2026-04-16 - Make visible automation/comment behavior user-configurable when reasonable
+- Pattern: I implemented repository-linked GitHub PR comment branding as always-on behavior, then the user corrected the requirement to allow turning it off in Settings.
+- Rule: When adding visible automation output behavior that changes how the product speaks on a user's behalf, decide before closing whether it should be user-configurable.
+- Prevention checklist:
+  - Classify new outward-facing automation behavior as required, optional, or policy-driven before implementing it.
+  - If the behavior affects GitHub comments, commit messages, or other user-visible agent output, check whether a config toggle is appropriate.
+  - Thread new config-backed behavior through defaults, persistence, and every settings surface that already edits related config.
+  - Add enabled and disabled regression coverage when the behavior changes rendered output.
+
 ## 2026-04-16 - Mirror durable repo rules into AGENTS.md, not just lessons
 - Pattern: After the email-privacy push failure, I recorded the rule in `tasks/lessons.md`, but the user had to explicitly ask me to add it to `AGENTS.md` too so future sessions would see it in the main repo instructions.
 - Rule: When a correction establishes a durable repository workflow rule, update both `tasks/lessons.md` and `AGENTS.md` if the rule belongs in the repo-level operating instructions.

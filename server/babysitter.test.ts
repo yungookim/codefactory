@@ -4,7 +4,7 @@ import path from "path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { CheckSnapshot, FeedbackItem } from "@shared/schema";
-import { PRBabysitter } from "./babysitter";
+import { APP_COMMENT_FOOTER, PRBabysitter } from "./babysitter";
 import { BackgroundJobQueue } from "./backgroundJobQueue";
 import { MemStorage } from "./memoryStorage";
 
@@ -1073,6 +1073,7 @@ test("babysitPR uses a CODEFACTORY_HOME worktree, passes GitHub context, and ver
   let receivedEnv: NodeJS.ProcessEnv | undefined;
   let feedbackFetchCount = 0;
   const postedFollowUps: Array<{ id: string; body: string }> = [];
+  const postedAgentComments: string[] = [];
   const resolvedThreads: string[] = [];
   const pullSummary = makePullSummary(pr);
   const followUp = makeFeedbackItem({
@@ -1121,6 +1122,9 @@ test("babysitPR uses a CODEFACTORY_HOME worktree, passes GitHub context, and ver
       },
       resolveGitHubAuthToken: async () => "test-token",
       addReactionToComment: async () => {},
+      postPRComment: async (_octokit: unknown, _parsed: unknown, body: string) => {
+        postedAgentComments.push(body);
+      },
       postStatusReplyForFeedbackItem: async () => null,
       updateStatusReply: async () => {},
     },
@@ -1179,9 +1183,16 @@ test("babysitPR uses a CODEFACTORY_HOME worktree, passes GitHub context, and ver
   assert.deepEqual(postedFollowUps, [
     {
       id: "gh-review-comment-1",
-      body: "Addressed in commit `def456` by the latest babysitter run.\n\nRenamed the variable from `foo` to `bar` as requested.\n\ncodefactory-feedback:gh-review-comment-1",
+      body: `Addressed in commit \`def456\` by the latest babysitter run.\n\nRenamed the variable from \`foo\` to \`bar\` as requested.\n\n<!-- codefactory-feedback:gh-review-comment-1 -->\n\n${APP_COMMENT_FOOTER}`,
     },
   ]);
+  assert.equal(postedAgentComments.length, 1);
+  assert.match(
+    postedAgentComments[0] || "",
+    /\*\*\[oh-my-pr\]\(https:\/\/github.com\/yungookim\/oh-my-pr\)\*\* dispatched `codex`/,
+  );
+  assert.doesNotMatch(postedAgentComments[0] || "", /\*\*CodeFactory\*\*/);
+  assert.equal(postedAgentComments[0]?.endsWith(APP_COMMENT_FOOTER), true);
   assert.deepEqual(resolvedThreads, ["PRRT_kwDO_example"]);
   assert.ok(logs.some((log) => log.phase === "worktree" && log.message.includes(`Preparing worktree in ${worktreeRoot}`)));
   assert.ok(logs.some((log) => log.phase === "github.followup" && log.message.includes("GitHub follow-up complete for gh-review-comment-1")));
@@ -1195,6 +1206,160 @@ test("babysitPR uses a CODEFACTORY_HOME worktree, passes GitHub context, and ver
   assert.equal(receivedEnv?.GH_TOKEN, "test-token");
 
   delete process.env.CODEFACTORY_HOME;
+});
+
+test("babysitPR omits repository links in GitHub comments when disabled", async () => {
+  const storage = new MemStorage();
+  await storage.updateConfig({
+    autoUpdateDocs: false,
+    includeRepositoryLinksInGitHubComments: false,
+  });
+  const existingItem = makeFeedbackItem();
+  const pr = await storage.addPR({
+    number: 106,
+    title: "Verbose PR",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "watching",
+    feedbackItems: [existingItem],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "codefactory-home-"));
+  process.env.CODEFACTORY_HOME = worktreeRoot;
+
+  try {
+    let feedbackFetchCount = 0;
+    const initialStatusBodies: Array<{ id: string; body: string }> = [];
+    const statusReplyRefs = new Map<
+      string,
+      { commentDatabaseId: number; replyKind: FeedbackItem["replyKind"]; body: string }
+    >();
+    const postedFollowUps: Array<{ id: string; body: string }> = [];
+    const postedAgentComments: string[] = [];
+    const pullSummary = makePullSummary(pr);
+    const followUp = makeFeedbackItem({
+      id: "gh-review-comment-2",
+      author: "code-factory",
+      body: `Implemented the requested rename.\n\n<!-- ${existingItem.auditToken} -->`,
+      bodyHtml: "<p>Implemented the requested rename.</p>",
+      sourceId: "2",
+      sourceNodeId: "PRRC_kwDO_followup",
+      sourceUrl: "https://github.com/alex-morgan-o/lolodex/pull/106#discussion_r2",
+      threadId: existingItem.threadId,
+      threadResolved: true,
+      createdAt: new Date().toISOString(),
+      auditToken: "codefactory-feedback:gh-review-comment-2",
+      decision: null,
+      decisionReason: null,
+      action: null,
+      status: "pending",
+      statusReason: null,
+    });
+
+    const babysitter = new PRBabysitter(
+      storage,
+      {
+        buildOctokit: async () => ({}) as never,
+        fetchFeedbackItemsForPR: async () => {
+          feedbackFetchCount += 1;
+          if (feedbackFetchCount === 1) {
+            return [existingItem];
+          }
+
+          return [
+            { ...existingItem, threadResolved: true },
+            followUp,
+          ];
+        },
+        fetchPullSummary: async () => pullSummary,
+        listFailingStatuses: async () => [],
+        checkCISettled: async () => true,
+        listOpenPullsForRepo: async () => [],
+        postFollowUpForFeedbackItem: async (_octokit, _parsed, item, body) => {
+          postedFollowUps.push({ id: item.id, body });
+        },
+        resolveReviewThread: async () => undefined,
+        resolveGitHubAuthToken: async () => "test-token",
+        addReactionToComment: async () => {},
+        postPRComment: async (_octokit, _parsed, body) => {
+          postedAgentComments.push(body);
+        },
+        postStatusReplyForFeedbackItem: async (_octokit, _parsed, item, body) => {
+          initialStatusBodies.push({ id: item.id, body });
+          const ref = {
+            commentDatabaseId: Number(item.sourceId),
+            replyKind: item.replyKind,
+            body,
+          };
+          statusReplyRefs.set(item.id, ref);
+          return ref;
+        },
+        updateStatusReply: async (_octokit, _parsed, ref, body) => {
+          ref.body = body;
+        },
+      },
+      {
+        resolveAgent: async () => "codex",
+        ciPollIntervalMs: 0,
+        evaluateFixNecessityWithAgent: async () => ({
+          needsFix: true,
+          reason: "Comment requires a code change",
+        }),
+        applyFixesWithAgent: async ({ onStdoutChunk }) => {
+          const agentOutput = [
+            "FEEDBACK_SUMMARY_START codefactory-feedback:gh-review-comment-1",
+            "Renamed the variable from `foo` to `bar` as requested.",
+            "FEEDBACK_SUMMARY_END",
+          ].join("\n") + "\n";
+          onStdoutChunk?.(agentOutput);
+          return {
+            code: 0,
+            stdout: agentOutput,
+            stderr: "",
+          };
+        },
+        runCommand: makeGitRunCommand({
+          localHeadSha: "def456",
+          remoteHeadSha: "def456",
+        }),
+      },
+    );
+
+    await babysitter.babysitPR(pr.id, "codex");
+
+    const expectedAcceptedStatus = "\u23f3 **Accepted** \u2014 this comment requires code changes. Queuing fix...";
+    const expectedFinalStatusBody = [
+      expectedAcceptedStatus,
+      "\ud83e\uddf0 **Agent running** \u2014 `codex` is working on the fix...",
+      "\u2705 **Agent completed** \u2014 verifying changes...",
+      "\ud83c\udf89 **Resolved** \u2014 addressed in commit `def456`.",
+    ].join("\n");
+
+    assert.deepEqual(initialStatusBodies, [
+      { id: existingItem.id, body: expectedAcceptedStatus },
+    ]);
+    assert.equal(statusReplyRefs.get(existingItem.id)?.body, expectedFinalStatusBody);
+    assert.deepEqual(postedFollowUps, [
+      {
+        id: "gh-review-comment-1",
+        body: "Addressed in commit `def456` by the latest babysitter run.\n\nRenamed the variable from `foo` to `bar` as requested.\n\n<!-- codefactory-feedback:gh-review-comment-1 -->",
+      },
+    ]);
+    assert.equal(postedAgentComments.length, 1);
+    assert.match(postedAgentComments[0] || "", /\*\*oh-my-pr\*\* dispatched `codex`/);
+    assert.doesNotMatch(postedAgentComments[0] || "", /\[oh-my-pr\]\(https:\/\/github.com\/yungookim\/oh-my-pr\)/);
+    assert.equal(postedAgentComments[0]?.includes(APP_COMMENT_FOOTER), false);
+  } finally {
+    delete process.env.CODEFACTORY_HOME;
+  }
 });
 
 test("babysitPR centralizes status replies, logs best-effort failures, and updates replies in parallel", async () => {
@@ -1340,12 +1505,15 @@ test("babysitPR centralizes status replies, logs best-effort failures, and updat
     await babysitter.babysitPR(pr.id, "codex");
 
     const logs = await storage.getLogs(pr.id);
-    const expectedAcceptedStatus = "\u23f3 **Accepted** \u2014 this comment requires code changes. Queuing fix...";
+    const expectedAcceptedLine = "\u23f3 **Accepted** \u2014 this comment requires code changes. Queuing fix...";
+    const expectedAcceptedStatus = `${expectedAcceptedLine}\n\n${APP_COMMENT_FOOTER}`;
     const expectedFinalStatusBody = [
-      expectedAcceptedStatus,
+      expectedAcceptedLine,
       "\ud83e\uddf0 **Agent running** \u2014 `codex` is working on the fix...",
       "\u2705 **Agent completed** \u2014 verifying changes...",
       "\ud83c\udf89 **Resolved** \u2014 addressed in commit `def456`.",
+      "",
+      APP_COMMENT_FOOTER,
     ].join("\n");
 
     assert.deepEqual(initialStatusBodies, [
@@ -2765,7 +2933,7 @@ test("babysitPR retries accepted in-progress feedback items that still need GitH
   assert.deepEqual(postedFollowUps, [
     {
       id: "gh-review-comment-1",
-      body: "Addressed in commit `abc123` by the latest babysitter run.\n\ncodefactory-feedback:gh-review-comment-1",
+      body: `Addressed in commit \`abc123\` by the latest babysitter run.\n\n<!-- codefactory-feedback:gh-review-comment-1 -->\n\n${APP_COMMENT_FOOTER}`,
     },
   ]);
   assert.deepEqual(resolvedThreads, ["PRRT_kwDO_example"]);
@@ -3294,7 +3462,7 @@ test("babysitPR reposts GitHub follow-up when an earlier audit trail used the wr
   assert.deepEqual(postedFollowUps, [
     {
       id: "gh-review-comment-1",
-      body: "Addressed in commit `abc123` by the latest babysitter run.\n\ncodefactory-feedback:gh-review-comment-1",
+      body: `Addressed in commit \`abc123\` by the latest babysitter run.\n\n<!-- codefactory-feedback:gh-review-comment-1 -->\n\n${APP_COMMENT_FOOTER}`,
     },
   ]);
   assert.deepEqual(resolvedThreads, ["PRRT_kwDO_example"]);
@@ -4053,7 +4221,8 @@ test("babysitPR escalates a healing session when the repaired commit still has t
   assert.equal(attempts.length, 1);
   assert.equal(attempts[0]?.status, "verified");
   assert.ok((attempts[0]?.improvementScore ?? 1) <= 0);
-  assert.ok(postedComments.some((body) => body.includes("CodeFactory CI Alert")));
+  assert.ok(postedComments.some((body) => body.includes("[oh-my-pr](https://github.com/yungookim/oh-my-pr) CI Alert")));
+  assert.ok(postedComments.every((body) => body.endsWith(APP_COMMENT_FOOTER)));
 
   const updated = await storage.getPR(pr.id);
   assert.equal(updated?.testsPassed, false);
