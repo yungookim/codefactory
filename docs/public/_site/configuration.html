@@ -250,6 +250,17 @@
 <li><strong>Deployment healing</strong> — Not yet exposed in the dashboard; use <code>PATCH /api/config</code> for the deployment-healing keys listed below.</li>
 <li><strong>Theme</strong> — Toggle between light and dark mode.</li>
 </ul>
+<h2>App Update Banner</h2>
+<p>On builds where <code>APP_VERSION</code> is a stable semver string, the dashboard calls
+<code>GET /api/app-update</code> and compares the running version to the latest stable
+GitHub release for <code>yungookim/oh-my-pr</code>. When a newer release exists, the
+dashboard shows an update banner with a link to the matching release page.</p>
+<p>Selecting <code>dismiss for now</code> stores a release-scoped key in browser
+<code>sessionStorage</code>, so the banner stays hidden only for the current browser
+session and only for that specific <code>latestVersion</code>. Opening a new browser
+session or publishing a newer release makes the banner eligible to appear
+again. If the app is running a non-semver build such as <code>dev</code>, or if the
+release check fails, the banner stays hidden and the API falls back quietly.</p>
 <h2>PR Comment Branding</h2>
 <p>Agent-authored GitHub PR comments posted by the babysitter — follow-up replies on review threads, echoed <code>/codefactory</code> agent-command acknowledgements, status updates, and CI alerts — are branded as oh-my-pr. Each comment references the app name and, by default, appends a <code>Posted by [oh-my-pr](https://github.com/yungookim/oh-my-pr)</code> footer that links back to this repository.</p>
 <table>
