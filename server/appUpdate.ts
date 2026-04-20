@@ -14,6 +14,17 @@ type GitHubLatestReleaseResponse = {
 };
 
 export type AppUpdateChecker = (currentVersion: string) => Promise<AppUpdateStatus>;
+type AppUpdateCheckerOptions = {
+  cacheTtlMs?: number;
+  now?: () => number;
+};
+
+type CachedAppUpdateStatus = {
+  status: AppUpdateStatus;
+  expiresAt: number;
+};
+
+export const APP_UPDATE_CACHE_TTL_MS = 60 * 60 * 1000;
 
 function compareSemverTags(left: string, right: string): number {
   const leftVersion = parseSemverTag(left);
@@ -84,6 +95,41 @@ export async function fetchAppUpdateStatus(
   }
 }
 
-export function createAppUpdateChecker(fetchImpl: FetchLike = fetch): AppUpdateChecker {
-  return (currentVersion: string) => fetchAppUpdateStatus(currentVersion, fetchImpl);
+export function createAppUpdateChecker(
+  fetchImpl: FetchLike = fetch,
+  options: AppUpdateCheckerOptions = {},
+): AppUpdateChecker {
+  const cacheTtlMs = options.cacheTtlMs ?? APP_UPDATE_CACHE_TTL_MS;
+  const now = options.now ?? Date.now;
+  const cache = new Map<string, CachedAppUpdateStatus>();
+  const inFlight = new Map<string, Promise<AppUpdateStatus>>();
+
+  return async (currentVersion: string) => {
+    const cacheKey = currentVersion.trim();
+    const cached = cache.get(cacheKey);
+    if (cached && cached.expiresAt > now()) {
+      return cached.status;
+    }
+
+    const pendingRequest = inFlight.get(cacheKey);
+    if (pendingRequest) {
+      return pendingRequest;
+    }
+
+    // Deduplicate concurrent checks so bursts still consume a single GitHub API call.
+    const request = fetchAppUpdateStatus(cacheKey, fetchImpl).then((status) => {
+      cache.set(cacheKey, {
+        status,
+        expiresAt: now() + cacheTtlMs,
+      });
+      inFlight.delete(cacheKey);
+      return status;
+    }, (error: unknown) => {
+      inFlight.delete(cacheKey);
+      throw error;
+    });
+
+    inFlight.set(cacheKey, request);
+    return request;
+  };
 }
