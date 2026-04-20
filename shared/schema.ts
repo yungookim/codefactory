@@ -421,3 +421,11 @@ export const watchedRepoSchema = z.object({
   autoCreateReleases: z.boolean(),
 });
 export type WatchedRepo = z.infer<typeof watchedRepoSchema>;
+
+export const appUpdateStatusSchema = z.object({
+  currentVersion: z.string(),
+  latestVersion: z.string().nullable(),
+  latestReleaseUrl: z.string(),
+  updateAvailable: z.boolean(),
+});
+export type AppUpdateStatus = z.infer<typeof appUpdateStatusSchema>;
