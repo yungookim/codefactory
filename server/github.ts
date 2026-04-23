@@ -199,15 +199,6 @@ type BuildOctokitDeps = GitHubAuthResolutionDeps & {
   requestFetch?: typeof fetch;
 };
 
-function cacheGhAuthToken(token: string, now: number): string {
-  cachedGhAuthToken = {
-    token,
-    expiresAt: now + GH_AUTH_CACHE_TTL_MS,
-  };
-  ghAuthFailureCooldownUntil = 0;
-  return token;
-}
-
 function parseGhAuthStatusToken(stdout: string): string | undefined {
   let activeAccount = false;
 
@@ -227,23 +218,8 @@ function parseGhAuthStatusToken(stdout: string): string | undefined {
   return undefined;
 }
 
-function parseTokenFromAuthorizationHeader(authorization: string | null | undefined): string | undefined {
-  if (!authorization) {
-    return undefined;
-  }
-
-  const trimmed = authorization.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-  const match = trimmed.match(/^(?:token|bearer)\s+(.+)$/i);
-  return match?.[1]?.trim() || trimmed;
-}
-
-function isUnauthorizedGitHubError(error: unknown): error is GitHubErrorLike {
-  return typeof (error as GitHubErrorLike | undefined)?.status === "number"
-    && (error as GitHubErrorLike).status === 401;
+function isUnauthorized(error: unknown): boolean {
+  return (error as { status?: number } | undefined)?.status === 401;
 }
 
 async function resolveGhAuthToken(
@@ -254,30 +230,36 @@ async function resolveGhAuthToken(
   const now = nowFn();
   const ignoreCache = deps.ignoreCache ?? false;
 
-  if (!ignoreCache && cachedGhAuthToken && cachedGhAuthToken.expiresAt > now) {
-    return cachedGhAuthToken.token;
+  if (!ignoreCache) {
+    if (cachedGhAuthToken && cachedGhAuthToken.expiresAt > now) {
+      return cachedGhAuthToken.token;
+    }
+    if (ghAuthFailureCooldownUntil > now) {
+      return undefined;
+    }
   }
 
-  if (!ignoreCache && ghAuthFailureCooldownUntil > now) {
-    return undefined;
-  }
+  const persist = (token: string): string => {
+    if (ignoreCache) return token;
+    cachedGhAuthToken = { token, expiresAt: now + GH_AUTH_CACHE_TTL_MS };
+    ghAuthFailureCooldownUntil = 0;
+    return token;
+  };
 
-  const directResult = await runCommandFn("gh", ["auth", "token"], {
-    timeoutMs: 4000,
-  });
+  const directResult = await runCommandFn("gh", ["auth", "token"], { timeoutMs: 4000 });
   const directToken = directResult.stdout.trim();
   if (directResult.code === 0 && directToken) {
-    return ignoreCache ? directToken : cacheGhAuthToken(directToken, now);
+    return persist(directToken);
   }
 
-  const statusResult = await runCommandFn("gh", ["auth", "status", "--hostname", "github.com", "--show-token"], {
-    timeoutMs: 4000,
-  });
-  const statusToken = statusResult.code === 0
-    ? parseGhAuthStatusToken(statusResult.stdout)
-    : undefined;
-  if (statusToken) {
-    return ignoreCache ? statusToken : cacheGhAuthToken(statusToken, now);
+  const statusResult = await runCommandFn(
+    "gh",
+    ["auth", "status", "--hostname", "github.com", "--show-token"],
+    { timeoutMs: 4000 },
+  );
+  if (statusResult.code === 0) {
+    const statusToken = parseGhAuthStatusToken(statusResult.stdout);
+    if (statusToken) return persist(statusToken);
   }
 
   if (!ignoreCache) {
@@ -494,8 +476,6 @@ export async function buildOctokit(
 ): Promise<Octokit> {
   const envToken = process.env.GITHUB_TOKEN?.trim();
   const configuredToken = config.githubToken?.trim();
-  const ghAuthToken = !envToken ? await resolveGhAuthToken(deps) : undefined;
-  const auth = envToken || configuredToken || ghAuthToken;
   const buildClient = (authToken?: string) => new Octokit({
     auth: authToken,
     request: {
@@ -505,35 +485,25 @@ export async function buildOctokit(
       },
     },
   });
-  const octokit = buildClient(auth);
-  const fallbackOctokit = configuredToken && ghAuthToken && ghAuthToken !== configuredToken
-    ? buildClient(ghAuthToken)
-    : null;
 
-  if (fallbackOctokit) {
+  const primaryToken = envToken || configuredToken || (await resolveGhAuthToken(deps));
+  const octokit = buildClient(primaryToken);
+
+  if (!envToken && configuredToken) {
+    let fallbackOctokit: Octokit | null = null;
     octokit.hook.wrap("request", async (request, options) => {
       try {
         return await request(options);
       } catch (error) {
-        if (!isUnauthorizedGitHubError(error)) {
-          throw error;
-        }
+        if (!isUnauthorized(error)) throw error;
 
-        const currentToken = parseTokenFromAuthorizationHeader(
-          new Headers(options.headers as HeadersInit).get("authorization"),
-        );
-        if (currentToken && currentToken !== configuredToken) {
-          throw error;
-        }
+        const ghAuthToken = await resolveGhAuthToken(deps);
+        if (!ghAuthToken || ghAuthToken === configuredToken) throw error;
 
-        const { request: _request, ...retryOptions } = options;
-        const retryHeaders = new Headers(retryOptions.headers as HeadersInit);
-        retryHeaders.delete("authorization");
-
-        return fallbackOctokit.request({
-          ...retryOptions,
-          headers: Object.fromEntries(retryHeaders.entries()),
-        });
+        fallbackOctokit ??= buildClient(ghAuthToken);
+        const { request: _r, ...retryOptions } = options;
+        const { authorization: _a, ...headers } = (retryOptions.headers ?? {}) as Record<string, string>;
+        return fallbackOctokit.request({ ...retryOptions, headers });
       }
     });
   }
