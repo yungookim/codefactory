@@ -14,6 +14,8 @@ oh-my-pr is a local-first GitHub PR babysitter. It watches the pull requests you
 
 If you regularly lose time to review comments, flaky checks, merge conflicts, and back-and-forth cleanup before merge, this is the tool for that.
 
+<img width="1365" height="686" alt="Code Factory dashboard" src="https://github.com/user-attachments/assets/66dfa082-c732-4989-8b05-f19aa550acb5" />
+
 ## Why It Exists
 
 Pull requests often stall for boring reasons:

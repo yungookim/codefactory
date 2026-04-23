@@ -323,3 +323,11 @@
   - Favor outcome-level bullets such as "replies on your behalf" and "creates releases automatically" over only implementation-level bullets such as queues, worktrees, or storage.
   - Compare the rewritten feature summary against release docs, onboarding copy, and settings surfaces to catch dropped capabilities.
   - Treat outbound automation and shipping automation as first-class behaviors in summaries because they answer common buyer objections.
+
+## 2026-04-22 - Keep the product screenshot above the README rationale section
+- Pattern: After simplifying the README, I removed the app screenshot from the top flow and the user had to correct me to keep it before `Why It Exists`.
+- Rule: When tightening the README for this repo, keep the main app screenshot in the top section as proof of the product before the rationale/details sections unless the user explicitly asks to remove or relocate it.
+- Prevention checklist:
+  - Treat the main app screenshot as part of the README narrative, not decorative filler.
+  - When reorganizing the top of the README, verify the order is pitch, product proof, then rationale.
+  - If I remove or relocate a high-signal screenshot, call it out explicitly before finalizing instead of assuming the user wants a text-only intro.
