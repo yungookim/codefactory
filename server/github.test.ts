@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { Config, FeedbackItem } from "@shared/schema";
 import {
   buildGitHubCloneUrl,
+  buildOctokit,
   GitHubIntegrationError,
   buildFeedbackAuditToken,
   checkOnboardingStatus,
@@ -22,6 +23,7 @@ import {
   postFollowUpForFeedbackItem,
   postStatusReplyForFeedbackItem,
   resolveNextSemverTag,
+  resolveGitHubAuthToken,
   resolveReviewThread,
   selectLatestSemverTag,
   updateStatusReply,
@@ -70,6 +72,169 @@ function makeFeedbackItem(overrides: Partial<FeedbackItem> = {}): FeedbackItem {
     ...overrides,
   };
 }
+
+function readAuthorizationHeader(input: string | URL | Request, init?: RequestInit): string | null {
+  if (init?.headers) {
+    return new Headers(init.headers).get("authorization");
+  }
+
+  if (input instanceof Request) {
+    return input.headers.get("authorization");
+  }
+
+  return null;
+}
+
+test("resolveGitHubAuthToken falls back to gh auth status when gh auth token is unavailable", async () => {
+  const originalEnvToken = process.env.GITHUB_TOKEN;
+  delete process.env.GITHUB_TOKEN;
+  let callIndex = 0;
+
+  try {
+    const token = await resolveGitHubAuthToken(
+      config,
+      {
+        ignoreCache: true,
+        nowFn: () => Number.MAX_SAFE_INTEGER / 2,
+        runCommandFn: async (_command, args) => {
+          callIndex += 1;
+
+          if (callIndex === 1) {
+            assert.deepEqual(args, ["gh", "auth", "token"].slice(1));
+            return {
+              stdout: "",
+              stderr: "no oauth token found for github.com",
+              code: 1,
+            };
+          }
+
+          assert.deepEqual(args, ["gh", "auth", "status", "--hostname", "github.com", "--show-token"].slice(1));
+          return {
+            stdout: `github.com
+  ✓ Logged in to github.com account octo (keyring)
+  - Active account: true
+  - Git operations protocol: https
+  - Token: gho_status_token
+  - Token scopes: 'repo'`,
+            stderr: "",
+            code: 0,
+          };
+        },
+      },
+    );
+
+    assert.equal(token, "gho_status_token");
+    assert.equal(callIndex, 2);
+  } finally {
+    if (originalEnvToken === undefined) {
+      delete process.env.GITHUB_TOKEN;
+    } else {
+      process.env.GITHUB_TOKEN = originalEnvToken;
+    }
+  }
+});
+
+test("buildOctokit retries once with gh auth when the saved github token gets 401", async () => {
+  const originalEnvToken = process.env.GITHUB_TOKEN;
+  delete process.env.GITHUB_TOKEN;
+  const authHeaders: string[] = [];
+
+  try {
+    const octokit = await buildOctokit(
+      {
+        ...config,
+        githubToken: "ghp_saved_token",
+      },
+      {
+        ignoreCache: true,
+        nowFn: () => Number.MAX_SAFE_INTEGER / 2,
+        runCommandFn: async (_command, args) => {
+          assert.deepEqual(args, ["auth", "token"]);
+          return {
+            stdout: "gho_cli_token\n",
+            stderr: "",
+            code: 0,
+          };
+        },
+        requestFetch: async (input, init) => {
+          authHeaders.push(readAuthorizationHeader(input, init) ?? "");
+
+          if (authHeaders.length === 1) {
+            return new Response(JSON.stringify({ message: "Bad credentials" }), {
+              status: 401,
+              headers: { "content-type": "application/json" },
+            });
+          }
+
+          return new Response(JSON.stringify({ login: "octo" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        },
+      },
+    );
+
+    const response = await octokit.rest.users.getAuthenticated();
+
+    assert.equal(response.data.login, "octo");
+    assert.deepEqual(authHeaders, [
+      "token ghp_saved_token",
+      "token gho_cli_token",
+    ]);
+  } finally {
+    if (originalEnvToken === undefined) {
+      delete process.env.GITHUB_TOKEN;
+    } else {
+      process.env.GITHUB_TOKEN = originalEnvToken;
+    }
+  }
+});
+
+test("buildOctokit only retries once when the gh auth fallback also gets 401", async () => {
+  const originalEnvToken = process.env.GITHUB_TOKEN;
+  delete process.env.GITHUB_TOKEN;
+  let requestCount = 0;
+
+  try {
+    const octokit = await buildOctokit(
+      {
+        ...config,
+        githubToken: "ghp_saved_token",
+      },
+      {
+        ignoreCache: true,
+        nowFn: () => Number.MAX_SAFE_INTEGER / 2,
+        runCommandFn: async () => ({
+          stdout: "gho_cli_token\n",
+          stderr: "",
+          code: 0,
+        }),
+        requestFetch: async () => {
+          requestCount += 1;
+          return new Response(JSON.stringify({ message: "Bad credentials" }), {
+            status: 401,
+            headers: { "content-type": "application/json" },
+          });
+        },
+      },
+    );
+
+    await assert.rejects(
+      () => octokit.rest.users.getAuthenticated(),
+      (error: unknown) => {
+        assert.equal((error as { status?: number }).status, 401);
+        return true;
+      },
+    );
+    assert.equal(requestCount, 2);
+  } finally {
+    if (originalEnvToken === undefined) {
+      delete process.env.GITHUB_TOKEN;
+    } else {
+      process.env.GITHUB_TOKEN = originalEnvToken;
+    }
+  }
+});
 
 test("checkOnboardingStatus reads workflow files with authenticated API content calls", async () => {
   const getContentCalls: Array<{ owner: string; repo: string; path: string }> = [];

@@ -189,6 +189,104 @@ type GitHubErrorLike = Error & {
   };
 };
 
+type GitHubAuthResolutionDeps = {
+  ignoreCache?: boolean;
+  runCommandFn?: typeof runCommand;
+  nowFn?: () => number;
+};
+
+type BuildOctokitDeps = GitHubAuthResolutionDeps & {
+  requestFetch?: typeof fetch;
+};
+
+function cacheGhAuthToken(token: string, now: number): string {
+  cachedGhAuthToken = {
+    token,
+    expiresAt: now + GH_AUTH_CACHE_TTL_MS,
+  };
+  ghAuthFailureCooldownUntil = 0;
+  return token;
+}
+
+function parseGhAuthStatusToken(stdout: string): string | undefined {
+  let activeAccount = false;
+
+  for (const line of stdout.split(/\r?\n/)) {
+    const activeMatch = line.match(/Active account:\s*(true|false)/i);
+    if (activeMatch) {
+      activeAccount = activeMatch[1]?.toLowerCase() === "true";
+      continue;
+    }
+
+    const tokenMatch = line.match(/Token:\s*(\S+)/);
+    if (activeAccount && tokenMatch?.[1]) {
+      return tokenMatch[1].trim();
+    }
+  }
+
+  return undefined;
+}
+
+function parseTokenFromAuthorizationHeader(authorization: string | null | undefined): string | undefined {
+  if (!authorization) {
+    return undefined;
+  }
+
+  const trimmed = authorization.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const match = trimmed.match(/^(?:token|bearer)\s+(.+)$/i);
+  return match?.[1]?.trim() || trimmed;
+}
+
+function isUnauthorizedGitHubError(error: unknown): error is GitHubErrorLike {
+  return typeof (error as GitHubErrorLike | undefined)?.status === "number"
+    && (error as GitHubErrorLike).status === 401;
+}
+
+async function resolveGhAuthToken(
+  deps: GitHubAuthResolutionDeps = {},
+): Promise<string | undefined> {
+  const runCommandFn = deps.runCommandFn ?? runCommand;
+  const nowFn = deps.nowFn ?? Date.now;
+  const now = nowFn();
+  const ignoreCache = deps.ignoreCache ?? false;
+
+  if (!ignoreCache && cachedGhAuthToken && cachedGhAuthToken.expiresAt > now) {
+    return cachedGhAuthToken.token;
+  }
+
+  if (!ignoreCache && ghAuthFailureCooldownUntil > now) {
+    return undefined;
+  }
+
+  const directResult = await runCommandFn("gh", ["auth", "token"], {
+    timeoutMs: 4000,
+  });
+  const directToken = directResult.stdout.trim();
+  if (directResult.code === 0 && directToken) {
+    return ignoreCache ? directToken : cacheGhAuthToken(directToken, now);
+  }
+
+  const statusResult = await runCommandFn("gh", ["auth", "status", "--hostname", "github.com", "--show-token"], {
+    timeoutMs: 4000,
+  });
+  const statusToken = statusResult.code === 0
+    ? parseGhAuthStatusToken(statusResult.stdout)
+    : undefined;
+  if (statusToken) {
+    return ignoreCache ? statusToken : cacheGhAuthToken(statusToken, now);
+  }
+
+  if (!ignoreCache) {
+    cachedGhAuthToken = null;
+    ghAuthFailureCooldownUntil = now + GH_AUTH_CACHE_TTL_MS;
+  }
+  return undefined;
+}
+
 export class GitHubIntegrationError extends Error {
   readonly statusCode: number;
 
@@ -298,7 +396,10 @@ export async function fetchCheckSnapshotsForRef(
   });
 }
 
-export async function resolveGitHubAuthToken(config: Config): Promise<string | undefined> {
+export async function resolveGitHubAuthToken(
+  config: Config,
+  deps: GitHubAuthResolutionDeps = {},
+): Promise<string | undefined> {
   const envToken = process.env.GITHUB_TOKEN?.trim();
   if (envToken) {
     return envToken;
@@ -309,32 +410,7 @@ export async function resolveGitHubAuthToken(config: Config): Promise<string | u
     return configuredToken;
   }
 
-  const now = Date.now();
-  if (cachedGhAuthToken && cachedGhAuthToken.expiresAt > now) {
-    return cachedGhAuthToken.token;
-  }
-
-  if (ghAuthFailureCooldownUntil > now) {
-    return undefined;
-  }
-
-  const result = await runCommand("gh", ["auth", "token"], {
-    timeoutMs: 4000,
-  });
-
-  const token = result.stdout.trim();
-  if (result.code === 0 && token) {
-    cachedGhAuthToken = {
-      token,
-      expiresAt: now + GH_AUTH_CACHE_TTL_MS,
-    };
-    ghAuthFailureCooldownUntil = 0;
-    return token;
-  }
-
-  cachedGhAuthToken = null;
-  ghAuthFailureCooldownUntil = now + GH_AUTH_CACHE_TTL_MS;
-  return undefined;
+  return resolveGhAuthToken(deps);
 }
 
 function formatGitHubTarget(resource: ParsedPRUrl | ParsedRepoSlug): string {
@@ -412,17 +488,57 @@ async function withGitHubErrorHandling<T>(
   }
 }
 
-export async function buildOctokit(config: Config): Promise<Octokit> {
-  const auth = await resolveGitHubAuthToken(config);
-
-  return new Octokit({
-    auth,
+export async function buildOctokit(
+  config: Config,
+  deps: BuildOctokitDeps = {},
+): Promise<Octokit> {
+  const envToken = process.env.GITHUB_TOKEN?.trim();
+  const configuredToken = config.githubToken?.trim();
+  const ghAuthToken = !envToken ? await resolveGhAuthToken(deps) : undefined;
+  const auth = envToken || configuredToken || ghAuthToken;
+  const buildClient = (authToken?: string) => new Octokit({
+    auth: authToken,
     request: {
+      ...(deps.requestFetch ? { fetch: deps.requestFetch } : {}),
       headers: {
         "X-GitHub-Api-Version": GITHUB_API_VERSION,
       },
     },
   });
+  const octokit = buildClient(auth);
+  const fallbackOctokit = configuredToken && ghAuthToken && ghAuthToken !== configuredToken
+    ? buildClient(ghAuthToken)
+    : null;
+
+  if (fallbackOctokit) {
+    octokit.hook.wrap("request", async (request, options) => {
+      try {
+        return await request(options);
+      } catch (error) {
+        if (!isUnauthorizedGitHubError(error)) {
+          throw error;
+        }
+
+        const currentToken = parseTokenFromAuthorizationHeader(
+          new Headers(options.headers as HeadersInit).get("authorization"),
+        );
+        if (currentToken && currentToken !== configuredToken) {
+          throw error;
+        }
+
+        const { request: _request, ...retryOptions } = options;
+        const retryHeaders = new Headers(retryOptions.headers as HeadersInit);
+        retryHeaders.delete("authorization");
+
+        return fallbackOctokit.request({
+          ...retryOptions,
+          headers: Object.fromEntries(retryHeaders.entries()),
+        });
+      }
+    });
+  }
+
+  return octokit;
 }
 
 export type CodeReviewPresence = {
