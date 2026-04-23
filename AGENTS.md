@@ -1,8 +1,6 @@
 # Repository Guidelines
 
 ## Behavioral Guidelines
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
-
 Tradeoff: These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
 ### 1. Think Before Coding
@@ -54,8 +52,6 @@ For multi-step tasks, state a brief plan:
 3. [Step] -> verify: [check]
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
-
-These guidelines are working if: fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
 
 ## Project Structure & Module Organization
 `client/src/` hosts the React dashboard, including pages, hooks, and UI primitives. `server/` contains the Express entrypoint, GitHub integration, PR babysitter/worktree logic, storage adapters, and the current `*.test.ts` files. `shared/schema.ts` defines Zod contracts shared across the app. `script/build.ts` builds the production bundle into `dist/`; treat `dist/` as generated output. Planning and QA artifacts live in `docs/plans/`, `dogfood-output/`, and `tasks/`.
