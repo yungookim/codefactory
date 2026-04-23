@@ -314,3 +314,12 @@
   - Inventory existing images and diagrams and decide which are essential before deleting them.
   - If the goal is "more concise," default to shortening copy first and preserving high-signal visuals.
   - Call out any planned visual removals in the execution update when they are not explicitly requested.
+
+## 2026-04-22 - Keep core user-visible automation outcomes in simplified product docs
+- Pattern: I simplified the README structure correctly, but the user had to correct me to restore two core product behaviors: replying to PR comments and resolving threads on the user's behalf, and auto-creating GitHub releases for version-worthy changes.
+- Rule: When simplifying top-level product documentation, preserve the highest-value user-visible automation outcomes, not just the infrastructure and setup details.
+- Prevention checklist:
+  - Before finalizing a rewritten README, list the product's core "why this matters" behaviors and confirm each still appears near the top.
+  - Favor outcome-level bullets such as "replies on your behalf" and "creates releases automatically" over only implementation-level bullets such as queues, worktrees, or storage.
+  - Compare the rewritten feature summary against release docs, onboarding copy, and settings surfaces to catch dropped capabilities.
+  - Treat outbound automation and shipping automation as first-class behaviors in summaries because they answer common buyer objections.
