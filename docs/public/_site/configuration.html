@@ -207,9 +207,14 @@
 <td>Data directory for state and logs</td>
 </tr>
 <tr>
-<td><code>PR_BABYSITTER_ROOT</code></td>
-<td><code>/tmp/pr-babysitter</code></td>
-<td>Root directory for agent worktrees</td>
+<td><code>CODEFACTORY_HOME</code></td>
+<td>—</td>
+<td>Legacy alias used only when <code>OH_MY_PR_HOME</code> is not set</td>
+</tr>
+<tr>
+<td><code>CODEFACTORY_PORT</code></td>
+<td><code>5001</code></td>
+<td>Legacy port the MCP server connects to when <code>OH_MY_PR_PORT</code> is not set</td>
 </tr>
 <tr>
 <td><code>DATABASE_URL</code></td>
@@ -219,7 +224,7 @@
 <tr>
 <td><code>GITHUB_TOKEN</code></td>
 <td>—</td>
-<td>Default GitHub personal access token</td>
+<td>Fallback GitHub token when no dashboard token is configured; <code>gh auth</code> is used after that</td>
 </tr>
 </tbody></table>
 <p><code>CODEFACTORY_PORT</code> is still accepted by the MCP server as a legacy fallback, but new MCP configurations should use <code>OH_MY_PR_PORT</code>.</p>
@@ -229,13 +234,6 @@
 <pre><code>~/.oh-my-pr/state.sqlite
 </code></pre>
 <p>No external database is required. This is ideal for single-user setups.</p>
-<h3>PostgreSQL</h3>
-<p>For team deployments, configure a PostgreSQL connection:</p>
-<pre><code class="language-bash">DATABASE_URL=postgresql://user:pass@localhost:5432/oh_my_pr
-</code></pre>
-<p>Then push the schema:</p>
-<pre><code class="language-bash">npm run db:push
-</code></pre>
 <h2>Activity Logs</h2>
 <p>oh-my-pr writes daily activity logs to:</p>
 <pre><code>~/.oh-my-pr/log/
@@ -244,7 +242,7 @@
 <h2>Dashboard Settings</h2>
 <p>The settings page in the dashboard provides a UI for:</p>
 <ul>
-<li><strong>GitHub Token management</strong> — Add, update, or rotate tokens.</li>
+<li><strong>GitHub token management</strong> — Add, remove, and reorder saved tokens before falling back to <code>GITHUB_TOKEN</code> or <code>gh auth</code>.</li>
 <li><strong>Agent selection</strong> — Choose whether autonomous runs use Claude Code or OpenAI Codex.</li>
 <li><strong>Babysitter tuning</strong> — Control polling, batching, merge-conflict handling, release automation, and automatic docs assessment.</li>
 <li><strong>PR comment branding</strong> — Toggle whether agent-authored GitHub PR comments link back to oh-my-pr and include the <code>Posted by oh-my-pr</code> footer.</li>
@@ -387,7 +385,7 @@ release check fails, the banner stays hidden and the API falls back quietly.</p>
 <li>Install and authenticate <code>vercel</code> to heal Vercel deployments.</li>
 <li>Install and authenticate <code>railway</code> to heal Railway deployments.</li>
 </ul>
-<p>Deployment session history is exposed through <code>GET /api/deployment-healing-sessions</code>, <code>GET /api/deployment-healing-sessions/:id</code>, and the matching MCP read tools. The dashboard settings page and MCP <code>update_config</code> tool do not yet expose these deployment-healing knobs on this branch.</p>
+<p>Deployment session history is exposed through <code>GET /api/deployment-healing-sessions</code>, <code>GET /api/deployment-healing-sessions/:id</code>, and the matching MCP read tools. The dashboard settings page and MCP <code>update_config</code> tool do not yet expose these deployment-healing knobs; use <code>PATCH /api/config</code> for them.</p>
 <h2>Build &amp; Deploy</h2>
 <h3>Development</h3>
 <pre><code class="language-bash">npm run dev          # Start dev server with hot reload

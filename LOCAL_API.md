@@ -24,7 +24,6 @@
    - [Deployment healing sessions](#deployment-healing-sessions)
    - [Configuration](#configuration)
    - [App updates](#app-updates)
-   - [Agent models](#agent-models)
    - [Runtime & drain mode](#runtime--drain-mode)
    - [Social changelogs](#social-changelogs)
    - [Releases](#releases)
@@ -219,8 +218,6 @@ compiled output instead:
 | `get_logs` | Get activity logs (optional PR filter) |
 | `get_config` | Read current configuration |
 | `update_config` | Partially update configuration |
-| `get_agent_models` | List available AI models |
-| `refresh_agent_models` | Rediscover installed agent models |
 | `get_runtime` | Get runtime state (drain mode, active queue handlers) |
 | `set_drain_mode` | Enable/disable drain mode for new queue claims |
 | `list_changelogs` | List social-media changelogs |
@@ -230,10 +227,9 @@ compiled output instead:
 | `list_deployment_healing_sessions` | List deployment-healing sessions, optionally filtered by repo |
 | `get_deployment_healing_session` | Get one deployment-healing session by ID |
 
-`update_config` does not yet accept the deployment-healing keys described below.
-Use `PATCH /api/config` to change `autoHealDeployments`,
-`deploymentCheckDelayMs`, `deploymentCheckTimeoutMs`, or
-`deploymentCheckPollIntervalMs`.
+`update_config` exposes the MCP schema's config subset. Use `PATCH /api/config`
+for fields that are REST-writable but not exposed by the MCP schema today,
+including release automation, CI healing, and deployment-healing keys.
 
 ---
 
@@ -371,7 +367,7 @@ so the PR stays tracked even if its repo is configured as `ownPrsOnly: true`.
 ```
 
 **Response** `201` — [PR object](#pr) (newly created)
-**Response** `200` — [PR object](#pr) (already tracked)
+**Response** `201` — [PR object](#pr) (already tracked)
 **Response** `400` — invalid URL
 **Response** `4xx` — GitHub API error
 
@@ -612,9 +608,9 @@ Partially update the configuration.  Only the provided fields are changed.
 
 **Response** `200` — updated [Config object](#config) (tokens redacted)
 
-Deployment-healing configuration is REST-writable today. The MCP
-`update_config` tool still exposes its older field subset, so use this REST
-endpoint when changing the deployment-healing keys.
+Some configuration is REST-writable but not exposed by the MCP `update_config`
+tool schema today. Use this REST endpoint when changing release automation,
+CI-healing, or deployment-healing keys.
 
 ---
 
@@ -652,30 +648,6 @@ with `latestVersion: null`, the releases index URL, and `updateAvailable: false`
   "updateAvailable": false
 }
 ```
-
----
-
-### Agent models
-
-#### `GET /api/agent-models`
-
-Get the cached list of available models for each agent type.
-
-**Response** `200`
-```json
-{
-  "claude": ["claude-sonnet-4-6", "claude-opus-4-6"],
-  "codex": ["codex-mini-latest", "o4-mini"]
-}
-```
-
----
-
-#### `POST /api/agent-models/refresh`
-
-Trigger a fresh model discovery scan (runs `claude model list` / `codex --help`).
-
-**Response** `200` — updated model map (same shape as `GET /api/agent-models`)
 
 ---
 
@@ -801,12 +773,21 @@ oh-my-pr GitHub Actions workflow is installed).
 
 **Response** `200`
 ```json
-[
-  {
-    "repo": "owner/repo",
-    "workflowInstalled": true
-  }
-]
+{
+  "githubConnected": true,
+  "githubUser": "octocat",
+  "repos": [
+    {
+      "repo": "owner/repo",
+      "accessible": true,
+      "codeReviews": {
+        "claude": true,
+        "codex": false,
+        "gemini": false
+      }
+    }
+  ]
+}
 ```
 
 ---
@@ -824,7 +805,13 @@ Install the oh-my-pr code-review GitHub Actions workflow on a repository.
 ```
 `tool` must be `"claude"` or `"codex"`.
 
-**Response** `200` — installation result object
+**Response** `200`
+```json
+{
+  "path": ".github/workflows/claude-code-review.yml",
+  "url": "https://github.com/owner/repo/blob/main/.github/workflows/claude-code-review.yml"
+}
+```
 
 ---
 
@@ -850,6 +837,12 @@ Install the oh-my-pr code-review GitHub Actions workflow on a repository.
   lintPassed: boolean | null;
   lastChecked: string | null;  // ISO 8601
   watchEnabled: boolean;       // false pauses autonomous watcher runs for this PR
+  docsAssessment?: {
+    headSha: string;
+    status: "needed" | "not_needed" | "failed";
+    summary: string;
+    assessedAt: string;        // ISO 8601
+  } | null;
   addedAt: string;             // ISO 8601
 }
 ```
@@ -1115,8 +1108,8 @@ All error responses share this shape:
 | `PORT`               | `5001`         | HTTP port for the oh-my-pr server |
 | `OH_MY_PR_PORT`      | `5001`         | Port the MCP server connects to (MCP only) |
 | `OH_MY_PR_HOME`      | `~/.oh-my-pr` | Directory for SQLite DB, logs, repos, worktrees |
-| `PR_BABYSITTER_ROOT` | —              | Override worktree root directory |
-| `GITHUB_TOKEN`       | —              | GitHub personal access token (falls back to config / `gh auth`) |
+| `CODEFACTORY_HOME`   | —              | Legacy alias used only when `OH_MY_PR_HOME` is not set |
+| `GITHUB_TOKEN`       | —              | Fallback GitHub token after saved app tokens and before `gh auth` |
 | `NODE_ENV`           | `development`  | Set to `production` for production builds |
 | `TAURI_DEV`          | —              | Set to skip auto-opening the browser (used by Tauri) |
 

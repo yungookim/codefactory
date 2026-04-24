@@ -9,9 +9,10 @@ oh-my-pr is configured through environment variables and the dashboard settings 
 | `PORT` | `5001` | HTTP server port |
 | `OH_MY_PR_PORT` | `5001` | Port the MCP server connects to when the HTTP server is not on the default port |
 | `OH_MY_PR_HOME` | `~/.oh-my-pr` | Data directory for state and logs |
-| `PR_BABYSITTER_ROOT` | `/tmp/pr-babysitter` | Root directory for agent worktrees |
+| `CODEFACTORY_HOME` | — | Legacy alias used only when `OH_MY_PR_HOME` is not set |
+| `CODEFACTORY_PORT` | `5001` | Legacy port the MCP server connects to when `OH_MY_PR_PORT` is not set |
 | `DATABASE_URL` | (SQLite) | PostgreSQL connection string (optional) |
-| `GITHUB_TOKEN` | — | Default GitHub personal access token |
+| `GITHUB_TOKEN` | — | Fallback GitHub token when no dashboard token is configured; `gh auth` is used after that |
 
 `CODEFACTORY_PORT` is still accepted by the MCP server as a legacy fallback, but new MCP configurations should use `OH_MY_PR_PORT`.
 
@@ -27,20 +28,6 @@ By default, oh-my-pr stores all state in a local SQLite database:
 
 No external database is required. This is ideal for single-user setups.
 
-### PostgreSQL
-
-For team deployments, configure a PostgreSQL connection:
-
-```bash
-DATABASE_URL=postgresql://user:pass@localhost:5432/oh_my_pr
-```
-
-Then push the schema:
-
-```bash
-npm run db:push
-```
-
 ## Activity Logs
 
 oh-my-pr writes daily activity logs to:
@@ -55,7 +42,7 @@ These logs mirror the dashboard activity feed and are useful for debugging or au
 
 The settings page in the dashboard provides a UI for:
 
-- **GitHub Token management** — Add, update, or rotate tokens.
+- **GitHub token management** — Add, remove, and reorder saved tokens before falling back to `GITHUB_TOKEN` or `gh auth`.
 - **Agent selection** — Choose whether autonomous runs use Claude Code or OpenAI Codex.
 - **Babysitter tuning** — Control polling, batching, merge-conflict handling, release automation, and automatic docs assessment.
 - **PR comment branding** — Toggle whether agent-authored GitHub PR comments link back to oh-my-pr and include the `Posted by oh-my-pr` footer.
@@ -138,7 +125,7 @@ Deployment healing also requires the matching platform CLI on the machine runnin
 - Install and authenticate `vercel` to heal Vercel deployments.
 - Install and authenticate `railway` to heal Railway deployments.
 
-Deployment session history is exposed through `GET /api/deployment-healing-sessions`, `GET /api/deployment-healing-sessions/:id`, and the matching MCP read tools. The dashboard settings page and MCP `update_config` tool do not yet expose these deployment-healing knobs on this branch.
+Deployment session history is exposed through `GET /api/deployment-healing-sessions`, `GET /api/deployment-healing-sessions/:id`, and the matching MCP read tools. The dashboard settings page and MCP `update_config` tool do not yet expose these deployment-healing knobs; use `PATCH /api/config` for them.
 
 ## Build & Deploy
 
