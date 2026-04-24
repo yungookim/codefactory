@@ -138,18 +138,26 @@ test("tui settings mirrors web GitHub token and automation controls", async () =
       autoCreateReleases: true,
     },
   });
-  const ui = render(<App runtime={runtime} screenWidth={180} screenHeight={30} refreshMs={0} />);
+  const ui = render(<App runtime={runtime} screenWidth={180} screenHeight={40} refreshMs={0} />);
 
   try {
     await flush();
     ui.stdin.write("s");
     await flush();
 
-    assert.match(ui.lastFrame() ?? "", /CI healing/);
-    assert.match(ui.lastFrame() ?? "", /Auto release/);
-    assert.match(ui.lastFrame() ?? "", /GitHub tokens/);
-    assert.match(ui.lastFrame() ?? "", /Token 1[\s\S]*\*\*\*1111[\s\S]*p1/);
-    assert.match(ui.lastFrame() ?? "", /Token 2[\s\S]*\*\*\*2222[\s\S]*p2/);
+    const frame = ui.lastFrame() ?? "";
+    const repoLinksIndex = frame.indexOf("Repo links");
+    const githubTokensIndex = frame.indexOf("GitHub tokens");
+    const addGithubTokenIndex = frame.indexOf("Add GitHub token");
+    assert.match(frame, /CI healing/);
+    assert.match(frame, /Auto release/);
+    assert.notEqual(repoLinksIndex, -1);
+    assert.notEqual(githubTokensIndex, -1);
+    assert.notEqual(addGithubTokenIndex, -1);
+    assert.ok(githubTokensIndex > repoLinksIndex);
+    assert.ok(githubTokensIndex < addGithubTokenIndex);
+    assert.match(frame, /Token 1[\s\S]*\*\*\*1111[\s\S]*p1/);
+    assert.match(frame, /Token 2[\s\S]*\*\*\*2222[\s\S]*p2/);
 
     for (let i = 0; i < 6; i += 1) {
       ui.stdin.write("\u001B[B");
@@ -163,6 +171,34 @@ test("tui settings mirrors web GitHub token and automation controls", async () =
     await flush();
 
     assert.deepEqual((await runtime.getConfig()).githubTokens, ["***1111", "***2222", "ghp_newtoken"]);
+  } finally {
+    ui.unmount();
+  }
+});
+
+test("tui settings token reordering preserves undefined token values", async () => {
+  const baseConfig = await createTestRuntime().getConfig();
+  const runtime = createTestRuntime({
+    config: {
+      ...baseConfig,
+      githubTokens: [undefined as unknown as string, "***2222"],
+    },
+  });
+  const ui = render(<App runtime={runtime} screenWidth={180} screenHeight={30} refreshMs={0} />);
+
+  try {
+    await flush();
+    ui.stdin.write("s");
+    await flush();
+
+    for (let i = 0; i < 9; i += 1) {
+      ui.stdin.write("\u001B[B");
+    }
+    await flush();
+    ui.stdin.write("\r");
+    await flush();
+
+    assert.deepEqual((await runtime.getConfig()).githubTokens, ["***2222", undefined]);
   } finally {
     ui.unmount();
   }

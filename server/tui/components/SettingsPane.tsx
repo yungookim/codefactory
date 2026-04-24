@@ -132,29 +132,31 @@ export function SettingsPane(props: {
 
   return (
     <Box flexDirection="column">
-      <Text color={color.muted}>GitHub tokens</Text>
       {rows.map((row, index) => {
         const selected = index === props.selectedIndex;
         const isToggle = row.kind === "toggle";
         const { tone, value } = getRowDisplay(row);
 
         return (
-          <Box key={getRowKey(row)}>
-            <Text color={selected ? color.accent : color.muted}>
-              {selected ? `${glyph.focus} ` : "  "}
-            </Text>
-            <Text color={selected ? color.accent : undefined}>{row.label}</Text>
-            <Text color={color.muted}>{"  "}</Text>
-            {isToggle ? (
-              <Text color={tone} bold>
-                {row.value ? `${glyph.dot} on` : `${glyph.ring} off`}
+          <React.Fragment key={getRowKey(row)}>
+            {row.kind === "addGithubToken" && <Text color={color.muted}>GitHub tokens</Text>}
+            <Box>
+              <Text color={selected ? color.accent : color.muted}>
+                {selected ? `${glyph.focus} ` : "  "}
               </Text>
-            ) : (
-              <Text color={tone} bold>
-                {String(value)}
-              </Text>
-            )}
-          </Box>
+              <Text color={selected ? color.accent : undefined}>{row.label}</Text>
+              <Text color={color.muted}>{"  "}</Text>
+              {isToggle ? (
+                <Text color={tone} bold>
+                  {row.value ? `${glyph.dot} on` : `${glyph.ring} off`}
+                </Text>
+              ) : (
+                <Text color={tone} bold>
+                  {String(value)}
+                </Text>
+              )}
+            </Box>
+          </React.Fragment>
         );
       })}
       {props.inputMode === "addGithubToken" && (
