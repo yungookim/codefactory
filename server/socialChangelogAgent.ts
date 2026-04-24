@@ -100,7 +100,7 @@ function buildPrompt(prSummaries: SocialChangelogPRSummary[], date: string): str
     .join("\n");
 
   return [
-    "You are a developer advocate writing social media copy for Code Factory — an open-source,",
+    "You are a developer advocate writing social media copy for oh-my-pr — an open-source,",
     "AI-powered GitHub PR manager. It watches repositories, triages review feedback, and",
     "automatically dispatches AI agents (Claude or Codex) to fix code. It runs entirely on the",
     "developer's own machine — no external hosting, no subscription required.",

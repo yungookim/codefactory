@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    code_factory_lib::run()
+    oh_my_pr_lib::run()
 }

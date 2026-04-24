@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * mcp.ts — Code Factory MCP Server
+ * mcp.ts — oh-my-pr MCP Server
  *
- * Exposes every Code Factory capability as an MCP (Model Context Protocol)
+ * Exposes every oh-my-pr capability as an MCP (Model Context Protocol)
  * tool so that any MCP-compatible agent (Claude Desktop, OpenClaw, etc.) can
- * drive Code Factory without needing to speak raw HTTP.
+ * drive oh-my-pr without needing to speak raw HTTP.
  *
  * Transport: stdio  (the agent host spawns this process)
  * Security:  All HTTP calls go to 127.0.0.1 only — never the network.
@@ -19,10 +19,10 @@
  * ----------------------------------------------------
  *   {
  *     "mcpServers": {
- *       "codefactory": {
+ *       "oh-my-pr": {
  *         "command": "npx",
- *         "args": ["tsx", "/path/to/codefactory/server/mcp.ts"],
- *         "env": { "CODEFACTORY_PORT": "5001" }
+ *         "args": ["tsx", "/path/to/oh-my-pr/server/mcp.ts"],
+ *         "env": { "OH_MY_PR_PORT": "5001" }
  *       }
  *     }
  *   }
@@ -40,7 +40,8 @@ import {
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const CF_BASE_URL = `http://127.0.0.1:${process.env.CODEFACTORY_PORT ?? "5001"}`;
+const APP_PORT = process.env.OH_MY_PR_PORT ?? process.env.CODEFACTORY_PORT ?? "5001";
+const APP_BASE_URL = `http://127.0.0.1:${APP_PORT}`;
 
 // ── HTTP helper ───────────────────────────────────────────────────────────────
 
@@ -49,7 +50,7 @@ async function cfFetch(
   path: string,
   body?: unknown,
 ): Promise<unknown> {
-  const url = `${CF_BASE_URL}${path}`;
+  const url = `${APP_BASE_URL}${path}`;
   const res = await fetch(url, {
     method,
     headers: { "Content-Type": "application/json" },
@@ -82,14 +83,14 @@ const TOOLS: Tool[] = [
   {
     name: "list_repos",
     description:
-      "List all repositories currently being watched by Code Factory. " +
+      "List all repositories currently being watched by oh-my-pr. " +
       "Returns an array of 'owner/repo' strings.",
     inputSchema: { type: "object", properties: {}, required: [] },
   },
   {
     name: "add_repo",
     description:
-      "Add a GitHub repository to the Code Factory watch list. " +
+      "Add a GitHub repository to the oh-my-pr watch list. " +
       "Accepts 'owner/repo' slugs or full GitHub URLs.",
     inputSchema: {
       type: "object",
@@ -130,7 +131,7 @@ const TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        id: { type: "string", description: "Internal Code Factory PR ID." },
+        id: { type: "string", description: "Internal oh-my-pr PR ID." },
       },
       required: ["id"],
     },
@@ -138,8 +139,8 @@ const TOOLS: Tool[] = [
   {
     name: "add_pr",
     description:
-      "Register a GitHub pull request with Code Factory by URL. " +
-      "Code Factory will start watching the PR and run the babysitter.",
+      "Register a GitHub pull request with oh-my-pr by URL. " +
+      "oh-my-pr will start watching the PR and run the babysitter.",
     inputSchema: {
       type: "object",
       properties: {
@@ -154,11 +155,11 @@ const TOOLS: Tool[] = [
   },
   {
     name: "remove_pr",
-    description: "Remove a PR from Code Factory's tracking list.",
+    description: "Remove a PR from oh-my-pr's tracking list.",
     inputSchema: {
       type: "object",
       properties: {
-        id: { type: "string", description: "Internal Code Factory PR ID." },
+        id: { type: "string", description: "Internal oh-my-pr PR ID." },
       },
       required: ["id"],
     },
@@ -170,7 +171,7 @@ const TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        id: { type: "string", description: "Internal Code Factory PR ID." },
+        id: { type: "string", description: "Internal oh-my-pr PR ID." },
       },
       required: ["id"],
     },
@@ -183,7 +184,7 @@ const TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        id: { type: "string", description: "Internal Code Factory PR ID." },
+        id: { type: "string", description: "Internal oh-my-pr PR ID." },
       },
       required: ["id"],
     },
@@ -196,7 +197,7 @@ const TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        id: { type: "string", description: "Internal Code Factory PR ID." },
+        id: { type: "string", description: "Internal oh-my-pr PR ID." },
       },
       required: ["id"],
     },
@@ -209,7 +210,7 @@ const TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        id: { type: "string", description: "Internal Code Factory PR ID." },
+        id: { type: "string", description: "Internal oh-my-pr PR ID." },
       },
       required: ["id"],
     },
@@ -224,7 +225,7 @@ const TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        pr_id: { type: "string", description: "Internal Code Factory PR ID." },
+        pr_id: { type: "string", description: "Internal oh-my-pr PR ID." },
         feedback_id: { type: "string", description: "Feedback item ID." },
         decision: {
           type: "string",
@@ -242,7 +243,7 @@ const TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        pr_id: { type: "string", description: "Internal Code Factory PR ID." },
+        pr_id: { type: "string", description: "Internal oh-my-pr PR ID." },
         feedback_id: { type: "string", description: "Feedback item ID." },
       },
       required: ["pr_id", "feedback_id"],
@@ -256,7 +257,7 @@ const TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        pr_id: { type: "string", description: "Internal Code Factory PR ID." },
+        pr_id: { type: "string", description: "Internal oh-my-pr PR ID." },
       },
       required: ["pr_id"],
     },
@@ -269,7 +270,7 @@ const TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        pr_id: { type: "string", description: "Internal Code Factory PR ID." },
+        pr_id: { type: "string", description: "Internal oh-my-pr PR ID." },
         question: {
           type: "string",
           description: "Natural-language question (max 2000 chars).",
@@ -301,13 +302,13 @@ const TOOLS: Tool[] = [
   {
     name: "get_config",
     description:
-      "Read the current Code Factory configuration. GitHub tokens are redacted.",
+      "Read the current oh-my-pr configuration. GitHub tokens are redacted.",
     inputSchema: { type: "object", properties: {}, required: [] },
   },
   {
     name: "update_config",
     description:
-      "Partially update Code Factory configuration. All fields are optional; only provided " +
+      "Partially update oh-my-pr configuration. All fields are optional; only provided " +
       "fields are changed. Available fields: githubTokens, githubToken (legacy), codingAgent, maxTurns, " +
       "batchWindowMs, pollIntervalMs, maxChangesPerRun, autoResolveMergeConflicts, autoUpdateDocs, " +
       "includeRepositoryLinksInGitHubComments, " +
@@ -337,7 +338,7 @@ const TOOLS: Tool[] = [
   {
     name: "get_runtime",
     description:
-      "Get Code Factory runtime state: drain mode status, active run count, and timestamps.",
+      "Get oh-my-pr runtime state: drain mode status, active run count, and timestamps.",
     inputSchema: { type: "object", properties: {}, required: [] },
   },
   {
@@ -391,7 +392,7 @@ const TOOLS: Tool[] = [
   {
     name: "install_review_workflow",
     description:
-      "Install the Code Factory code-review GitHub Actions workflow on a repository.",
+      "Install the oh-my-pr code-review GitHub Actions workflow on a repository.",
     inputSchema: {
       type: "object",
       properties: {
@@ -538,7 +539,7 @@ async function callTool(name: string, args: ToolArgs): Promise<unknown> {
 // ── MCP Server setup ──────────────────────────────────────────────────────────
 
 const server = new Server(
-  { name: "codefactory", version: "1.0.0" },
+  { name: "oh-my-pr", version: "1.0.0" },
   { capabilities: { tools: {} } },
 );
 
@@ -573,11 +574,11 @@ async function main() {
   await server.connect(transport);
   // All communication is over stdio; stderr is safe for diagnostics.
   process.stderr.write(
-    `[codefactory-mcp] MCP server started — targeting ${CF_BASE_URL}\n`,
+    `[oh-my-pr-mcp] MCP server started — targeting ${APP_BASE_URL}\n`,
   );
 }
 
 main().catch((err) => {
-  process.stderr.write(`[codefactory-mcp] Fatal: ${err}\n`);
+  process.stderr.write(`[oh-my-pr-mcp] Fatal: ${err}\n`);
   process.exit(1);
 });

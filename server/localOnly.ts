@@ -6,7 +6,7 @@
  *
  * Any request that arrives from a non-loopback address is rejected with
  * HTTP 403 before it reaches any route handler.  This enforces the security
- * boundary described in LOCAL_API.md: Code Factory is a local-first tool and
+ * boundary described in LOCAL_API.md: oh-my-pr is a local-first tool and
  * must never be reachable from external networks.
  *
  * Usage
@@ -67,7 +67,7 @@ export function localOnlyMiddleware(
     res.status(403).json({
       error: "Forbidden",
       message:
-        "Code Factory only accepts connections from the local machine. " +
+        "oh-my-pr only accepts connections from the local machine. " +
         "External access is not permitted.",
     });
     return;
