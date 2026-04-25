@@ -916,11 +916,11 @@ export default function Dashboard() {
       <UpdateBanner />
       <header className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
         <div className="flex items-center gap-3">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-label="PR Feedback Agent">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-label="oh-my-pr">
             <rect x="1" y="1" width="14" height="14" stroke="currentColor" strokeWidth="1.5" />
             <path d="M4 5h8M4 8h5M4 11h6" stroke="currentColor" strokeWidth="1" />
           </svg>
-          <span className="text-sm font-medium tracking-tight">code factory</span>
+          <span className="text-sm font-medium tracking-tight">oh-my-pr</span>
           <span className="border border-border px-1.5 py-0 text-[10px] uppercase tracking-wider text-muted-foreground">
             autonomous
           </span>

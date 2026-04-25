@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicedoc/schemas/main/tauri-v2/tauri.conf.schema.json",
-  "productName": "Code Factory",
+  "productName": "oh-my-pr",
   "version": "1.0.0",
-  "identifier": "com.codefactory.app",
+  "identifier": "com.yungookim.ohmypr",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:5001",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Code Factory",
+        "title": "oh-my-pr",
         "label": "main",
         "width": 1200,
         "height": 800,

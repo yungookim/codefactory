@@ -7,10 +7,14 @@ oh-my-pr is configured through environment variables and the dashboard settings 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `5001` | HTTP server port |
+| `OH_MY_PR_PORT` | `5001` | Port the MCP server connects to when the HTTP server is not on the default port |
 | `OH_MY_PR_HOME` | `~/.oh-my-pr` | Data directory for state and logs |
 | `CODEFACTORY_HOME` | — | Legacy alias used only when `OH_MY_PR_HOME` is not set |
-| `CODEFACTORY_PORT` | `5001` | Port the MCP server connects to |
+| `CODEFACTORY_PORT` | `5001` | Legacy port the MCP server connects to when `OH_MY_PR_PORT` is not set |
+| `DATABASE_URL` | (SQLite) | PostgreSQL connection string (optional) |
 | `GITHUB_TOKEN` | — | Fallback GitHub token when no dashboard token is configured; `gh auth` is used after that |
+
+`CODEFACTORY_PORT` is still accepted by the MCP server as a legacy fallback, but new MCP configurations should use `OH_MY_PR_PORT`.
 
 ## Storage
 
@@ -39,6 +43,7 @@ These logs mirror the dashboard activity feed and are useful for debugging or au
 The settings page in the dashboard provides a UI for:
 
 - **GitHub token management** — Add, remove, and reorder saved tokens before falling back to `GITHUB_TOKEN` or `gh auth`.
+- **Agent selection** — Choose whether autonomous runs use Claude Code or OpenAI Codex.
 - **Babysitter tuning** — Control polling, batching, merge-conflict handling, release automation, and automatic docs assessment.
 - **PR comment branding** — Toggle whether agent-authored GitHub PR comments link back to oh-my-pr and include the `Posted by oh-my-pr` footer.
 - **CI healing** — Enable autonomous CI repair and tune retry/session limits.
@@ -75,7 +80,7 @@ release check fails, the banner stays hidden and the API falls back quietly.
 
 ## PR Comment Branding
 
-Agent-authored GitHub PR comments posted by the babysitter — follow-up replies on review threads, echoed `/codefactory` agent-command acknowledgements, status updates, and CI alerts — are branded as oh-my-pr. Each comment references the app name and, by default, appends a `Posted by [oh-my-pr](https://github.com/yungookim/oh-my-pr)` footer that links back to this repository.
+Agent-authored GitHub PR comments posted by the babysitter — follow-up replies on review threads, agent-command acknowledgements, status updates, and CI alerts — are branded as oh-my-pr. Each comment references the app name and, by default, appends a `Posted by [oh-my-pr](https://github.com/yungookim/oh-my-pr)` footer that links back to this repository.
 
 | Setting | Default | Description |
 |---------|---------|-------------|

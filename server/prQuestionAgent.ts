@@ -109,7 +109,7 @@ async function buildPRContext(storage: IStorage, prId: string): Promise<PRContex
 
 function buildPrompt(ctx: PRContext, question: string): string {
   return [
-    "You are Code Factory, a PR review automation assistant. A user is asking a question about the following pull request.",
+    "You are oh-my-pr, a PR review automation assistant. A user is asking a question about the following pull request.",
     "Answer concisely based on the context provided. If the information is not available in the context, say so.",
     "",
     "## Pull Request",

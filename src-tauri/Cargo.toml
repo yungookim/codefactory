@@ -1,12 +1,12 @@
 [package]
-name = "code-factory"
+name = "oh-my-pr"
 version = "1.0.0"
 description = "Autonomous GitHub PR babysitter desktop app"
-authors = ["Code Factory"]
+authors = ["oh-my-pr"]
 edition = "2021"
 
 [lib]
-name = "code_factory_lib"
+name = "oh_my_pr_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [build-dependencies]

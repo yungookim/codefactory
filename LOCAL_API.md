@@ -111,7 +111,7 @@ curl -X POST http://localhost:5001/api/prs \
 npm run mcp
 
 # Custom port
-CODEFACTORY_PORT=5001 npm run mcp
+OH_MY_PR_PORT=5001 npm run mcp
 ```
 
 ---
@@ -153,8 +153,9 @@ The MCP server (`server/mcp.ts`) implements the
 [Model Context Protocol](https://modelcontextprotocol.io/) over **stdio**,
 the standard transport used by Claude Desktop and most agent frameworks.
 
-It translates every MCP tool call into an HTTP request to `127.0.0.1:5001`,
-so the oh-my-pr main server must be running for any tool to work.
+It translates every MCP tool call into an HTTP request to `127.0.0.1:5001`
+by default, or to the port in `OH_MY_PR_PORT` when configured, so the
+oh-my-pr main server must be running for any tool to work.
 
 ### Claude Desktop / OpenClaw config
 
@@ -168,7 +169,7 @@ Add the following block to your MCP host's configuration file
       "command": "npx",
       "args": ["tsx", "/absolute/path/to/oh-my-pr/server/mcp.ts"],
       "env": {
-        "CODEFACTORY_PORT": "5001"
+        "OH_MY_PR_PORT": "5001"
       }
     }
   }
@@ -187,7 +188,7 @@ compiled output instead:
       "command": "node",
       "args": ["/absolute/path/to/oh-my-pr/dist/mcp.cjs"],
       "env": {
-        "CODEFACTORY_PORT": "5001"
+        "OH_MY_PR_PORT": "5001"
       }
     }
   }
@@ -1105,9 +1106,11 @@ All error responses share this shape:
 | Variable             | Default        | Description |
 |----------------------|----------------|-------------|
 | `PORT`               | `5001`         | HTTP port for the oh-my-pr server |
-| `CODEFACTORY_PORT`   | `5001`         | Port the MCP server connects to (MCP only) |
+| `OH_MY_PR_PORT`      | `5001`         | Port the MCP server connects to (MCP only) |
 | `OH_MY_PR_HOME`      | `~/.oh-my-pr` | Directory for SQLite DB, logs, repos, worktrees |
 | `CODEFACTORY_HOME`   | —              | Legacy alias used only when `OH_MY_PR_HOME` is not set |
 | `GITHUB_TOKEN`       | —              | Fallback GitHub token after saved app tokens and before `gh auth` |
 | `NODE_ENV`           | `development`  | Set to `production` for production builds |
 | `TAURI_DEV`          | —              | Set to skip auto-opening the browser (used by Tauri) |
+
+The MCP server also accepts `CODEFACTORY_PORT` as a legacy fallback when `OH_MY_PR_PORT` is unset.

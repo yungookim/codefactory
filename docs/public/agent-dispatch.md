@@ -64,9 +64,9 @@ The active coding agent is stored in app config as `codingAgent` and can be chan
 
 ## Customization
 
-Override the default agent globally:
+Choose the global agent used for autonomous runs:
 
-- Change **Coding Agent** in the dashboard or terminal UI settings.
-- Patch `codingAgent` through `PATCH /api/config` or MCP `update_config`.
+- Use the **Coding Agent** control in the dashboard or terminal UI settings to switch between Claude Code and OpenAI Codex.
+- Set `codingAgent` to `claude` or `codex` through `PATCH /api/config` or the MCP `update_config` tool.
 
 See [Configuration](./configuration.md) for all options.

@@ -265,7 +265,7 @@ export default function Releases() {
             <rect x="1" y="1" width="14" height="14" stroke="currentColor" strokeWidth="1.5" />
             <path d="M4 6h8M4 9h8M4 12h5" stroke="currentColor" strokeWidth="1" />
           </svg>
-          <span className="text-sm font-medium tracking-tight">code factory</span>
+          <span className="text-sm font-medium tracking-tight">oh-my-pr</span>
           <span className="border border-border px-1.5 py-0 text-[10px] uppercase tracking-wider text-muted-foreground">
             releases
           </span>

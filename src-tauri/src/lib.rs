@@ -148,7 +148,7 @@ pub fn run() {
                             window
                                 .dialog()
                                 .message(msg.clone())
-                                .title("Code Factory — Error")
+                                .title("oh-my-pr — Error")
                                 .kind(MessageDialogKind::Error)
                                 .show(|_| {});
                         }

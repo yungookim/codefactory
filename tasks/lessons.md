@@ -1,5 +1,13 @@
 # Lessons Learned
 
+## 2026-04-24 - Keep product branding on the current oh-my-pr name
+- Pattern: I shipped UI/standalone parity work while leaving older Code Factory branding in browser metadata, page headers, native app metadata, and runtime-facing copy.
+- Rule: When touching UI, standalone app, or operator-facing surfaces in this repo, search for stale `Code Factory`, `code factory`, `code-factory`, and `codefactory` branding and keep user-visible names aligned to `oh-my-pr`.
+- Prevention checklist:
+  - Run a branding search before closing UI or standalone app work.
+  - Treat Tauri `productName`, window titles, HTML metadata, page headers, MCP descriptions, and agent prompts as user-facing app-name surfaces.
+  - Do not rename compatibility namespaces such as old env vars, audit tokens, or historical fixtures unless the task explicitly calls for a migration.
+
 ## 2026-04-20 - Nail alert persistence and dismissal scope before shipping update notices
 - Pattern: I started toward a generic update alert before confirming whether the user wanted a one-time toast or a persistent banner with temporary dismissal.
 - Rule: When adding user-facing alerts or notices, confirm the persistence model and dismissal lifetime before implementation.
