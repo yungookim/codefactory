@@ -471,6 +471,67 @@ test("fetchCheckSnapshotsForRef normalizes commit statuses and check runs", asyn
   assert.equal(snapshots[2]?.targetUrl, "https://example.com/check/1");
 });
 
+test("fetchCheckSnapshotsForRef includes failed GitHub Actions step names for generic check runs", async () => {
+  const octokit = {
+    repos: {
+      getCombinedStatusForRef: async () => ({
+        data: {
+          statuses: [],
+        },
+      }),
+    },
+    checks: {
+      listForRef: async () => ({
+        data: {
+          check_runs: [
+            {
+              id: 73,
+              name: "ci",
+              status: "completed",
+              conclusion: "failure",
+              html_url: "https://github.com/example/repo/actions/runs/1/job/73",
+              output: {
+                title: null,
+                summary: null,
+              },
+              app: {
+                slug: "github-actions",
+              },
+              completed_at: "2026-04-01T12:03:00.000Z",
+            },
+          ],
+        },
+      }),
+    },
+    request: async (route: string, params: Record<string, unknown>) => {
+      assert.equal(route, "GET /repos/{owner}/{repo}/actions/jobs/{job_id}");
+      assert.equal(params.owner, "owner");
+      assert.equal(params.repo, "repo");
+      assert.equal(params.job_id, 73);
+      return {
+        data: {
+          steps: [
+            { name: "Install dependencies", conclusion: "success" },
+            { name: "Lint", conclusion: "failure" },
+            { name: "Typecheck", conclusion: "skipped" },
+          ],
+        },
+      };
+    },
+  };
+
+  const snapshots = await fetchCheckSnapshotsForRef(
+    octokit as never,
+    { owner: "owner", repo: "repo" },
+    "pr-1",
+    "abc123",
+  );
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.context, "ci");
+  assert.equal(snapshots[0]?.description, "Failed steps: Lint");
+});
+
 test("fetchFeedbackItemsForPR keeps review bots that are not explicitly ignored", async () => {
   let callIndex = 0;
 
