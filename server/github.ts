@@ -73,6 +73,8 @@ type GitHubActionsJobResponse = {
   steps?: GitHubActionsJobStepResponse[] | null;
 };
 
+const GITHUB_ACTIONS_JOB_ENRICHMENT_BATCH_SIZE = 4;
+
 export type GitHubPullCloseState = {
   number: number;
   title: string;
@@ -397,6 +399,14 @@ function summarizeFailedGitHubActionsSteps(job: GitHubActionsJobResponse): strin
   return `Failed steps: ${Array.from(new Set(failedStepNames)).join(", ")}`;
 }
 
+function isGenericCheckRunFailureSummary(summary: string | null | undefined): boolean {
+  const currentSummary = summary?.trim() ?? "";
+  return (
+    currentSummary === "" ||
+    /^(?:check run(?: [a-z_]+)?|failed|failure)$/i.test(currentSummary)
+  );
+}
+
 function mergeCheckRunFailureSummary(
   run: GitHubCheckRunResponse,
   failedStepsSummary: string | null,
@@ -405,8 +415,7 @@ function mergeCheckRunFailureSummary(
     return run;
   }
 
-  const currentSummary = run.output?.summary?.trim() ?? "";
-  if (currentSummary && !/^check run(?: [a-z_]+)?$/i.test(currentSummary)) {
+  if (!isGenericCheckRunFailureSummary(run.output?.summary)) {
     return run;
   }
 
@@ -427,6 +436,9 @@ async function enrichCheckRunWithGitHubActionsSteps(
   if (!isGitHubActionsCheckRun(run) || run.conclusion !== "failure") {
     return run;
   }
+  if (!isGenericCheckRunFailureSummary(run.output?.summary)) {
+    return run;
+  }
 
   try {
     const response = await octokit.request("GET /repos/{owner}/{repo}/actions/jobs/{job_id}", {
@@ -442,6 +454,23 @@ async function enrichCheckRunWithGitHubActionsSteps(
   } catch {
     return run;
   }
+}
+
+async function enrichCheckRunsWithGitHubActionsSteps(
+  octokit: Octokit,
+  repo: ParsedRepoSlug,
+  runs: GitHubCheckRunResponse[],
+): Promise<GitHubCheckRunResponse[]> {
+  const enrichedRuns: GitHubCheckRunResponse[] = [];
+
+  for (let index = 0; index < runs.length; index += GITHUB_ACTIONS_JOB_ENRICHMENT_BATCH_SIZE) {
+    const batch = runs.slice(index, index + GITHUB_ACTIONS_JOB_ENRICHMENT_BATCH_SIZE);
+    enrichedRuns.push(...(await Promise.all(
+      batch.map((run) => enrichCheckRunWithGitHubActionsSteps(octokit, repo, run)),
+    )));
+  }
+
+  return enrichedRuns;
 }
 
 export async function fetchCheckSnapshotsForRef(
@@ -465,10 +494,10 @@ export async function fetchCheckSnapshotsForRef(
     })),
   ]);
 
-  const checkRuns = await Promise.all(
-    ((checkRunsResponse.data.check_runs ?? []) as GitHubCheckRunResponse[]).map((run) =>
-      enrichCheckRunWithGitHubActionsSteps(octokit, repo, run),
-    ),
+  const checkRuns = await enrichCheckRunsWithGitHubActionsSteps(
+    octokit,
+    repo,
+    (checkRunsResponse.data.check_runs ?? []) as GitHubCheckRunResponse[],
   );
 
   return normalizeCheckSnapshotsFromRef({
