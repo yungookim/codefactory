@@ -23,6 +23,7 @@ import { BackgroundJobDispatcher } from "./backgroundJobDispatcher";
 import { BackgroundJobQueue, buildBackgroundJobDedupeKey } from "./backgroundJobQueue";
 import { createWatcherScheduler, type WatcherScheduler } from "./watcherScheduler";
 import { ReleaseManager } from "./releaseManager";
+import type { ReleaseAgentPullSummary } from "./releaseAgent";
 import { DeploymentHealingManager } from "./deploymentHealingManager";
 import {
   buildOctokit,
@@ -36,6 +37,7 @@ import {
   installCodeReviewWorkflow,
   listReleasesForRepo,
   listUnreleasedMergedPulls,
+  type MergedPRSummary,
   parsePRUrl,
   parseRepoSlug,
   resolveNextSemverTag,
@@ -129,6 +131,25 @@ function assertFound<T>(value: T | undefined, message: string): T {
   return value;
 }
 
+export function mapMergedPullsToReleaseSummaries(pulls: MergedPRSummary[]): ReleaseAgentPullSummary[] {
+  return pulls.flatMap((pull) => {
+    const mergeSha = pull.mergeCommitSha?.trim();
+    if (!mergeSha) {
+      return [];
+    }
+
+    return [{
+      number: pull.number,
+      title: pull.title,
+      url: pull.url,
+      author: pull.author,
+      repo: pull.repo,
+      mergedAt: pull.mergedAt,
+      mergeSha,
+    }];
+  });
+}
+
 export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): AppRuntime {
   const storage = dependencies.storage ?? getDefaultStorage();
   const events = new EventEmitter();
@@ -154,15 +175,7 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
           baseRef: options.baseBranch,
         });
 
-        return merged.map((pull) => ({
-          number: pull.number,
-          title: pull.title,
-          url: pull.url,
-          author: pull.author,
-          repo: pull.repo,
-          mergedAt: pull.mergedAt,
-          mergeSha: pull.mergeCommitSha ?? `${pull.repo}#${pull.number}`,
-        }));
+        return mapMergedPullsToReleaseSummaries(merged);
       },
       listMergedPullsForReleaseCandidate: async (octokit, repo, options) => {
         const merged = await listUnreleasedMergedPulls(octokit, repo, {
@@ -170,17 +183,9 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
         });
         const cutoffMs = Date.parse(options.untilMergedAt);
 
-        return merged
-          .filter((pull) => !Number.isFinite(cutoffMs) || Date.parse(pull.mergedAt) <= cutoffMs)
-          .map((pull) => ({
-            number: pull.number,
-            title: pull.title,
-            url: pull.url,
-            author: pull.author,
-            repo: pull.repo,
-            mergedAt: pull.mergedAt,
-            mergeSha: pull.mergeCommitSha ?? `${pull.repo}#${pull.number}`,
-          }));
+        return mapMergedPullsToReleaseSummaries(
+          merged.filter((pull) => !Number.isFinite(cutoffMs) || Date.parse(pull.mergedAt) <= cutoffMs),
+        );
       },
       findReleaseByTag: async (octokit, repo, tagName) => {
         const releases = await listReleasesForRepo(octokit, repo);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { NewPR } from "@shared/schema";
-import { createAppRuntime } from "./appRuntime";
+import { createAppRuntime, mapMergedPullsToReleaseSummaries } from "./appRuntime";
 import { MemStorage } from "./memoryStorage";
 
 async function seedPR(storage: MemStorage, overrides: Partial<NewPR> = {}) {
@@ -144,4 +144,39 @@ test("runtime updateConfig persists updates and exposes them through getConfig",
   assert.equal(config.codingAgent, "codex");
   assert.equal(config.autoUpdateDocs, false);
   assert.equal(config.includeRepositoryLinksInGitHubComments, false);
+});
+
+test("runtime release adapter skips merged PRs without a merge commit SHA", () => {
+  const summaries = mapMergedPullsToReleaseSummaries([
+    {
+      number: 12,
+      title: "Missing merge SHA",
+      url: "https://github.com/acme/widgets/pull/12",
+      author: "alice",
+      repo: "acme/widgets",
+      mergedAt: "2026-04-26T12:00:00.000Z",
+      mergeCommitSha: null,
+    },
+    {
+      number: 13,
+      title: "Real release target",
+      url: "https://github.com/acme/widgets/pull/13",
+      author: "bob",
+      repo: "acme/widgets",
+      mergedAt: "2026-04-26T13:00:00.000Z",
+      mergeCommitSha: "  abc123  ",
+    },
+  ]);
+
+  assert.deepEqual(summaries, [
+    {
+      number: 13,
+      title: "Real release target",
+      url: "https://github.com/acme/widgets/pull/13",
+      author: "bob",
+      repo: "acme/widgets",
+      mergedAt: "2026-04-26T13:00:00.000Z",
+      mergeSha: "abc123",
+    },
+  ]);
 });
