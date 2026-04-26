@@ -4045,7 +4045,7 @@ test("syncAndBabysitTrackedRepos can include teammate PRs when repo setting disa
   assert.equal(queuedTargets.length, 2);
 });
 
-test("syncAndBabysitTrackedRepos keeps explicitly tracked teammate PRs active when own-only filtering is enabled", async () => {
+test("syncAndBabysitTrackedRepos skips already tracked teammate PRs when own-only filtering is enabled", async () => {
   const storage = new MemStorage();
   await storage.updateConfig({
     watchedRepos: ["alex-morgan-o/lolodex"],
@@ -4103,7 +4103,7 @@ test("syncAndBabysitTrackedRepos keeps explicitly tracked teammate PRs active wh
 
   const updated = await storage.getPR(tracked.id);
   assert.equal(updated?.status, "watching");
-  assert.deepEqual(queuedTargets, [tracked.id]);
+  assert.deepEqual(queuedTargets, []);
 });
 
 test("syncAndBabysitTrackedRepos uses the injected clock for fallback healing snapshots", async () => {
