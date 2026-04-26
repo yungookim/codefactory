@@ -1535,6 +1535,89 @@ test("babysitPR centralizes status replies, logs best-effort failures, and updat
   }
 });
 
+test("babysitPR posts a concise GitHub status reason when the agent fails to address feedback", async () => {
+  const storage = new MemStorage();
+  await storage.updateConfig({ autoUpdateDocs: false });
+  const existingItem = makeFeedbackItem();
+  const pr = await storage.addPR({
+    number: 106,
+    title: "Verbose PR",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "watching",
+    feedbackItems: [existingItem],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "codefactory-home-"));
+  process.env.CODEFACTORY_HOME = worktreeRoot;
+
+  try {
+    const pullSummary = makePullSummary(pr);
+    let latestStatusReplyBody = "";
+    let postedFollowUps = 0;
+
+    const babysitter = new PRBabysitter(
+      storage,
+      {
+        buildOctokit: async () => ({}) as never,
+        fetchFeedbackItemsForPR: async () => [existingItem],
+        fetchPullSummary: async () => pullSummary,
+        listFailingStatuses: async () => [],
+        checkCISettled: async () => true,
+        listOpenPullsForRepo: async () => [],
+        postFollowUpForFeedbackItem: async () => {
+          postedFollowUps += 1;
+        },
+        resolveReviewThread: async () => undefined,
+        resolveGitHubAuthToken: async () => "test-token",
+        addReactionToComment: async () => {},
+        postStatusReplyForFeedbackItem: async (_octokit, _parsed, item, body) => {
+          latestStatusReplyBody = body;
+          return { commentDatabaseId: 55, replyKind: item.replyKind, body };
+        },
+        updateStatusReply: async (_octokit, _parsed, ref, body) => {
+          ref.body = body;
+          latestStatusReplyBody = body;
+        },
+      },
+      {
+        resolveAgent: async () => "codex",
+        ciPollIntervalMs: 0,
+        evaluateFixNecessityWithAgent: async () => ({
+          needsFix: true,
+          reason: "Comment requires a code change",
+        }),
+        applyFixesWithAgent: async () => ({
+          code: 1,
+          stdout: "",
+          stderr: "TypeScript check failed\nstack trace line that should stay out of the GitHub status reply",
+        }),
+        runCommand: makeGitRunCommand(),
+      },
+    );
+
+    await babysitter.babysitPR(pr.id, "codex");
+
+    const updated = await storage.getPR(pr.id);
+    const failedItem = updated?.feedbackItems.find((item) => item.id === existingItem.id);
+
+    assert.equal(failedItem?.status, "failed");
+    assert.equal(postedFollowUps, 0);
+    assert.match(latestStatusReplyBody, /\u274c \*\*Agent failed\*\* \u2014 TypeScript check failed\./);
+    assert.doesNotMatch(latestStatusReplyBody, /stack trace line/);
+  } finally {
+    delete process.env.CODEFACTORY_HOME;
+  }
+});
+
 test("babysitPR marks the run as error when app-owned GitHub follow-up fails", async () => {
   const storage = new MemStorage();
   await storage.updateConfig({ autoUpdateDocs: false });
