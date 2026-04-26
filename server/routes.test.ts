@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import test from "node:test";
 import express from "express";
+import type { Octokit } from "@octokit/rest";
 import type { AppUpdateStatus, NewPR } from "@shared/schema";
+import type { ReleaseAgentPullSummary, ReleaseEvaluationDecision } from "./releaseAgent";
+import { ReleaseManager, type ReleaseGitHubService } from "./releaseManager";
 import { MemStorage } from "./memoryStorage";
 import type { RouteDependencies } from "./routes";
 import { registerRoutes } from "./routes";
@@ -65,6 +68,52 @@ async function createHarness(storage = new MemStorage(), dependencies: Partial<R
       });
     },
   };
+}
+
+function makeMergedSummary(overrides: Partial<ReleaseAgentPullSummary> = {}): ReleaseAgentPullSummary {
+  return {
+    number: 42,
+    title: "Manual release",
+    url: "https://github.com/acme/widgets/pull/42",
+    author: "alice",
+    repo: "acme/widgets",
+    mergedAt: "2026-04-24T12:00:00.000Z",
+    mergeSha: "manual-release-sha",
+    ...overrides,
+  };
+}
+
+function makeReleaseManagerForRoutes(
+  storage: MemStorage,
+  overrides: Partial<ReleaseGitHubService> = {},
+): ReleaseManager {
+  const github: ReleaseGitHubService = {
+    buildOctokit: async () => ({}) as Octokit,
+    getDefaultBranch: async () => "main",
+    findLatestSemverReleaseTag: async () => "v1.2.3",
+    bumpReleaseTag: () => "v1.2.4",
+    listUnreleasedMergedPulls: async () => [makeMergedSummary()],
+    listMergedPullsForReleaseCandidate: async () => [makeMergedSummary()],
+    findReleaseByTag: async () => null,
+    createGitHubRelease: async (_octokit, _repo, params) => ({
+      id: 123,
+      url: `https://github.com/acme/widgets/releases/tag/${params.tagName}`,
+      tagName: params.tagName,
+      name: params.name,
+    }),
+    ...overrides,
+  };
+
+  return new ReleaseManager(storage, {
+    github,
+    evaluateRelease: async (): Promise<ReleaseEvaluationDecision> => ({
+      shouldRelease: true,
+      reason: "Manual release requested",
+      bump: "patch",
+      title: "Manual release",
+      notes: "Manual release notes",
+    }),
+  });
 }
 
 test("GET/PATCH /api/config masks and persists ordered github tokens", async () => {
@@ -218,6 +267,62 @@ test("POST /api/repos/sync enqueues a durable sync_watched_repos job", async () 
     assert.equal(jobs.length, 1);
     assert.equal(jobs[0].targetId, "runtime:1");
     assert.equal(jobs[0].dedupeKey, "sync_watched_repos");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("POST /api/repos/release queues a manual release run for the requested repo", async () => {
+  const storage = new MemStorage();
+  const harness = await createHarness(storage, {
+    releaseManager: makeReleaseManagerForRoutes(storage),
+  });
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/api/repos/release`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ repo: "https://github.com/acme/widgets" }),
+    });
+
+    assert.equal(response.status, 201);
+    const body = await response.json() as {
+      repo: string;
+      source?: string;
+      triggerPrNumber: number;
+      triggerMergeSha: string;
+    };
+    assert.equal(body.repo, "acme/widgets");
+    assert.equal(body.source, "manual");
+    assert.equal(body.triggerPrNumber, 42);
+    assert.equal(body.triggerMergeSha, "manual-release-sha");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("POST /api/repos/release returns 409 when the repo has no unreleased merged PRs", async () => {
+  const storage = new MemStorage();
+  const harness = await createHarness(storage, {
+    releaseManager: makeReleaseManagerForRoutes(storage, {
+      listUnreleasedMergedPulls: async () => [],
+    }),
+  });
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/api/repos/release`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ repo: "acme/widgets" }),
+    });
+
+    assert.equal(response.status, 409);
+    const body = await response.json() as { error: string };
+    assert.match(body.error, /No unreleased merged pull requests found for acme\/widgets/);
   } finally {
     await harness.close();
   }

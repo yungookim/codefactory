@@ -23,6 +23,7 @@ import { BackgroundJobDispatcher } from "./backgroundJobDispatcher";
 import { BackgroundJobQueue, buildBackgroundJobDedupeKey } from "./backgroundJobQueue";
 import { createWatcherScheduler, type WatcherScheduler } from "./watcherScheduler";
 import { ReleaseManager } from "./releaseManager";
+import type { ReleaseAgentPullSummary } from "./releaseAgent";
 import { DeploymentHealingManager } from "./deploymentHealingManager";
 import {
   buildOctokit,
@@ -30,11 +31,13 @@ import {
   createGitHubRelease,
   fetchPullSummary,
   formatRepoSlug,
+  getDefaultBranchForRepo,
   getLatestSemverTagForRepo,
   GitHubIntegrationError,
   installCodeReviewWorkflow,
   listReleasesForRepo,
   listUnreleasedMergedPulls,
+  type MergedPRSummary,
   parsePRUrl,
   parseRepoSlug,
   resolveNextSemverTag,
@@ -84,6 +87,7 @@ export type AppRuntime = {
   addRepo(repoInput: string): Promise<{ repo: string }>;
   updateRepoSettings(repoInput: string, updates: Partial<Omit<WatchedRepo, "repo">>): Promise<WatchedRepo>;
   syncRepos(): Promise<{ ok: true }>;
+  createManualRelease(repoInput: string): Promise<ReleaseRun>;
   listPRs(view?: "active" | "archived"): Promise<PR[]>;
   getPR(id: string): Promise<PR | null>;
   addPR(url: string): Promise<PR>;
@@ -127,6 +131,25 @@ function assertFound<T>(value: T | undefined, message: string): T {
   return value;
 }
 
+export function mapMergedPullsToReleaseSummaries(pulls: MergedPRSummary[]): ReleaseAgentPullSummary[] {
+  return pulls.flatMap((pull) => {
+    const mergeSha = pull.mergeCommitSha?.trim();
+    if (!mergeSha) {
+      return [];
+    }
+
+    return [{
+      number: pull.number,
+      title: pull.title,
+      url: pull.url,
+      author: pull.author,
+      repo: pull.repo,
+      mergedAt: pull.mergedAt,
+      mergeSha,
+    }];
+  });
+}
+
 export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): AppRuntime {
   const storage = dependencies.storage ?? getDefaultStorage();
   const events = new EventEmitter();
@@ -144,25 +167,25 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
   const releaseManager = dependencies.releaseManager ?? new ReleaseManager(storage, {
     github: {
       buildOctokit,
+      getDefaultBranch: getDefaultBranchForRepo,
       findLatestSemverReleaseTag: getLatestSemverTagForRepo,
       bumpReleaseTag: resolveNextSemverTag,
+      listUnreleasedMergedPulls: async (octokit, repo, options) => {
+        const merged = await listUnreleasedMergedPulls(octokit, repo, {
+          baseRef: options.baseBranch,
+        });
+
+        return mapMergedPullsToReleaseSummaries(merged);
+      },
       listMergedPullsForReleaseCandidate: async (octokit, repo, options) => {
         const merged = await listUnreleasedMergedPulls(octokit, repo, {
           baseRef: options.baseBranch,
         });
         const cutoffMs = Date.parse(options.untilMergedAt);
 
-        return merged
-          .filter((pull) => !Number.isFinite(cutoffMs) || Date.parse(pull.mergedAt) <= cutoffMs)
-          .map((pull) => ({
-            number: pull.number,
-            title: pull.title,
-            url: pull.url,
-            author: pull.author,
-            repo: pull.repo,
-            mergedAt: pull.mergedAt,
-            mergeSha: pull.mergeCommitSha ?? `${pull.repo}#${pull.number}`,
-          }));
+        return mapMergedPullsToReleaseSummaries(
+          merged.filter((pull) => !Number.isFinite(cutoffMs) || Date.parse(pull.mergedAt) <= cutoffMs),
+        );
       },
       findReleaseByTag: async (octokit, repo, tagName) => {
         const releases = await listReleasesForRepo(octokit, repo);
@@ -420,6 +443,22 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
       await watcherScheduler.runAndReportErrors();
       notifyChange();
       return { ok: true as const };
+    },
+
+    async createManualRelease(repoInput) {
+      const parsedRepo = parseRepoSlug(repoInput);
+      if (!parsedRepo) {
+        throw new AppRuntimeError(400, "Invalid repository. Use owner/repo or https://github.com/owner/repo");
+      }
+
+      const canonical = formatRepoSlug(parsedRepo);
+      const release = await releaseManager.enqueueManualRepoRelease(canonical);
+      if (!release) {
+        throw new AppRuntimeError(409, `No unreleased merged pull requests found for ${canonical}`);
+      }
+
+      notifyChange();
+      return release;
     },
 
     async listPRs(view = "active") {

@@ -64,6 +64,12 @@ New watched repos default to **My PRs only**. If you want team-wide tracking for
 
 PRs added directly by URL stay tracked regardless of a repo's `ownPrsOnly` setting.
 
+## Manual Repository Releases
+
+Each watched repository row in the dashboard includes a **Release** button. Pressing it queues a manual release run for the latest unreleased merged PR in that repository, using the same release evaluation, version bump, notes, and GitHub publishing flow as automatic release creation.
+
+Manual release runs are allowed even when `autoCreateReleases` is disabled, so you can keep automatic publishing off and still publish releases on demand. If the repository has no unreleased merged PRs, the API returns `409` and no release run is created.
+
 ## App Update Banner
 
 On builds where `APP_VERSION` is a stable semver string, the dashboard calls

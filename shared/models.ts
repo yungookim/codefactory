@@ -216,6 +216,7 @@ export function createReleaseRun(
   const now = new Date().toISOString();
   return releaseRunSchema.parse({
     ...data,
+    source: data.source ?? "automatic",
     id: randomUUID(),
     createdAt: now,
     updatedAt: now,
@@ -229,6 +230,7 @@ export function applyReleaseRunUpdate(
   return releaseRunSchema.parse({
     ...existing,
     ...updates,
+    source: updates.source ?? existing.source ?? "automatic",
     // Immutable fields
     id: existing.id,
     createdAt: existing.createdAt,

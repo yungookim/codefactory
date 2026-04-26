@@ -4,7 +4,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import * as Collapsible from "@radix-ui/react-collapsible";
 import { queryClient, apiRequest, fetchJson } from "@/lib/queryClient";
 import { getRepoHref } from "@/lib/repoHref";
-import type { Config, FeedbackItem, HealingSession, LogEntry, PR, PRQuestion, WatchedRepo } from "@shared/schema";
+import type { Config, FeedbackItem, HealingSession, LogEntry, PR, PRQuestion, ReleaseRun, WatchedRepo } from "@shared/schema";
 import { OnboardingPanel } from "@/components/OnboardingPanel";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
@@ -866,6 +866,20 @@ export default function Dashboard() {
     },
   });
 
+  const manualReleaseMutation = useMutation({
+    mutationFn: async (repo: string) => {
+      const res = await apiRequest("POST", "/api/repos/release", { repo });
+      return res.json() as Promise<ReleaseRun>;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/releases"] });
+      toast({ description: "Release queued." });
+    },
+    onError: (error) => {
+      showMutationError("Could not create release", error);
+    },
+  });
+
   const updateRepoSettingsRequest = async (updates: RepoSettingsUpdate) => {
     const res = await apiRequest("PATCH", "/api/repos/settings", updates);
     return res.json();
@@ -1117,58 +1131,74 @@ export default function Dashboard() {
                     <div className="text-[11px] text-muted-foreground">No repositories being watched yet.</div>
                   ) : (
                     <div className="space-y-1 text-[12px]">
-                      {repos.map((repo) => (
-                        <div
-                          key={repo.repo}
-                          className="space-y-2 border border-border/60 px-2 py-2"
-                        >
-                          <a
-                            href={getRepoHref(repo.repo)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            data-testid={`tracked-repo-${repo.repo.replace("/", "-")}`}
-                            className="min-w-0 break-all text-foreground/75 underline decoration-border underline-offset-2 transition-colors hover:text-foreground"
+                      {repos.map((repo) => {
+                        const manualReleasePending = manualReleaseMutation.isPending
+                          && manualReleaseMutation.variables === repo.repo;
+
+                        return (
+                          <div
+                            key={repo.repo}
+                            className="space-y-2 border border-border/60 px-2 py-2"
                           >
-                            {repo.repo}
-                          </a>
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div>
-                              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                                Track automatically
+                            <a
+                              href={getRepoHref(repo.repo)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              data-testid={`tracked-repo-${repo.repo.replace("/", "-")}`}
+                              className="min-w-0 break-all text-foreground/75 underline decoration-border underline-offset-2 transition-colors hover:text-foreground"
+                            >
+                              {repo.repo}
+                            </a>
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div>
+                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                  Track automatically
+                                </div>
+                                <WatchScopeControl
+                                  value={getWatchScope(repo.ownPrsOnly)}
+                                  onChange={(value) =>
+                                    updateRepoSettingsMutation.mutate({
+                                      repo: repo.repo,
+                                      ownPrsOnly: value === "mine",
+                                    })
+                                  }
+                                  disabled={updateRepoSettingsMutation.isPending}
+                                  name={`tracked-repo-scope-${repo.repo}`}
+                                  testIdPrefix={`tracked-repo-scope-${repo.repo.replace("/", "-")}`}
+                                  compact
+                                />
                               </div>
-                              <WatchScopeControl
-                                value={getWatchScope(repo.ownPrsOnly)}
-                                onChange={(value) =>
-                                  updateRepoSettingsMutation.mutate({
-                                    repo: repo.repo,
-                                    ownPrsOnly: value === "mine",
-                                  })
-                                }
-                                disabled={updateRepoSettingsMutation.isPending}
-                                name={`tracked-repo-scope-${repo.repo}`}
-                                testIdPrefix={`tracked-repo-scope-${repo.repo.replace("/", "-")}`}
-                                compact
-                              />
+                              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 self-end">
+                                <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                                  <input
+                                    type="checkbox"
+                                    checked={repo.autoCreateReleases}
+                                    onChange={(e) =>
+                                      updateRepoSettingsMutation.mutate({
+                                        repo: repo.repo,
+                                        autoCreateReleases: e.target.checked,
+                                      })
+                                    }
+                                    disabled={updateRepoSettingsMutation.isPending}
+                                    data-testid={`tracked-repo-auto-release-${repo.repo.replace("/", "-")}`}
+                                    className="accent-foreground"
+                                  />
+                                  Auto-release
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => manualReleaseMutation.mutate(repo.repo)}
+                                  disabled={manualReleaseMutation.isPending}
+                                  data-testid={`tracked-repo-manual-release-${repo.repo.replace("/", "-")}`}
+                                  className="border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background disabled:opacity-30"
+                                >
+                                  {manualReleasePending ? "Releasing…" : "Release"}
+                                </button>
+                              </div>
                             </div>
-                            <label className="flex shrink-0 self-end items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                              <input
-                                type="checkbox"
-                                checked={repo.autoCreateReleases}
-                                onChange={(e) =>
-                                  updateRepoSettingsMutation.mutate({
-                                    repo: repo.repo,
-                                    autoCreateReleases: e.target.checked,
-                                  })
-                                }
-                                disabled={updateRepoSettingsMutation.isPending}
-                                data-testid={`tracked-repo-auto-release-${repo.repo.replace("/", "-")}`}
-                                className="accent-foreground"
-                              />
-                              Auto-release
-                            </label>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
