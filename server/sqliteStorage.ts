@@ -314,6 +314,7 @@ type ReleaseRunRow = {
   trigger_pr_url: string;
   trigger_merge_sha: string;
   trigger_merged_at: string;
+  source: ReleaseRun["source"] | null;
   status: ReleaseRunStatus;
   decision_reason: string | null;
   recommended_bump: "patch" | "minor" | "major" | null;
@@ -717,6 +718,7 @@ export class SqliteStorage implements IStorage {
         trigger_pr_url TEXT NOT NULL,
         trigger_merge_sha TEXT NOT NULL,
         trigger_merged_at TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'automatic',
         status TEXT NOT NULL,
         decision_reason TEXT,
         recommended_bump TEXT,
@@ -800,6 +802,7 @@ export class SqliteStorage implements IStorage {
     this.ensureColumn("config", "deployment_check_poll_interval_ms", "INTEGER NOT NULL DEFAULT 15000");
     this.ensureColumn("watched_repos", "auto_create_releases", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("watched_repos", "own_prs_only", "INTEGER NOT NULL DEFAULT 1");
+    this.ensureColumn("release_runs", "source", "TEXT NOT NULL DEFAULT 'automatic'");
     this.ensureColumn("prs", "watch_enabled", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("prs", "docs_assessment_json", "TEXT");
 
@@ -2410,6 +2413,7 @@ export class SqliteStorage implements IStorage {
       triggerPrUrl: row.trigger_pr_url,
       triggerMergeSha: row.trigger_merge_sha,
       triggerMergedAt: row.trigger_merged_at,
+      source: row.source === "manual" ? "manual" : "automatic",
       status: row.status,
       decisionReason: row.decision_reason,
       recommendedBump: row.recommended_bump,
@@ -2430,7 +2434,7 @@ export class SqliteStorage implements IStorage {
   async getReleaseRun(id: string): Promise<ReleaseRun | undefined> {
     const row = this.get<ReleaseRunRow>(`
       SELECT id, repo, base_branch, trigger_pr_number, trigger_pr_title, trigger_pr_url,
-             trigger_merge_sha, trigger_merged_at, status, decision_reason, recommended_bump,
+             trigger_merge_sha, trigger_merged_at, source, status, decision_reason, recommended_bump,
              proposed_version, release_title, release_notes, included_prs_json, target_sha,
              github_release_id, github_release_url, error, created_at, updated_at, completed_at
       FROM release_runs
@@ -2442,7 +2446,7 @@ export class SqliteStorage implements IStorage {
   async getReleaseRunByRepoAndMergeSha(repo: string, triggerMergeSha: string): Promise<ReleaseRun | undefined> {
     const row = this.get<ReleaseRunRow>(`
       SELECT id, repo, base_branch, trigger_pr_number, trigger_pr_title, trigger_pr_url,
-             trigger_merge_sha, trigger_merged_at, status, decision_reason, recommended_bump,
+             trigger_merge_sha, trigger_merged_at, source, status, decision_reason, recommended_bump,
              proposed_version, release_title, release_notes, included_prs_json, target_sha,
              github_release_id, github_release_url, error, created_at, updated_at, completed_at
       FROM release_runs
@@ -2456,7 +2460,7 @@ export class SqliteStorage implements IStorage {
   async getReleaseRunByTrigger(repo: string, triggerPrNumber: number, triggerMergeSha: string): Promise<ReleaseRun | undefined> {
     const row = this.get<ReleaseRunRow>(`
       SELECT id, repo, base_branch, trigger_pr_number, trigger_pr_title, trigger_pr_url,
-             trigger_merge_sha, trigger_merged_at, status, decision_reason, recommended_bump,
+             trigger_merge_sha, trigger_merged_at, source, status, decision_reason, recommended_bump,
              proposed_version, release_title, release_notes, included_prs_json, target_sha,
              github_release_id, github_release_url, error, created_at, updated_at, completed_at
       FROM release_runs
@@ -2484,7 +2488,7 @@ export class SqliteStorage implements IStorage {
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = this.all<ReleaseRunRow>(`
       SELECT id, repo, base_branch, trigger_pr_number, trigger_pr_title, trigger_pr_url,
-             trigger_merge_sha, trigger_merged_at, status, decision_reason, recommended_bump,
+             trigger_merge_sha, trigger_merged_at, source, status, decision_reason, recommended_bump,
              proposed_version, release_title, release_notes, included_prs_json, target_sha,
              github_release_id, github_release_url, error, created_at, updated_at, completed_at
       FROM release_runs
@@ -2500,10 +2504,10 @@ export class SqliteStorage implements IStorage {
     this.run(`
       INSERT INTO release_runs (
         id, repo, base_branch, trigger_pr_number, trigger_pr_title, trigger_pr_url,
-        trigger_merge_sha, trigger_merged_at, status, decision_reason, recommended_bump,
+        trigger_merge_sha, trigger_merged_at, source, status, decision_reason, recommended_bump,
         proposed_version, release_title, release_notes, included_prs_json, target_sha,
         github_release_id, github_release_url, error, created_at, updated_at, completed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       entry.id,
       entry.repo,
@@ -2513,6 +2517,7 @@ export class SqliteStorage implements IStorage {
       entry.triggerPrUrl,
       entry.triggerMergeSha,
       entry.triggerMergedAt,
+      entry.source ?? "automatic",
       entry.status,
       entry.decisionReason,
       entry.recommendedBump,
@@ -2539,7 +2544,7 @@ export class SqliteStorage implements IStorage {
     this.run(`
       UPDATE release_runs
       SET repo = ?, base_branch = ?, trigger_pr_number = ?, trigger_pr_title = ?, trigger_pr_url = ?,
-          trigger_merge_sha = ?, trigger_merged_at = ?, status = ?, decision_reason = ?,
+          trigger_merge_sha = ?, trigger_merged_at = ?, source = ?, status = ?, decision_reason = ?,
           recommended_bump = ?, proposed_version = ?, release_title = ?, release_notes = ?,
           included_prs_json = ?, target_sha = ?, github_release_id = ?, github_release_url = ?,
           error = ?, created_at = ?, updated_at = ?, completed_at = ?
@@ -2552,6 +2557,7 @@ export class SqliteStorage implements IStorage {
       next.triggerPrUrl,
       next.triggerMergeSha,
       next.triggerMergedAt,
+      next.source ?? "automatic",
       next.status,
       next.decisionReason,
       next.recommendedBump,

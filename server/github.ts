@@ -1017,7 +1017,7 @@ function parseDateMs(value: string | null | undefined): number | null {
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
-async function getDefaultBranchForRepo(
+export async function getDefaultBranchForRepo(
   octokit: Octokit,
   repo: ParsedRepoSlug,
 ): Promise<string> {

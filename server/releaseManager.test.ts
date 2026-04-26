@@ -50,6 +50,7 @@ function makeGitHubService(overrides: Partial<ReleaseGitHubService> = {}): Relea
   return {
     buildOctokit: async () => ({}) as Octokit,
     findLatestSemverReleaseTag: async () => "v1.2.3",
+    getDefaultBranch: async () => "main",
     bumpReleaseTag: (latestTag, bump) => {
       if (latestTag !== "v1.2.3") {
         throw new Error(`unexpected latest tag: ${latestTag}`);
@@ -58,6 +59,15 @@ function makeGitHubService(overrides: Partial<ReleaseGitHubService> = {}): Relea
       if (bump === "minor") return "v1.3.0";
       return "v1.2.4";
     },
+    listUnreleasedMergedPulls: async () => [
+      makeMergedSummary({
+        number: 70,
+        title: "Earlier merged change",
+        mergedAt: "2026-03-28T14:00:00.000Z",
+        mergeSha: "def456",
+      }),
+      makeMergedSummary(),
+    ],
     listMergedPullsForReleaseCandidate: async (_octokit, _repo, options) => [
       makeMergedSummary({
         number: 70,
@@ -84,6 +94,7 @@ function makeReleaseRun(overrides: Partial<ReleaseRun> = {}): ReleaseRun {
     triggerPrUrl: "https://github.com/yungookim/oh-my-pr/pull/74",
     triggerMergeSha: "retry-sha",
     triggerMergedAt: now,
+    source: "automatic",
     status: "error",
     decisionReason: null,
     recommendedBump: null,
@@ -117,6 +128,135 @@ function createQueuedManager(params?: {
 
   return { storage, queue, manager };
 }
+
+test("ReleaseManager enqueues a manual repo release from the latest unreleased merged PR", async () => {
+  const storage = new MemStorage();
+  await storage.updateConfig(makeConfig());
+
+  const { manager } = createQueuedManager({
+    storage,
+    github: {
+      listUnreleasedMergedPulls: async () => [
+        makeMergedSummary({
+          number: 70,
+          title: "Earlier merged change",
+          mergedAt: "2026-03-28T14:00:00.000Z",
+          mergeSha: "def456",
+        }),
+        makeMergedSummary({
+          number: 72,
+          title: "Manual release trigger",
+          url: "https://github.com/yungookim/oh-my-pr/pull/72",
+          mergedAt: "2026-03-28T16:00:00.000Z",
+          mergeSha: "manual-sha",
+        }),
+      ],
+    },
+  });
+
+  const created = await manager.enqueueManualRepoRelease("yungookim/oh-my-pr");
+  const jobs = await storage.listBackgroundJobs({
+    kind: "process_release_run",
+    status: "queued",
+  });
+
+  assert.ok(created);
+  assert.equal(created.source, "manual");
+  assert.equal(created.baseBranch, "main");
+  assert.equal(created.triggerPrNumber, 72);
+  assert.equal(created.triggerPrTitle, "Manual release trigger");
+  assert.equal(created.triggerMergeSha, "manual-sha");
+  assert.equal(created.targetSha, "manual-sha");
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].targetId, created.id);
+  assert.equal(jobs[0].dedupeKey, buildBackgroundJobDedupeKey("process_release_run", created.id));
+  assert.equal(await manager.waitForIdle(), true);
+});
+
+test("ReleaseManager publishes manual release runs when auto-release settings are disabled", async () => {
+  const storage = new MemStorage();
+  await storage.updateConfig(makeConfig({
+    autoCreateReleases: false,
+    watchedRepos: ["yungookim/oh-my-pr"],
+  }));
+  await storage.updateRepoSettings("yungookim/oh-my-pr", {
+    autoCreateReleases: false,
+  });
+
+  let createCalls = 0;
+  const { manager } = createQueuedManager({
+    storage,
+    github: {
+      createGitHubRelease: async (_octokit, _repo, params) => {
+        createCalls += 1;
+        assert.equal(params.tagName, "v1.2.4");
+        return makePublishedRelease(params.tagName);
+      },
+    },
+    evaluateRelease: async (): Promise<ReleaseEvaluationDecision> => ({
+      shouldRelease: true,
+      reason: "Manual release requested",
+      bump: "patch",
+      title: "Manual patch",
+      notes: "Manual release notes",
+    }),
+  });
+  const manualRun = await storage.createReleaseRun(makeReleaseRun({
+    source: "manual",
+    status: "detected",
+    error: null,
+    completedAt: null,
+  }));
+
+  const processed = await manager.processReleaseRun(manualRun.id);
+
+  assert.ok(processed);
+  assert.equal(processed.status, "published");
+  assert.equal(processed.source, "manual");
+  assert.equal(processed.githubReleaseUrl, "https://github.com/yungookim/oh-my-pr/releases/tag/v1.2.4");
+  assert.equal(createCalls, 1);
+});
+
+test("ReleaseManager publishes a manual patch release when evaluation recommends skipping", async () => {
+  const storage = new MemStorage();
+  await storage.updateConfig(makeConfig());
+
+  let releaseBody = "";
+  const { manager } = createQueuedManager({
+    storage,
+    github: {
+      createGitHubRelease: async (_octokit, _repo, params) => {
+        assert.equal(params.tagName, "v1.2.4");
+        assert.equal(params.name, "v1.2.4 - Manual release");
+        releaseBody = params.body;
+        return makePublishedRelease(params.tagName);
+      },
+    },
+    evaluateRelease: async (): Promise<ReleaseEvaluationDecision> => ({
+      shouldRelease: false,
+      reason: "Only internal cleanup",
+      bump: null,
+      title: null,
+      notes: null,
+    }),
+  });
+  const manualRun = await storage.createReleaseRun(makeReleaseRun({
+    source: "manual",
+    status: "detected",
+    error: null,
+    completedAt: null,
+  }));
+
+  const processed = await manager.processReleaseRun(manualRun.id);
+
+  assert.ok(processed);
+  assert.equal(processed.status, "published");
+  assert.equal(processed.decisionReason, "Manual release requested. Evaluator recommendation: Only internal cleanup");
+  assert.equal(processed.recommendedBump, "patch");
+  assert.match(releaseBody, /## Changes/);
+  assert.match(releaseBody, /#70 Earlier merged change/);
+  assert.match(releaseBody, /#74 Retryable release/);
+});
 
 test("ReleaseManager enqueues a durable release job and still executes the release flow", async () => {
   const storage = new MemStorage();

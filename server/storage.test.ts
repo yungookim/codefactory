@@ -621,6 +621,7 @@ test("SqliteStorage release run lookup is idempotent and list is newest-first", 
     triggerPrUrl: "https://github.com/owner/repo/pull/2",
     triggerMergeSha: "merge-sha-2",
     triggerMergedAt: "2026-03-28T10:01:00.000Z",
+    source: "manual",
     status: "published",
     decisionReason: "Ship it",
     recommendedBump: "minor",
@@ -637,6 +638,7 @@ test("SqliteStorage release run lookup is idempotent and list is newest-first", 
 
   const byRepoAndSha = await storage.getReleaseRunByRepoAndMergeSha("owner/repo", "merge-sha-1");
   assert.equal(byRepoAndSha?.id, older.id);
+  assert.equal(byRepoAndSha?.source, "automatic");
 
   const byTrigger = await storage.getReleaseRunByTrigger("owner/repo", 1, "merge-sha-1");
   assert.equal(byTrigger?.id, older.id);
@@ -644,6 +646,7 @@ test("SqliteStorage release run lookup is idempotent and list is newest-first", 
   const runs = await storage.listReleaseRuns();
   assert.equal(runs.length, 2);
   assert.equal(runs[0]?.triggerPrNumber, 2);
+  assert.equal(runs[0]?.source, "manual");
   assert.equal(runs[1]?.triggerPrNumber, 1);
   storage.close();
 });

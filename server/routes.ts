@@ -175,6 +175,15 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/repos/release", async (req, res) => {
+    try {
+      const { repo } = z.object({ repo: z.string().min(1) }).parse(req.body);
+      res.status(201).json(await runtime.createManualRelease(repo));
+    } catch (error: unknown) {
+      sendAppAwareError(res, error);
+    }
+  });
+
   app.get("/api/prs", async (_req, res) => {
     res.json(await runtime.listPRs("active"));
   });

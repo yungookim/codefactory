@@ -25,8 +25,16 @@ type PublishedRelease = {
 
 export type ReleaseGitHubService = {
   buildOctokit(config: Config): Promise<Octokit>;
+  getDefaultBranch(octokit: Octokit, repo: ReleaseRepo): Promise<string>;
   findLatestSemverReleaseTag(octokit: Octokit, repo: ReleaseRepo): Promise<string | null>;
   bumpReleaseTag(latestTag: string | null, bump: ReleaseBump): string;
+  listUnreleasedMergedPulls(
+    octokit: Octokit,
+    repo: ReleaseRepo,
+    options: {
+      baseBranch: string;
+    },
+  ): Promise<ReleaseAgentPullSummary[]>;
   listMergedPullsForReleaseCandidate?(
     octokit: Octokit,
     repo: ReleaseRepo,
@@ -135,6 +143,82 @@ export class ReleaseManager {
     return created;
   }
 
+  async enqueueManualRepoRelease(repoInput: string): Promise<ReleaseRun | null> {
+    const parsedRepo = parseRepoSlug(repoInput);
+    if (!parsedRepo) {
+      throw new Error(`Invalid repository slug: ${repoInput}`);
+    }
+
+    const repo = `${parsedRepo.owner}/${parsedRepo.repo}`;
+    const config = await this.storage.getConfig();
+    const octokit = await this.github.buildOctokit(config);
+    const baseBranch = await this.github.getDefaultBranch(octokit, parsedRepo);
+    const unreleased = await this.github.listUnreleasedMergedPulls(octokit, parsedRepo, {
+      baseBranch,
+    });
+    const triggerPr = [...unreleased].sort((a, b) => Date.parse(a.mergedAt) - Date.parse(b.mergedAt)).at(-1);
+    if (!triggerPr) {
+      return null;
+    }
+
+    const existing = await this.storage.getReleaseRunByTrigger(
+      repo,
+      triggerPr.number,
+      triggerPr.mergeSha,
+    );
+    if (existing) {
+      const shouldReset = existing.status === "skipped" || existing.status === "error";
+      const updated = await this.storage.updateReleaseRun(existing.id, {
+        source: "manual",
+        ...(shouldReset ? {
+          status: "detected" as const,
+          decisionReason: null,
+          recommendedBump: null,
+          proposedVersion: null,
+          releaseTitle: null,
+          releaseNotes: null,
+          includedPrs: [],
+          targetSha: triggerPr.mergeSha,
+          githubReleaseId: null,
+          githubReleaseUrl: null,
+          error: null,
+          completedAt: null,
+        } : {}),
+      });
+      const next = updated ?? existing;
+      if (!isTerminalReleaseStatus(next.status)) {
+        this.scheduleProcessing(next.id);
+      }
+      return next;
+    }
+
+    const created = await this.storage.createReleaseRun({
+      repo,
+      baseBranch,
+      triggerPrNumber: triggerPr.number,
+      triggerPrTitle: triggerPr.title,
+      triggerPrUrl: triggerPr.url,
+      triggerMergeSha: triggerPr.mergeSha,
+      triggerMergedAt: triggerPr.mergedAt,
+      source: "manual",
+      status: "detected",
+      decisionReason: null,
+      recommendedBump: null,
+      proposedVersion: null,
+      releaseTitle: null,
+      releaseNotes: null,
+      includedPrs: [],
+      targetSha: triggerPr.mergeSha,
+      githubReleaseId: null,
+      githubReleaseUrl: null,
+      error: null,
+      completedAt: null,
+    });
+
+    this.scheduleProcessing(created.id);
+    return created;
+  }
+
   async retryReleaseRun(id: string): Promise<ReleaseRun | undefined> {
     const existing = await this.storage.getReleaseRun(id);
     if (!existing) {
@@ -183,7 +267,8 @@ export class ReleaseManager {
         }
 
         const config = await this.storage.getConfig();
-        if (!config.autoCreateReleases) {
+        const isManualRelease = run.source === "manual";
+        if (!isManualRelease && !config.autoCreateReleases) {
           const skipped = await this.storage.updateReleaseRun(id, {
             status: "skipped",
             decisionReason: "Automatic release creation is disabled in settings",
@@ -193,7 +278,7 @@ export class ReleaseManager {
         }
 
         const repoSettings = await this.storage.getRepoSettings(run.repo);
-        if (repoSettings && !repoSettings.autoCreateReleases) {
+        if (!isManualRelease && repoSettings && !repoSettings.autoCreateReleases) {
           const skipped = await this.storage.updateReleaseRun(id, {
             status: "skipped",
             decisionReason: `Automatic release creation is disabled for ${run.repo}`,
@@ -221,11 +306,14 @@ export class ReleaseManager {
           triggerPr,
           includedPulls: includedPulls,
         });
+        const releaseDecision = decision.shouldRelease || !isManualRelease
+          ? decision
+          : createManualReleaseDecision(decision, includedPulls);
 
-        if (!decision.shouldRelease) {
+        if (!releaseDecision.shouldRelease) {
           const skipped = await this.storage.updateReleaseRun(id, {
             status: "skipped",
-            decisionReason: decision.reason,
+            decisionReason: releaseDecision.reason,
             recommendedBump: null,
             proposedVersion: null,
             releaseTitle: null,
@@ -237,17 +325,17 @@ export class ReleaseManager {
           return skipped ?? undefined;
         }
 
-        if (!decision.bump) {
+        if (!releaseDecision.bump) {
           throw new Error("Release evaluation approved publishing but did not provide a semver bump");
         }
 
-        const proposedVersion = this.github.bumpReleaseTag(latestTag, decision.bump);
-        const releaseTitle = normalizeReleaseTitle(decision, proposedVersion);
-        const releaseNotes = decision.notes ?? `Release ${proposedVersion}`;
+        const proposedVersion = this.github.bumpReleaseTag(latestTag, releaseDecision.bump);
+        const releaseTitle = normalizeReleaseTitle(releaseDecision, proposedVersion);
+        const releaseNotes = releaseDecision.notes ?? `Release ${proposedVersion}`;
         await this.storage.updateReleaseRun(id, {
           status: "proposed",
-          decisionReason: decision.reason,
-          recommendedBump: decision.bump,
+          decisionReason: releaseDecision.reason,
+          recommendedBump: releaseDecision.bump,
           proposedVersion,
           releaseTitle,
           releaseNotes,
@@ -404,6 +492,27 @@ function normalizeReleaseTitle(
   }
 
   return title.startsWith(version) ? title : `${version} - ${title}`;
+}
+
+function createManualReleaseDecision(
+  decision: ReleaseEvaluationDecision,
+  includedPulls: ReleaseAgentPullSummary[],
+): ReleaseEvaluationDecision {
+  return {
+    shouldRelease: true,
+    reason: `Manual release requested. Evaluator recommendation: ${decision.reason}`,
+    bump: "patch",
+    title: "Manual release",
+    notes: buildManualReleaseNotes(includedPulls),
+  };
+}
+
+function buildManualReleaseNotes(includedPulls: ReleaseAgentPullSummary[]): string {
+  const changes = includedPulls.length > 0
+    ? includedPulls.map((pull) => `- #${pull.number} ${pull.title} (@${pull.author})`).join("\n")
+    : "- Manual release requested.";
+
+  return `## Changes\n${changes}`;
 }
 
 function summarizeError(error: unknown): string {

@@ -318,6 +318,9 @@ export const releaseRunStatusEnum = z.enum([
 ]);
 export type ReleaseRunStatus = z.infer<typeof releaseRunStatusEnum>;
 
+export const releaseRunSourceEnum = z.enum(["automatic", "manual"]);
+export type ReleaseRunSource = z.infer<typeof releaseRunSourceEnum>;
+
 export const releaseBumpEnum = z.enum(["patch", "minor", "major"]);
 export type ReleaseBump = z.infer<typeof releaseBumpEnum>;
 
@@ -340,6 +343,7 @@ export const releaseRunSchema = z.object({
   triggerPrUrl: z.string(),
   triggerMergeSha: z.string(),
   triggerMergedAt: z.string(),
+  source: releaseRunSourceEnum.optional(),
   status: releaseRunStatusEnum,
   decisionReason: z.string().nullable(),
   recommendedBump: releaseBumpEnum.nullable(),
