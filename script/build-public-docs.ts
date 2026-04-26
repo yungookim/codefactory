@@ -366,8 +366,8 @@ function renderBottomNav(bottomNav?: BottomNav): string {
     return "";
   }
 
-  return `<div class="pointer-events-none sticky bottom-0 left-0 right-0 mx-auto flex w-full max-w-4xl justify-end bg-gradient-to-t from-dark-900 via-dark-900 to-transparent px-6 pb-8 pt-16 sm:px-8">
-  <a class="pointer-events-auto flex w-full min-w-[220px] flex-col items-end rounded-lg bg-brand-500 px-6 py-4 text-white shadow-lg shadow-brand-500/20 transition-colors hover:bg-brand-400 sm:w-auto" href="${bottomNav.href}">
+  return `<div class="mx-auto mt-16 flex w-full max-w-4xl justify-end px-6 pb-8 sm:px-8">
+  <a class="flex w-full min-w-[220px] flex-col items-end rounded-lg bg-brand-500 px-6 py-4 text-white shadow-lg shadow-brand-500/20 transition-colors hover:bg-brand-400 sm:w-auto" href="${bottomNav.href}">
     <span class="mb-1 text-xs font-semibold uppercase tracking-wider text-blue-100">${escapeHtml(bottomNav.label)}</span>
     <span class="flex items-center gap-2 text-lg font-medium">
       ${escapeHtml(bottomNav.title)}
@@ -388,9 +388,9 @@ function renderShell(
 ): string {
   return `${buildHead(title, description, context.stylesheetHref)}
 <body class="antialiased text-sm">
-  <div class="flex min-h-screen overflow-hidden">
+  <div class="flex h-screen overflow-hidden">
     ${renderSidebar(context, activeKey, docs)}
-    <main class="relative w-full flex-1 overflow-y-auto" data-purpose="main-content">
+    <main class="relative h-screen w-full flex-1 overflow-y-auto" data-purpose="main-content">
       <div class="mx-auto max-w-4xl px-6 py-10 pb-28 sm:px-8 sm:py-12 sm:pb-32">
         ${renderMobileHeader(context)}
         ${bodyContent}
@@ -399,7 +399,8 @@ function renderShell(
     </main>
   </div>
 </body>
-</html>`;
+</html>
+`;
 }
 
 function getDocMeta(docs: DocMeta[], slug: string): DocMeta | undefined {
