@@ -1178,7 +1178,7 @@ export class PRBabysitter {
       const openNumbers = new Set(openPulls.map((p) => p.number));
       const repoOwnPrsOnly = repoSettingsByRepo.get(repoSlug)?.ownPrsOnly ?? true;
       const authenticatedLogin = repoOwnPrsOnly ? await getAuthenticatedLogin() : null;
-      const discoveryNumbers = new Set(
+      const automationScopeNumbers = new Set(
         openPulls
           .filter((pull) => !repoOwnPrsOnly || (
             authenticatedLogin !== null
@@ -1325,7 +1325,7 @@ export class PRBabysitter {
       for (const pull of openPulls) {
         let local = await this.storage.getPRByRepoAndNumber(repoSlug, pull.number);
         if (!local) {
-          if (!discoveryNumbers.has(pull.number)) {
+          if (!automationScopeNumbers.has(pull.number)) {
             continue;
           }
 
@@ -1347,6 +1347,10 @@ export class PRBabysitter {
           });
 
           await this.storage.addLog(local.id, "info", `Auto-registered open PR #${pull.number} from ${repoSlug}`);
+        }
+
+        if (!automationScopeNumbers.has(pull.number)) {
+          continue;
         }
 
         if (!local.watchEnabled) {
