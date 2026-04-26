@@ -141,7 +141,9 @@ const defaultBabysitterRuntime: BabysitterRuntime = {
 const STATUS_MESSAGES = {
   accepted: "\u23f3 **Accepted** — this comment requires code changes. Queuing fix...",
   agentRunning: (agent: CodingAgent) => `\ud83e\uddf0 **Agent running** — \`${agent}\` is working on the fix...`,
-  agentFailed: "\u274c **Agent failed** — the coding agent exited with an error.",
+  agentFailed: (reason?: string) => reason
+    ? `\u274c **Agent failed** — ${reason}`
+    : "\u274c **Agent failed** — the coding agent exited with an error.",
   agentCompleted: "\u2705 **Agent completed** — verifying changes...",
   resolved: (headSha: string) => {
     const shortSha = headSha.trim().slice(0, 7);
@@ -797,6 +799,21 @@ function summarizeCommandFailure(result: Awaited<ReturnType<typeof runCommand>>)
 
 function summarizeUnknownError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function formatConciseFailureReason(message: string): string {
+  const detail = message
+    .replace(/^Agent apply failed \(\d+\):\s*/i, "")
+    .replace(/^Agent failed to resolve merge conflicts \(\d+\):\s*/i, "")
+    .replace(/^Error:\s*/i, "");
+  const firstLine = detail
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0)
+    ?? "No failure details were reported";
+  const singleLine = firstLine.replace(/\s+/g, " ");
+  const capped = singleLine.length > 180 ? `${singleLine.slice(0, 177).trimEnd()}...` : singleLine;
+  return /[.!?]$/.test(capped) ? capped : `${capped}.`;
 }
 
 function drainChunkLines(buffer: string, chunk: string): { lines: string[]; buffer: string } {
@@ -2537,7 +2554,8 @@ export class PRBabysitter {
 
             if (applyResult.code !== 0) {
               // Update status replies on failure.
-              await Promise.all(effectiveCommentTasks.map((task) => updateItemStatus(task.id, STATUS_MESSAGES.agentFailed)));
+              const failureReason = formatConciseFailureReason(applyResult.stderr || applyResult.stdout);
+              await Promise.all(effectiveCommentTasks.map((task) => updateItemStatus(task.id, STATUS_MESSAGES.agentFailed(failureReason))));
               throw new Error(`Agent apply failed (${applyResult.code}): ${applyResult.stderr || applyResult.stdout}`);
             }
 
