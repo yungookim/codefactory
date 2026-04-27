@@ -92,7 +92,7 @@ Watched repositories default to `My PRs only`. You can switch a repo to `My PRs 
 
 oh-my-pr can be used in a few ways:
 
-- web dashboard: `oh-my-pr` (or `oh-my-pr web`)
+- web dashboard: `oh-my-pr`
 - MCP server: `oh-my-pr mcp`
 - local REST API: see [LOCAL_API.md](LOCAL_API.md)
 - optional Tauri desktop shell
@@ -112,7 +112,6 @@ Those features are optional and documented in the linked docs below.
 
 ```bash
 oh-my-pr              # web dashboard
-oh-my-pr web          # web dashboard
 oh-my-pr mcp          # MCP server
 oh-my-pr --help       # help
 oh-my-pr --version    # version
