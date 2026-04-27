@@ -53,7 +53,6 @@ async function buildAll() {
   await Promise.all([
     buildServerEntry("server/index.ts", "dist/index.cjs", pkg.version, externals, "cjs"),
     buildServerEntry("server/mcp.ts", "dist/mcp.cjs", pkg.version, externals, "cjs"),
-    buildServerEntry("server/tui/index.tsx", "dist/tui.mjs", pkg.version, externals, "esm"),
     buildServerEntry("server/cli.ts", "dist/cli.cjs", pkg.version, externals, "cjs"),
   ]);
 }
@@ -63,7 +62,7 @@ async function buildServerEntry(
   outfile: string,
   version: string,
   external: string[],
-  format: "cjs" | "esm",
+  format: "cjs",
 ) {
   await esbuild({
     entryPoints: [entryPoint],

@@ -45,11 +45,7 @@ npm install -g oh-my-pr
 oh-my-pr
 ```
 
-That opens the terminal UI. If you prefer the browser dashboard, run:
-
-```bash
-oh-my-pr web
-```
+That starts the dashboard server and opens the browser dashboard.
 
 Then:
 
@@ -96,8 +92,7 @@ Watched repositories default to `My PRs only`. You can switch a repo to `My PRs 
 
 oh-my-pr can be used in a few ways:
 
-- terminal UI: `oh-my-pr`
-- web dashboard: `oh-my-pr web`
+- web dashboard: `oh-my-pr` (or `oh-my-pr web`)
 - MCP server: `oh-my-pr mcp`
 - local REST API: see [LOCAL_API.md](LOCAL_API.md)
 - optional Tauri desktop shell
@@ -116,7 +111,7 @@ Those features are optional and documented in the linked docs below.
 ## Commands
 
 ```bash
-oh-my-pr              # terminal UI
+oh-my-pr              # web dashboard
 oh-my-pr web          # web dashboard
 oh-my-pr mcp          # MCP server
 oh-my-pr --help       # help

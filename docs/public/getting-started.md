@@ -19,13 +19,13 @@ npm install -g oh-my-pr
 
 ## Quick Start
 
-### 1. Launch the terminal UI
+### 1. Launch the dashboard
 
 ```bash
 oh-my-pr
 ```
 
-This opens the terminal UI. To start the web dashboard instead, run `oh-my-pr web` — it serves at [http://localhost:5001](http://localhost:5001).
+This starts the web dashboard at [http://localhost:5001](http://localhost:5001) and opens it in your browser.
 
 ### Run from source
 
@@ -40,7 +40,7 @@ npm run dev
 
 ### 2. Connect a GitHub repository
 
-1. In the terminal UI, open the repository manager and add a GitHub repository. In the browser dashboard, click **Add Repository**.
+1. In the dashboard, click **Add Repository**.
 2. Choose the repository discovery scope:
    - **My PRs only** keeps the repo on the default scope and auto-discovers only PRs authored by your authenticated GitHub account.
    - **My PRs + teammates** switches the repo to team-wide discovery and auto-discovers every open PR in that repository.

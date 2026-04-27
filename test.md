@@ -75,7 +75,6 @@ Use the narrowest test style that proves the behavior:
 - GitHub integration: fake Octokit or `fetch`, assert normalized records and outbound payloads, and avoid unauthenticated network calls.
 - Repo workspace and command execution: inject `runCommand`, record calls, create temp directories only when the behavior needs real filesystem state, and assert command intent plus returned paths.
 - Shared contracts and defaults: assert required fields, schema validation, enum handling, numeric invariants, and safe defaults.
-- TUI and view-model tests: assert stable rendered text or view-model state, especially wrapping, truncation, status labels, keyboard interactions, and action availability. Use deterministic dimensions and disabled timers where the harness supports them.
 - Regression tests: reproduce the reported failure first, then assert the smallest externally visible behavior that prevents recurrence.
 
 ## PR Checklist
