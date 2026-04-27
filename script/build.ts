@@ -78,6 +78,15 @@ async function buildServerEntry(
     minify: true,
     external,
     logLevel: "error",
+    // ESM bundles need a working `require` for any bundled CJS dep that
+    // calls `require("path")` etc. at module init (e.g. postcss). Without
+    // this banner, esbuild's dynamic-require shim throws at runtime.
+    banner:
+      format === "esm"
+        ? {
+            js: "import { createRequire as __esbuildCreateRequire } from 'module'; const require = __esbuildCreateRequire(import.meta.url);",
+          }
+        : undefined,
   });
 }
 
