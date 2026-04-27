@@ -24,6 +24,7 @@ import { applyManualFeedbackDecision } from "./manualFeedback";
 import { createBackgroundJobHandlers } from "./backgroundJobHandlers";
 import { BackgroundJobDispatcher } from "./backgroundJobDispatcher";
 import { BackgroundJobQueue, buildBackgroundJobDedupeKey } from "./backgroundJobQueue";
+import { buildActivityPayload, readActivityPayload } from "./activityPayload";
 import { createWatcherScheduler, type WatcherScheduler } from "./watcherScheduler";
 import { ReleaseManager } from "./releaseManager";
 import type { ReleaseAgentPullSummary } from "./releaseAgent";
@@ -150,6 +151,20 @@ function fallbackJobLabel(job: BackgroundJob): string {
     case "heal_deployment":
       return "Healing deployment";
   }
+}
+
+type ActivityDescription = Pick<ActivityItem, "label" | "detail" | "targetUrl">;
+
+type ActivityDescriptionContext = {
+  prsById: Map<string, PR>;
+  releaseRunsById: Map<string, ReleaseRun>;
+  socialChangelogsById: Map<string, SocialChangelog>;
+  deploymentHealingSessionsByTarget: Map<string, DeploymentHealingSession>;
+};
+
+function readJobStringPayload(job: BackgroundJob, key: string): string | null {
+  const value = job.payload[key];
+  return typeof value === "string" && value.trim() ? value : null;
 }
 
 export function mapMergedPullsToReleaseSummaries(pulls: MergedPRSummary[]): ReleaseAgentPullSummary[] {
@@ -293,7 +308,61 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     };
   };
 
-  const describeActivityJob = async (job: BackgroundJob): Promise<Pick<ActivityItem, "label" | "detail" | "targetUrl">> => {
+  const buildActivityDescriptionContext = async (jobs: BackgroundJob[]): Promise<ActivityDescriptionContext> => {
+    const prIds = new Set<string>();
+    const releaseRunIds = new Set<string>();
+    const socialChangelogIds = new Set<string>();
+    const deploymentHealingTargets = new Set<string>();
+
+    for (const job of jobs) {
+      if (readActivityPayload(job.payload)) {
+        continue;
+      }
+
+      if (job.kind === "babysit_pr") {
+        prIds.add(job.targetId);
+      } else if (job.kind === "answer_pr_question") {
+        const prId = readJobStringPayload(job, "prId");
+        if (prId) {
+          prIds.add(prId);
+        }
+      } else if (job.kind === "process_release_run") {
+        releaseRunIds.add(job.targetId);
+      } else if (job.kind === "generate_social_changelog") {
+        socialChangelogIds.add(job.targetId);
+      } else if (job.kind === "heal_deployment") {
+        deploymentHealingTargets.add(job.targetId);
+      }
+    }
+
+    const [activePrs, archivedPrs, releaseRuns, socialChangelogs, deploymentHealingSessions] = await Promise.all([
+      prIds.size > 0 ? storage.getPRs() : Promise.resolve([]),
+      prIds.size > 0 ? storage.getArchivedPRs() : Promise.resolve([]),
+      releaseRunIds.size > 0 ? storage.listReleaseRuns() : Promise.resolve([]),
+      socialChangelogIds.size > 0 ? storage.getSocialChangelogs() : Promise.resolve([]),
+      deploymentHealingTargets.size > 0 ? storage.listDeploymentHealingSessions() : Promise.resolve([]),
+    ]);
+
+    const deploymentHealingSessionsByTarget = new Map<string, DeploymentHealingSession>();
+    for (const session of deploymentHealingSessions) {
+      deploymentHealingSessionsByTarget.set(session.id, session);
+      deploymentHealingSessionsByTarget.set(`${session.repo}:${session.mergeSha}`, session);
+    }
+
+    return {
+      prsById: new Map([...activePrs, ...archivedPrs].map((pr) => [pr.id, pr])),
+      releaseRunsById: new Map(releaseRuns.map((run) => [run.id, run])),
+      socialChangelogsById: new Map(socialChangelogs.map((changelog) => [changelog.id, changelog])),
+      deploymentHealingSessionsByTarget,
+    };
+  };
+
+  const describeActivityJob = (job: BackgroundJob, context: ActivityDescriptionContext): ActivityDescription => {
+    const payloadDescription = readActivityPayload(job.payload);
+    if (payloadDescription) {
+      return payloadDescription;
+    }
+
     if (job.kind === "sync_watched_repos") {
       return {
         label: "Sync watched repositories",
@@ -303,7 +372,7 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     }
 
     if (job.kind === "babysit_pr") {
-      const pr = await storage.getPR(job.targetId);
+      const pr = context.prsById.get(job.targetId);
       if (pr) {
         return {
           label: `Babysitting PR #${pr.number}`,
@@ -314,8 +383,8 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     }
 
     if (job.kind === "answer_pr_question") {
-      const prId = typeof job.payload.prId === "string" ? job.payload.prId : null;
-      const pr = prId ? await storage.getPR(prId) : undefined;
+      const prId = readJobStringPayload(job, "prId");
+      const pr = prId ? context.prsById.get(prId) : undefined;
       if (pr) {
         return {
           label: `Answering question for PR #${pr.number}`,
@@ -326,7 +395,7 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     }
 
     if (job.kind === "process_release_run") {
-      const run = await storage.getReleaseRun(job.targetId);
+      const run = context.releaseRunsById.get(job.targetId);
       if (run) {
         return {
           label: `Processing release for ${run.repo}`,
@@ -337,7 +406,7 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     }
 
     if (job.kind === "generate_social_changelog") {
-      const changelog = await storage.getSocialChangelog(job.targetId);
+      const changelog = context.socialChangelogsById.get(job.targetId);
       if (changelog) {
         return {
           label: "Generating social changelog",
@@ -348,7 +417,7 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     }
 
     if (job.kind === "heal_deployment") {
-      const session = await storage.getDeploymentHealingSession(job.targetId);
+      const session = context.deploymentHealingSessionsByTarget.get(job.targetId);
       if (session) {
         return {
           label: `Healing ${session.platform} deployment`,
@@ -365,8 +434,8 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     };
   };
 
-  const mapActivityJob = async (job: BackgroundJob): Promise<ActivityItem> => {
-    const description = await describeActivityJob(job);
+  const mapActivityJob = (job: BackgroundJob, context: ActivityDescriptionContext): ActivityItem => {
+    const description = describeActivityJob(job, context);
     return {
       id: job.id,
       kind: job.kind,
@@ -412,12 +481,19 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     }, interval);
   };
 
-  const queueBabysitWithAgent = async (prId: string, preferredAgent: Config["codingAgent"]) => {
+  const queueBabysitWithAgent = async (pr: PR, preferredAgent: Config["codingAgent"]) => {
     await scheduleBackgroundJob(
       "babysit_pr",
-      prId,
-      buildBackgroundJobDedupeKey("babysit_pr", prId),
-      { preferredAgent },
+      pr.id,
+      buildBackgroundJobDedupeKey("babysit_pr", pr.id),
+      {
+        preferredAgent,
+        ...buildActivityPayload({
+          label: `Babysitting PR #${pr.number}`,
+          detail: `${pr.repo} - ${pr.title}`,
+          targetUrl: pr.url,
+        }),
+      },
     );
   };
 
@@ -464,10 +540,9 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
         storage.listBackgroundJobs({ status: "queued" }),
       ]);
 
-      const [inProgress, queued] = await Promise.all([
-        Promise.all(leasedJobs.map(mapActivityJob)),
-        Promise.all(queuedJobs.map(mapActivityJob)),
-      ]);
+      const descriptionContext = await buildActivityDescriptionContext([...leasedJobs, ...queuedJobs]);
+      const inProgress = leasedJobs.map((job) => mapActivityJob(job, descriptionContext));
+      const queued = queuedJobs.map((job) => mapActivityJob(job, descriptionContext));
 
       return {
         inProgress,
@@ -654,7 +729,7 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
         });
       }
 
-      await queueBabysitWithAgent(pr.id, config.codingAgent);
+      await queueBabysitWithAgent(pr, config.codingAgent);
       notifyChange();
       return pr;
     },
@@ -763,7 +838,7 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
       const config = await storage.getConfig();
       await storage.updatePR(pr.id, { status: "processing" });
       await storage.addLog(pr.id, "info", `Launching autonomous babysitter run using ${config.codingAgent}`);
-      await queueBabysitWithAgent(pr.id, config.codingAgent);
+      await queueBabysitWithAgent(pr, config.codingAgent);
 
       const updated = await storage.getPR(pr.id);
       notifyChange();
@@ -779,7 +854,7 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
 
       const config = await storage.getConfig();
       await storage.addLog(pr.id, "info", `Manual babysitter trigger using ${config.codingAgent}`);
-      await queueBabysitWithAgent(pr.id, config.codingAgent);
+      await queueBabysitWithAgent(pr, config.codingAgent);
 
       const updated = await storage.getPR(pr.id);
       notifyChange();
@@ -818,7 +893,7 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
 
       await storage.addLog(prId, "info", `Feedback item ${feedbackId} queued for retry`);
       const config = await storage.getConfig();
-      await queueBabysitWithAgent(prId, config.codingAgent);
+      await queueBabysitWithAgent(result.updated, config.codingAgent);
       notifyChange();
       return result.updated;
     },
@@ -829,7 +904,7 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     },
 
     async askQuestion(prId, question) {
-      assertFound(await storage.getPR(prId), "PR not found");
+      const pr = assertFound(await storage.getPR(prId), "PR not found");
       let parsed: { question: string };
       try {
         parsed = askQuestionSchema.parse({ question });
@@ -846,7 +921,14 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
           "answer_pr_question",
           entry.id,
           buildBackgroundJobDedupeKey("answer_pr_question", entry.id),
-          { prId },
+          {
+            prId,
+            ...buildActivityPayload({
+              label: `Answering question for PR #${pr.number}`,
+              detail: `${pr.repo} - ${pr.title}`,
+              targetUrl: pr.url,
+            }),
+          },
         );
       } catch (error) {
         const message = getErrorMessage(error);

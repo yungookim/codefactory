@@ -204,7 +204,7 @@ function ActivityRow({ activity }: { activity: ActivityItem }) {
       <a
         href={activity.targetUrl}
         target="_blank"
-        rel="noreferrer"
+        rel="noopener noreferrer"
         className="block outline-none hover:bg-muted focus:bg-muted"
       >
         {content}

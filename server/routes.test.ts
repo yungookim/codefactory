@@ -345,6 +345,63 @@ test("GET /api/activities lists in-progress and queued jobs", async () => {
   }
 });
 
+test("GET /api/activities batches PR activity metadata", async () => {
+  const harness = await createHarness();
+  const firstPr = await seedPR(harness.storage, {
+    title: "fix activity menu",
+    repo: "acme/widgets",
+    number: 77,
+    url: "https://github.com/acme/widgets/pull/77",
+  });
+  const secondPr = await seedPR(harness.storage, {
+    title: "answer follow-up",
+    repo: "acme/widgets",
+    number: 78,
+    url: "https://github.com/acme/widgets/pull/78",
+  });
+
+  try {
+    await harness.storage.enqueueBackgroundJob({
+      kind: "babysit_pr",
+      targetId: firstPr.id,
+      dedupeKey: `babysit_pr:${firstPr.id}`,
+      payload: { preferredAgent: "claude" },
+    });
+    await harness.storage.enqueueBackgroundJob({
+      kind: "answer_pr_question",
+      targetId: "question-1",
+      dedupeKey: "answer_pr_question:question-1",
+      payload: { prId: secondPr.id },
+    });
+
+    const getPR = harness.storage.getPR.bind(harness.storage);
+    harness.storage.getPR = async (id: string) => {
+      throw new Error(`unexpected per-job PR lookup for ${id}`);
+    };
+
+    const response = await fetch(`${harness.baseUrl}/api/activities`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as {
+      queued: Array<{
+        label: string;
+        detail: string | null;
+        targetUrl: string | null;
+      }>;
+    };
+
+    assert.deepEqual(
+      body.queued.map((item) => [item.label, item.detail, item.targetUrl]),
+      [
+        ["Babysitting PR #77", "acme/widgets - fix activity menu", firstPr.url],
+        ["Answering question for PR #78", "acme/widgets - answer follow-up", secondPr.url],
+      ],
+    );
+    harness.storage.getPR = getPR;
+  } finally {
+    await harness.close();
+  }
+});
+
 test("POST /api/repos/release queues a manual release run for the requested repo", async () => {
   const storage = new MemStorage();
   const harness = await createHarness(storage, {
