@@ -21,6 +21,9 @@ if (parsed.mode === "help") {
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
 if (parsed.mode === "mcp") {
   require("../dist/mcp.cjs");
-} else {
+} else if (parsed.mode === "web") {
   require("../dist/index.cjs");
+} else {
+  console.error(`Unsupported mode: ${parsed.mode}`);
+  process.exit(1);
 }

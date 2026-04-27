@@ -62,7 +62,7 @@ async function buildServerEntry(
   outfile: string,
   version: string,
   external: string[],
-  format: "cjs",
+  format: "cjs" | "esm",
 ) {
   await esbuild({
     entryPoints: [entryPoint],
