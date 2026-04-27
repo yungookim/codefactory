@@ -1,5 +1,8 @@
 import { EventEmitter } from "node:events";
 import type {
+  ActivityItem,
+  ActivitySnapshot,
+  BackgroundJob,
   Config,
   DeploymentHealingSession,
   HealingSession,
@@ -82,6 +85,7 @@ export type AppRuntime = {
   subscribe(listener: () => void): () => void;
   getRuntimeSnapshot(): Promise<RuntimeSnapshot>;
   setDrainMode(input: DrainModeParams): Promise<RuntimeSnapshot & { drained?: boolean }>;
+  listActivities(): Promise<ActivitySnapshot>;
   listRepos(): Promise<string[]>;
   listRepoSettings(): Promise<WatchedRepo[]>;
   addRepo(repoInput: string): Promise<{ repo: string }>;
@@ -129,6 +133,23 @@ function assertFound<T>(value: T | undefined, message: string): T {
   }
 
   return value;
+}
+
+function fallbackJobLabel(job: BackgroundJob): string {
+  switch (job.kind) {
+    case "sync_watched_repos":
+      return "Sync watched repositories";
+    case "babysit_pr":
+      return "Babysitting PR";
+    case "process_release_run":
+      return "Processing release";
+    case "answer_pr_question":
+      return "Answering PR question";
+    case "generate_social_changelog":
+      return "Generating social changelog";
+    case "heal_deployment":
+      return "Healing deployment";
+  }
 }
 
 export function mapMergedPullsToReleaseSummaries(pulls: MergedPRSummary[]): ReleaseAgentPullSummary[] {
@@ -272,6 +293,96 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     };
   };
 
+  const describeActivityJob = async (job: BackgroundJob): Promise<Pick<ActivityItem, "label" | "detail" | "targetUrl">> => {
+    if (job.kind === "sync_watched_repos") {
+      return {
+        label: "Sync watched repositories",
+        detail: null,
+        targetUrl: null,
+      };
+    }
+
+    if (job.kind === "babysit_pr") {
+      const pr = await storage.getPR(job.targetId);
+      if (pr) {
+        return {
+          label: `Babysitting PR #${pr.number}`,
+          detail: `${pr.repo} - ${pr.title}`,
+          targetUrl: pr.url,
+        };
+      }
+    }
+
+    if (job.kind === "answer_pr_question") {
+      const prId = typeof job.payload.prId === "string" ? job.payload.prId : null;
+      const pr = prId ? await storage.getPR(prId) : undefined;
+      if (pr) {
+        return {
+          label: `Answering question for PR #${pr.number}`,
+          detail: `${pr.repo} - ${pr.title}`,
+          targetUrl: pr.url,
+        };
+      }
+    }
+
+    if (job.kind === "process_release_run") {
+      const run = await storage.getReleaseRun(job.targetId);
+      if (run) {
+        return {
+          label: `Processing release for ${run.repo}`,
+          detail: `PR #${run.triggerPrNumber} - ${run.triggerPrTitle}`,
+          targetUrl: run.triggerPrUrl,
+        };
+      }
+    }
+
+    if (job.kind === "generate_social_changelog") {
+      const changelog = await storage.getSocialChangelog(job.targetId);
+      if (changelog) {
+        return {
+          label: "Generating social changelog",
+          detail: `${changelog.date} - ${changelog.triggerCount} merged PRs`,
+          targetUrl: null,
+        };
+      }
+    }
+
+    if (job.kind === "heal_deployment") {
+      const session = await storage.getDeploymentHealingSession(job.targetId);
+      if (session) {
+        return {
+          label: `Healing ${session.platform} deployment`,
+          detail: `${session.repo} PR #${session.triggerPrNumber} - ${session.triggerPrTitle}`,
+          targetUrl: session.triggerPrUrl,
+        };
+      }
+    }
+
+    return {
+      label: fallbackJobLabel(job),
+      detail: job.targetId,
+      targetUrl: null,
+    };
+  };
+
+  const mapActivityJob = async (job: BackgroundJob): Promise<ActivityItem> => {
+    const description = await describeActivityJob(job);
+    return {
+      id: job.id,
+      kind: job.kind,
+      status: job.status === "leased" ? "in_progress" : "queued",
+      label: description.label,
+      detail: description.detail,
+      targetId: job.targetId,
+      targetUrl: description.targetUrl,
+      queuedAt: job.createdAt,
+      availableAt: job.availableAt,
+      startedAt: job.heartbeatAt,
+      updatedAt: job.updatedAt,
+      attemptCount: job.attemptCount,
+    };
+  };
+
   const waitForBackgroundIdle = async (timeoutMs: number): Promise<boolean> => {
     const [dispatcherIdle, babysitterIdle, releaseIdle] = await Promise.all([
       backgroundJobDispatcher.waitForIdle(timeoutMs),
@@ -346,6 +457,24 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     },
 
     getRuntimeSnapshot,
+
+    async listActivities() {
+      const [leasedJobs, queuedJobs] = await Promise.all([
+        storage.listBackgroundJobs({ status: "leased" }),
+        storage.listBackgroundJobs({ status: "queued" }),
+      ]);
+
+      const [inProgress, queued] = await Promise.all([
+        Promise.all(leasedJobs.map(mapActivityJob)),
+        Promise.all(queuedJobs.map(mapActivityJob)),
+      ]);
+
+      return {
+        inProgress,
+        queued,
+        generatedAt: new Date().toISOString(),
+      };
+    },
 
     async setDrainMode(input) {
       const updated = await storage.updateRuntimeState({

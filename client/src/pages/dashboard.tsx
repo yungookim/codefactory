@@ -2,11 +2,17 @@ import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import * as Collapsible from "@radix-ui/react-collapsible";
+import { Activity as ActivityIcon } from "lucide-react";
 import { queryClient, apiRequest, fetchJson } from "@/lib/queryClient";
 import { getRepoHref } from "@/lib/repoHref";
-import type { Config, FeedbackItem, HealingSession, LogEntry, PR, PRQuestion, ReleaseRun, WatchedRepo } from "@shared/schema";
+import type { ActivityItem, ActivitySnapshot, Config, FeedbackItem, HealingSession, LogEntry, PR, PRQuestion, ReleaseRun, WatchedRepo } from "@shared/schema";
 import { OnboardingPanel } from "@/components/OnboardingPanel";
 import { UpdateBanner } from "@/components/UpdateBanner";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -62,6 +68,12 @@ const WATCH_SCOPE_OPTIONS = [
   { value: "mine", label: "My PRs only" },
   { value: "team", label: "My PRs + teammates" },
 ] as const;
+
+const EMPTY_ACTIVITY_SNAPSHOT: ActivitySnapshot = {
+  inProgress: [],
+  queued: [],
+  generatedAt: "",
+};
 
 type WatchScope = (typeof WATCH_SCOPE_OPTIONS)[number]["value"];
 type RepoSettings = WatchedRepo & {
@@ -161,6 +173,109 @@ function WatchScopeControl({
         );
       })}
     </div>
+  );
+}
+
+function ActivityRow({ activity }: { activity: ActivityItem }) {
+  const timeLabel = activity.status === "in_progress"
+    ? formatClock(activity.startedAt) ?? formatClock(activity.updatedAt)
+    : formatClock(activity.availableAt) ?? formatClock(activity.queuedAt);
+  const content = (
+    <div className="flex min-w-0 items-start gap-2 px-2 py-1.5 text-left">
+      <span
+        className={`mt-1.5 h-1.5 w-1.5 shrink-0 ${
+          activity.status === "in_progress" ? "animate-pulse bg-foreground" : "bg-muted-foreground"
+        }`}
+      />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[12px] leading-4 text-foreground">{activity.label}</span>
+        {activity.detail && (
+          <span className="block truncate text-[11px] leading-4 text-muted-foreground">{activity.detail}</span>
+        )}
+      </span>
+      {timeLabel && (
+        <span className="shrink-0 text-[10px] leading-4 text-muted-foreground">{timeLabel}</span>
+      )}
+    </div>
+  );
+
+  if (activity.targetUrl) {
+    return (
+      <a
+        href={activity.targetUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="block outline-none hover:bg-muted focus:bg-muted"
+      >
+        {content}
+      </a>
+    );
+  }
+
+  return <div>{content}</div>;
+}
+
+function ActivitySection({
+  title,
+  items,
+  emptyLabel,
+}: {
+  title: string;
+  items: ActivityItem[];
+  emptyLabel: string;
+}) {
+  return (
+    <div className="py-1">
+      <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">{title}</div>
+      {items.length > 0 ? (
+        <div className="max-h-52 overflow-y-auto">
+          {items.map((activity) => (
+            <ActivityRow key={activity.id} activity={activity} />
+          ))}
+        </div>
+      ) : (
+        <div className="px-2 pb-2 text-[11px] text-muted-foreground">{emptyLabel}</div>
+      )}
+    </div>
+  );
+}
+
+function ActivityMenu({ activities }: { activities: ActivitySnapshot }) {
+  const inProgressCount = activities.inProgress.length;
+  const queuedCount = activities.queued.length;
+  const totalCount = inProgressCount + queuedCount;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        className="inline-flex items-center gap-1 border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground focus:outline-none"
+        aria-label="Open activity menu"
+        data-testid="activity-menu-trigger"
+      >
+        <ActivityIcon className="h-3 w-3" aria-hidden="true" />
+        <span>activity</span>
+        <span className="text-foreground">{totalCount}</span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-80 p-0">
+        <div className="border-b border-border px-2 py-2">
+          <div className="text-[12px] font-medium">Activities</div>
+          <div className="text-[11px] text-muted-foreground">
+            {inProgressCount} in progress / {queuedCount} queued
+          </div>
+        </div>
+        <ActivitySection
+          title="In progress"
+          items={activities.inProgress}
+          emptyLabel="No activities running right now."
+        />
+        <div className="border-t border-border" />
+        <ActivitySection
+          title="Queued"
+          items={activities.queued}
+          emptyLabel="Queue is empty."
+        />
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -335,6 +450,7 @@ function FeedbackRow({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/prs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/prs", prId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activities"] });
       queryClient.invalidateQueries({ queryKey: ["/api/logs"] });
     },
     onError: (error) => {
@@ -624,6 +740,7 @@ function QAPanel({ prId }: { prId: string }) {
       apiRequest("POST", `/api/prs/${prId}/questions`, { question }).then((res) => res.json()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/prs", prId, "questions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activities"] });
       setInput("");
     },
   });
@@ -767,6 +884,11 @@ export default function Dashboard() {
     refetchInterval: 5000,
   });
 
+  const { data: activities = EMPTY_ACTIVITY_SNAPSHOT } = useQuery<ActivitySnapshot>({
+    queryKey: ["/api/activities"],
+    refetchInterval: 3000,
+  });
+
   const { data: repos = [] } = useQuery<RepoSettings[]>({
     queryKey: ["/api/repos/settings"],
     refetchInterval: 5000,
@@ -798,6 +920,7 @@ export default function Dashboard() {
     },
     onSuccess: (data: PR) => {
       queryClient.invalidateQueries({ queryKey: ["/api/prs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activities"] });
       queryClient.invalidateQueries({ queryKey: ["/api/repos/settings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/onboarding/status"] });
       setAddUrl("");
@@ -815,6 +938,7 @@ export default function Dashboard() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/prs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activities"] });
       queryClient.invalidateQueries({ queryKey: ["/api/logs"] });
     },
     onError: (error) => {
@@ -858,6 +982,7 @@ export default function Dashboard() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/prs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activities"] });
       queryClient.invalidateQueries({ queryKey: ["/api/repos/settings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/onboarding/status"] });
     },
@@ -873,6 +998,7 @@ export default function Dashboard() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/releases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activities"] });
       toast({ description: "Release queued." });
     },
     onError: (error) => {
@@ -1010,6 +1136,7 @@ export default function Dashboard() {
           >
             settings
           </Link>
+          <ActivityMenu activities={activities} />
         </div>
       </header>
 

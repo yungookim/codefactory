@@ -272,6 +272,79 @@ test("POST /api/repos/sync enqueues a durable sync_watched_repos job", async () 
   }
 });
 
+test("GET /api/activities lists in-progress and queued jobs", async () => {
+  const harness = await createHarness();
+  const pr = await seedPR(harness.storage, {
+    title: "fix activity menu",
+    repo: "acme/widgets",
+    number: 77,
+    url: "https://github.com/acme/widgets/pull/77",
+  });
+
+  try {
+    const runningJob = await harness.storage.enqueueBackgroundJob({
+      kind: "babysit_pr",
+      targetId: pr.id,
+      dedupeKey: `babysit_pr:${pr.id}`,
+      payload: { preferredAgent: "claude" },
+      availableAt: "2026-04-26T10:00:00.000Z",
+    });
+    await harness.storage.claimNextBackgroundJob({
+      workerId: "worker-1",
+      leaseToken: "lease-1",
+      leaseExpiresAt: "2026-04-26T10:10:00.000Z",
+      now: "2026-04-26T10:01:00.000Z",
+    });
+
+    const queuedJob = await harness.storage.enqueueBackgroundJob({
+      kind: "sync_watched_repos",
+      targetId: "runtime:1",
+      dedupeKey: "sync_watched_repos",
+      availableAt: "2026-04-26T10:02:00.000Z",
+    });
+
+    const response = await fetch(`${harness.baseUrl}/api/activities`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as {
+      inProgress: Array<{
+        id: string;
+        kind: string;
+        status: string;
+        label: string;
+        detail: string | null;
+        targetId: string;
+        targetUrl: string | null;
+      }>;
+      queued: Array<{
+        id: string;
+        kind: string;
+        status: string;
+        label: string;
+        detail: string | null;
+        targetId: string;
+      }>;
+    };
+
+    assert.equal(body.inProgress.length, 1);
+    assert.equal(body.inProgress[0]?.id, runningJob.id);
+    assert.equal(body.inProgress[0]?.kind, "babysit_pr");
+    assert.equal(body.inProgress[0]?.status, "in_progress");
+    assert.equal(body.inProgress[0]?.label, "Babysitting PR #77");
+    assert.equal(body.inProgress[0]?.detail, "acme/widgets - fix activity menu");
+    assert.equal(body.inProgress[0]?.targetId, pr.id);
+    assert.equal(body.inProgress[0]?.targetUrl, pr.url);
+
+    assert.equal(body.queued.length, 1);
+    assert.equal(body.queued[0]?.id, queuedJob.id);
+    assert.equal(body.queued[0]?.kind, "sync_watched_repos");
+    assert.equal(body.queued[0]?.status, "queued");
+    assert.equal(body.queued[0]?.label, "Sync watched repositories");
+    assert.equal(body.queued[0]?.targetId, "runtime:1");
+  } finally {
+    await harness.close();
+  }
+});
+
 test("POST /api/repos/release queues a manual release run for the requested repo", async () => {
   const storage = new MemStorage();
   const harness = await createHarness(storage, {
