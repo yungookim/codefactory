@@ -5,6 +5,7 @@ import * as Collapsible from "@radix-ui/react-collapsible";
 import { Activity as ActivityIcon } from "lucide-react";
 import { queryClient, apiRequest, fetchJson } from "@/lib/queryClient";
 import { getRepoHref } from "@/lib/repoHref";
+import { getRepoAddControlsOpen } from "@/lib/repoAddControls";
 import type { ActivityItem, ActivitySnapshot, Config, FeedbackItem, HealingSession, LogEntry, PR, PRQuestion, ReleaseRun, WatchedRepo } from "@shared/schema";
 import { OnboardingPanel } from "@/components/OnboardingPanel";
 import { UpdateBanner } from "@/components/UpdateBanner";
@@ -898,6 +899,7 @@ export default function Dashboard() {
   const [selectedPRId, setSelectedPRId] = useState<string | null>(null);
   const [addUrl, setAddUrl] = useState("");
   const [addRepo, setAddRepo] = useState("");
+  const [addControlsOpen, setAddControlsOpen] = useState<boolean | null>(null);
   const [watchScope, setWatchScope] = useState<WatchScope>("mine");
   const [viewMode, setViewMode] = useState<"active" | "archived">("active");
 
@@ -950,6 +952,7 @@ export default function Dashboard() {
 
   const selectedPR = displayedPRs.find((pr) => pr.id === selectedPRId) ?? null;
   const selectedPRWatchEnabled = selectedPR ? isPRWatchEnabled(selectedPR) : true;
+  const repoAddControlsOpen = getRepoAddControlsOpen(addControlsOpen, repos.length);
 
   const addMutation = useMutation({
     mutationFn: async (url: string) => {
@@ -1139,36 +1142,6 @@ export default function Dashboard() {
             <option value="codex">codex</option>
             <option value="claude">claude</option>
           </select>
-          <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={config?.autoResolveMergeConflicts ?? true}
-              onChange={(e) =>
-                updateConfigMutation.mutate({
-                  autoResolveMergeConflicts: e.target.checked,
-                })
-              }
-              disabled={updateConfigMutation.isPending}
-              data-testid="checkbox-auto-resolve-conflicts"
-              className="accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-            />
-            Auto-resolve conflicts
-          </label>
-          <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={config?.autoUpdateDocs ?? true}
-              onChange={(e) =>
-                updateConfigMutation.mutate({
-                  autoUpdateDocs: e.target.checked,
-                })
-              }
-              disabled={updateConfigMutation.isPending}
-              data-testid="checkbox-auto-update-docs"
-              className="accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-            />
-            Auto-update docs
-          </label>
           <Link
             href="/settings"
             className="border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
@@ -1211,168 +1184,189 @@ export default function Dashboard() {
           </div>
           {!isArchived && (
             <>
-              <div className="border-b border-border px-3 py-2 text-[11px] text-muted-foreground">
-                Add a PR or watch a repo. Sync and babysit start automatically.
-              </div>
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (addUrl.trim()) addMutation.mutate(addUrl.trim());
-                }}
-                className="border-b border-border p-3"
+              <Collapsible.Root
+                open={repoAddControlsOpen}
+                onOpenChange={setAddControlsOpen}
+                className="border-b border-border"
               >
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={addUrl}
-                    onChange={(e) => setAddUrl(e.target.value)}
-                    placeholder="github.com/owner/repo/pull/123"
-                    aria-label="GitHub pull request URL"
-                    data-testid="input-add-pr"
-                    className="flex-1 border border-border bg-transparent px-2 py-1 text-[12px] placeholder:text-muted-foreground/50 focus:border-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-                  />
-                  <button
-                    type="submit"
-                    disabled={addMutation.isPending || !addUrl.trim()}
-                    data-testid="button-add-pr"
-                    className="border border-border px-2 py-1 text-[11px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
-                  >
-                    Add
-                  </button>
-                </div>
-              </form>
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const repo = addRepo.trim();
-                  if (repo) {
-                    addRepoMutation.mutate({ repo, watchScope });
-                  }
-                }}
-                className="border-b border-border p-3"
-              >
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={addRepo}
-                    onChange={(e) => setAddRepo(e.target.value)}
-                    placeholder="owner/repo"
-                    aria-label="Repository owner and name"
-                    data-testid="input-add-repo"
-                    className="flex-1 border border-border bg-transparent px-2 py-1 text-[12px] placeholder:text-muted-foreground/50 focus:border-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-                  />
-                  <button
-                    type="submit"
-                    disabled={addRepoMutation.isPending || !addRepo.trim()}
-                    data-testid="button-add-repo"
-                    className="border border-border px-2 py-1 text-[11px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
-                  >
-                    Watch
-                  </button>
-                </div>
-                <div className="mt-3">
-                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                    Track automatically
-                  </div>
-                  <WatchScopeControl
-                    value={watchScope}
-                    onChange={setWatchScope}
-                    disabled={addRepoMutation.isPending}
-                    name="watch-scope"
-                    testIdPrefix="watch-scope"
-                  />
-                </div>
-                <div className="mt-3">
-                  <div className="mb-1 flex items-center justify-between">
-                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                      Tracked repositories
-                    </span>
+                <div className="flex items-center justify-between gap-2 px-3 py-2 text-[11px] text-muted-foreground">
+                  <span>
+                    {repos.length > 0
+                      ? "Add a PR or watch another repo."
+                      : "Add a PR or watch a repo. Sync and babysit start automatically."}
+                  </span>
+                  <Collapsible.Trigger asChild>
                     <button
                       type="button"
-                      onClick={() => syncReposMutation.mutate()}
-                      disabled={syncReposMutation.isPending}
-                      data-testid="button-sync-repos"
-                      className="border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
+                      data-testid="button-toggle-add-controls"
+                      className="shrink-0 border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                     >
-                      {syncReposMutation.isPending ? "Fetching…" : "Fetch"}
+                      {repoAddControlsOpen ? "Hide" : "Add"}
                     </button>
-                  </div>
-                  {repos.length === 0 ? (
-                    <div className="text-[11px] text-muted-foreground">No repositories being watched yet.</div>
-                  ) : (
-                    <div className="space-y-1 text-[12px]">
-                      {repos.map((repo) => {
-                        const manualReleasePending = manualReleaseMutation.isPending
-                          && manualReleaseMutation.variables === repo.repo;
+                  </Collapsible.Trigger>
+                </div>
+                <Collapsible.Content>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (addUrl.trim()) addMutation.mutate(addUrl.trim());
+                    }}
+                    className="border-t border-border p-3"
+                  >
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={addUrl}
+                        onChange={(e) => setAddUrl(e.target.value)}
+                        placeholder="github.com/owner/repo/pull/123"
+                        aria-label="GitHub pull request URL"
+                        data-testid="input-add-pr"
+                        className="flex-1 border border-border bg-transparent px-2 py-1 text-[12px] placeholder:text-muted-foreground/50 focus:border-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                      />
+                      <button
+                        type="submit"
+                        disabled={addMutation.isPending || !addUrl.trim()}
+                        data-testid="button-add-pr"
+                        className="border border-border px-2 py-1 text-[11px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </form>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const repo = addRepo.trim();
+                      if (repo) {
+                        addRepoMutation.mutate({ repo, watchScope });
+                      }
+                    }}
+                    className="border-t border-border p-3"
+                  >
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={addRepo}
+                        onChange={(e) => setAddRepo(e.target.value)}
+                        placeholder="owner/repo"
+                        aria-label="Repository owner and name"
+                        data-testid="input-add-repo"
+                        className="flex-1 border border-border bg-transparent px-2 py-1 text-[12px] placeholder:text-muted-foreground/50 focus:border-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                      />
+                      <button
+                        type="submit"
+                        disabled={addRepoMutation.isPending || !addRepo.trim()}
+                        data-testid="button-add-repo"
+                        className="border border-border px-2 py-1 text-[11px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
+                      >
+                        Watch
+                      </button>
+                    </div>
+                    <div className="mt-3">
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                        Track automatically
+                      </div>
+                      <WatchScopeControl
+                        value={watchScope}
+                        onChange={setWatchScope}
+                        disabled={addRepoMutation.isPending}
+                        name="watch-scope"
+                        testIdPrefix="watch-scope"
+                      />
+                    </div>
+                  </form>
+                </Collapsible.Content>
+              </Collapsible.Root>
+              <div className="border-b border-border p-3">
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Tracked repositories
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => syncReposMutation.mutate()}
+                    disabled={syncReposMutation.isPending}
+                    data-testid="button-sync-repos"
+                    className="border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
+                  >
+                    {syncReposMutation.isPending ? "Fetching..." : "Fetch"}
+                  </button>
+                </div>
+                {repos.length === 0 ? (
+                  <div className="text-[11px] text-muted-foreground">No repositories being watched yet.</div>
+                ) : (
+                  <div className="space-y-1 text-[12px]">
+                    {repos.map((repo) => {
+                      const manualReleasePending = manualReleaseMutation.isPending
+                        && manualReleaseMutation.variables === repo.repo;
 
-                        return (
-                          <div
-                            key={repo.repo}
-                            className="space-y-2 border border-border/60 px-2 py-2"
+                      return (
+                        <div
+                          key={repo.repo}
+                          className="space-y-2 border border-border/60 px-2 py-2"
+                        >
+                          <a
+                            href={getRepoHref(repo.repo)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            data-testid={`tracked-repo-${repo.repo.replace("/", "-")}`}
+                            className="min-w-0 break-all text-foreground/75 underline decoration-border underline-offset-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                           >
-                            <a
-                              href={getRepoHref(repo.repo)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              data-testid={`tracked-repo-${repo.repo.replace("/", "-")}`}
-                              className="min-w-0 break-all text-foreground/75 underline decoration-border underline-offset-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-                            >
-                              {repo.repo}
-                            </a>
-                            <div className="flex flex-wrap items-start justify-between gap-2">
-                              <div>
-                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                                  Track automatically
-                                </div>
-                                <WatchScopeControl
-                                  value={getWatchScope(repo.ownPrsOnly)}
-                                  onChange={(value) =>
+                            {repo.repo}
+                          </a>
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div>
+                              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                Track automatically
+                              </div>
+                              <WatchScopeControl
+                                value={getWatchScope(repo.ownPrsOnly)}
+                                onChange={(value) =>
+                                  updateRepoSettingsMutation.mutate({
+                                    repo: repo.repo,
+                                    ownPrsOnly: value === "mine",
+                                  })
+                                }
+                                disabled={updateRepoSettingsMutation.isPending}
+                                name={`tracked-repo-scope-${repo.repo}`}
+                                testIdPrefix={`tracked-repo-scope-${repo.repo.replace("/", "-")}`}
+                                compact
+                              />
+                            </div>
+                            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 self-end">
+                              <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                                <input
+                                  type="checkbox"
+                                  checked={repo.autoCreateReleases}
+                                  onChange={(e) =>
                                     updateRepoSettingsMutation.mutate({
                                       repo: repo.repo,
-                                      ownPrsOnly: value === "mine",
+                                      autoCreateReleases: e.target.checked,
                                     })
                                   }
                                   disabled={updateRepoSettingsMutation.isPending}
-                                  name={`tracked-repo-scope-${repo.repo}`}
-                                  testIdPrefix={`tracked-repo-scope-${repo.repo.replace("/", "-")}`}
-                                  compact
+                                  data-testid={`tracked-repo-auto-release-${repo.repo.replace("/", "-")}`}
+                                  className="accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                                 />
-                              </div>
-                              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 self-end">
-                                <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                                  <input
-                                    type="checkbox"
-                                    checked={repo.autoCreateReleases}
-                                    onChange={(e) =>
-                                      updateRepoSettingsMutation.mutate({
-                                        repo: repo.repo,
-                                        autoCreateReleases: e.target.checked,
-                                      })
-                                    }
-                                    disabled={updateRepoSettingsMutation.isPending}
-                                    data-testid={`tracked-repo-auto-release-${repo.repo.replace("/", "-")}`}
-                                    className="accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-                                  />
-                                  Auto-release
-                                </label>
-                                <button
-                                  type="button"
-                                  onClick={() => manualReleaseMutation.mutate(repo.repo)}
-                                  disabled={manualReleaseMutation.isPending}
-                                  data-testid={`tracked-repo-manual-release-${repo.repo.replace("/", "-")}`}
-                                  className="border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
-                                >
-                                  {manualReleasePending ? "Releasing…" : "Release"}
-                                </button>
-                              </div>
+                                Auto-release
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => manualReleaseMutation.mutate(repo.repo)}
+                                disabled={manualReleaseMutation.isPending}
+                                data-testid={`tracked-repo-manual-release-${repo.repo.replace("/", "-")}`}
+                                className="border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
+                              >
+                                {manualReleasePending ? "Releasing..." : "Release"}
+                              </button>
                             </div>
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </form>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </>
           )}
           <div className="flex-1 overflow-y-auto">
