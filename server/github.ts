@@ -815,6 +815,7 @@ jobs:
       - uses: openai/codex-action@v1
         with:
           openai-api-key: \${{ secrets.OPENAI_API_KEY }}
+          model: gpt-5
           prompt: |
             Review this pull request. Focus on:
             - Code correctness and potential bugs

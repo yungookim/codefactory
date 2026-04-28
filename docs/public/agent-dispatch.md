@@ -60,13 +60,13 @@ Every agent run is tracked in the oh-my-pr dashboard:
 
 ## Agent Selection
 
-The active coding agent is stored in app config as `codingAgent` and can be changed from the dashboard, terminal UI settings pane, REST API, or MCP `update_config` tool. Agent reasoning/model behavior follows the selected CLI runtime; oh-my-pr does not expose a separate model-discovery or model-selection surface today.
+The active coding agent is stored in app config as `codingAgent` and can be changed from the dashboard, REST API, or MCP `update_config` tool. Agent reasoning/model behavior follows the selected CLI runtime; oh-my-pr does not expose a separate model-discovery or model-selection surface today.
 
 ## Customization
 
 Choose the global agent used for autonomous runs:
 
-- Use the **Coding Agent** control in the dashboard or terminal UI settings to switch between Claude Code and OpenAI Codex.
+- Use the **Coding Agent** control in the dashboard to switch between Claude Code and OpenAI Codex.
 - Set `codingAgent` to `claude` or `codex` through `PATCH /api/config` or the MCP `update_config` tool.
 
 See [Configuration](./configuration.md) for all options.

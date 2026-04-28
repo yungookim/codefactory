@@ -19,13 +19,11 @@ if (parsed.mode === "help") {
 }
 
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
-if (parsed.mode === "web") {
-  require("../dist/index.cjs");
-} else if (parsed.mode === "mcp") {
+if (parsed.mode === "mcp") {
   require("../dist/mcp.cjs");
+} else if (parsed.mode === "web") {
+  require("../dist/index.cjs");
 } else {
-  import("../dist/tui.mjs").catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  });
+  console.error(`Unsupported mode: ${parsed.mode}`);
+  process.exit(1);
 }
