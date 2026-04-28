@@ -25,6 +25,7 @@ export class BackgroundJobDispatcher {
   private readonly heartbeatIntervalMs: number;
   private readonly now: () => Date;
   private readonly onError: (error: unknown) => void;
+  private readonly onReclaimedJobs: (jobs: BackgroundJob[]) => void;
   private readonly activeJobs = new Map<string, Promise<void>>();
 
   private running = false;
@@ -41,6 +42,7 @@ export class BackgroundJobDispatcher {
     heartbeatIntervalMs?: number;
     now?: () => Date;
     onError?: (error: unknown) => void;
+    onReclaimedJobs?: (jobs: BackgroundJob[]) => void;
   }) {
     this.storage = params.storage;
     this.queue = params.queue;
@@ -54,6 +56,7 @@ export class BackgroundJobDispatcher {
     this.onError = params.onError ?? ((error) => {
       console.error("Background job dispatcher error", error);
     });
+    this.onReclaimedJobs = params.onReclaimedJobs ?? (() => {});
   }
 
   async start(): Promise<void> {
@@ -62,7 +65,7 @@ export class BackgroundJobDispatcher {
     }
 
     this.running = true;
-    await this.queue.requeueExpired(this.now());
+    await this.requeueExpiredAndNotify();
     this.wake();
   }
 
@@ -130,7 +133,7 @@ export class BackgroundJobDispatcher {
         return;
       }
 
-      await this.queue.requeueExpired(this.now());
+      await this.requeueExpiredAndNotify();
 
       const job = await this.queue.claimNext({
         workerId: this.workerId,
@@ -223,6 +226,13 @@ export class BackgroundJobDispatcher {
     });
 
     this.activeJobs.set(job.id, jobPromise);
+  }
+
+  private async requeueExpiredAndNotify(): Promise<void> {
+    const reclaimed = await this.queue.requeueExpiredWithDetails(this.now());
+    if (reclaimed.length > 0) {
+      this.onReclaimedJobs(reclaimed);
+    }
   }
 }
 

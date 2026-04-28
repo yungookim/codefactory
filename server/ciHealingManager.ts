@@ -32,7 +32,7 @@ const TERMINAL_STATES: ReadonlyArray<HealingSessionState> = [
 const NEXT_STATES: Record<HealingSessionState, ReadonlyArray<HealingSessionState>> = {
   idle: ["triaging"],
   triaging: ["awaiting_repair_slot", "cooldown", "blocked", "escalated", "superseded"],
-  awaiting_repair_slot: ["repairing", "cooldown", "blocked", "escalated", "superseded"],
+  awaiting_repair_slot: ["repairing", "verifying", "cooldown", "blocked", "escalated", "superseded"],
   repairing: ["awaiting_ci", "cooldown", "blocked", "escalated", "superseded"],
   awaiting_ci: ["verifying", "cooldown", "blocked", "escalated", "superseded", "healed"],
   verifying: ["healed", "awaiting_repair_slot", "cooldown", "blocked", "escalated", "superseded"],

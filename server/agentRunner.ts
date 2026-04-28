@@ -18,6 +18,10 @@ export type CommandResult = {
   timedOut?: boolean;
 };
 
+export type AgentHealthResult =
+  | { ok: true }
+  | { ok: false; reason: string };
+
 const AGENTS: CodingAgent[] = ["codex", "claude"];
 
 export async function commandExists(command: string): Promise<boolean> {
@@ -43,6 +47,47 @@ export async function resolveAgent(preferred: CodingAgent): Promise<CodingAgent>
   }
 
   throw new Error("Neither codex nor claude CLI is installed");
+}
+
+export async function checkAgentHealth(agent: CodingAgent): Promise<AgentHealthResult> {
+  if (!AGENTS.includes(agent)) {
+    return { ok: false, reason: `Unknown coding agent: ${agent}` };
+  }
+
+  if (!(await commandExists(agent))) {
+    return { ok: false, reason: `${agent} CLI is not installed` };
+  }
+
+  const prompt = "Respond with exactly: ok";
+  const result = agent === "codex"
+    ? await runCommand(
+        "codex",
+        [
+          "exec",
+          "--skip-git-repo-check",
+          "--sandbox",
+          "read-only",
+          prompt,
+        ],
+        { timeoutMs: 30000 },
+      )
+    : await runCommand(
+        "claude",
+        [
+          "-p",
+          "--output-format",
+          "text",
+          prompt,
+        ],
+        { timeoutMs: 30000 },
+      );
+
+  if (result.code !== 0) {
+    const detail = summarizeHealthFailure(result);
+    return { ok: false, reason: `${agent} health check failed: ${detail}` };
+  }
+
+  return { ok: true };
 }
 
 export async function evaluateFixNecessityWithAgent(params: {
@@ -205,6 +250,15 @@ function tryParseJsonFromText(text: string): unknown {
 
 function isMissingFileError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function summarizeHealthFailure(result: CommandResult): string {
+  const raw = (result.stderr.trim() || result.stdout.trim() || "no output")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0)
+    ?? "no output";
+  return raw.length > 220 ? `${raw.slice(0, 217).trimEnd()}...` : raw;
 }
 
 export async function runCommand(

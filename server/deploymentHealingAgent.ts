@@ -49,7 +49,7 @@ export function buildDeploymentHealingPrompt(input: DeploymentHealingPromptInput
     "A pull request was merged but the deployment to the platform failed.",
     "Your task is to diagnose the deployment failure and apply the minimal fix.",
     "Create a new branch named deploy-fix/<platform>-<timestamp> from the merge SHA.",
-    "Commit your fix to that branch and push it.",
+    "Leave any file edits unstaged and uncommitted. The app will stage, commit, push, and create the PR.",
     "At the end of your response, include exactly one line in this format:",
     "DEPLOYMENT_FIX_SUMMARY: <one short sentence describing what was fixed>",
     "",
@@ -69,8 +69,8 @@ export function buildDeploymentHealingPrompt(input: DeploymentHealingPromptInput
     "Instructions:",
     "1. Analyze the deployment log to identify the root cause of the failure.",
     "2. Apply the minimal code change needed to fix the deployment error.",
-    "3. Commit your changes with a descriptive commit message.",
-    "4. Push the fix branch to origin.",
+    "3. Do not run git commit or git push.",
+    "4. Leave the fix branch checked out with your file edits in the worktree.",
     "5. Do not merge the branch — a PR will be created automatically.",
     "6. Include the DEPLOYMENT_FIX_SUMMARY line at the end of your output.",
   ];
@@ -133,6 +133,64 @@ export async function runDeploymentHealingRepair(
       prompt,
       env: input.env,
     });
+
+    if (agentResult.code !== 0) {
+      return {
+        accepted: false,
+        rejectionReason: `agent exited with code ${agentResult.code}`,
+        summary: extractDeploymentHealingSummary(agentResult.stdout),
+        fixBranch,
+        agentResult,
+      };
+    }
+
+    const statusResult = await deps.runCommand(
+      "git",
+      ["-C", repoCacheDir, "status", "--porcelain"],
+      { timeoutMs: 10000 },
+    );
+
+    if (statusResult.code !== 0) {
+      return {
+        accepted: false,
+        rejectionReason: `git status failed: ${statusResult.stderr || statusResult.stdout}`,
+        summary: extractDeploymentHealingSummary(agentResult.stdout),
+        fixBranch,
+        agentResult,
+      };
+    }
+
+    if (statusResult.stdout.trim()) {
+      const addResult = await deps.runCommand(
+        "git",
+        ["-C", repoCacheDir, "add", "-A"],
+        { timeoutMs: 30000 },
+      );
+      if (addResult.code !== 0) {
+        return {
+          accepted: false,
+          rejectionReason: `git add failed: ${addResult.stderr || addResult.stdout}`,
+          summary: extractDeploymentHealingSummary(agentResult.stdout),
+          fixBranch,
+          agentResult,
+        };
+      }
+
+      const commitResult = await deps.runCommand(
+        "git",
+        ["-C", repoCacheDir, "commit", "-m", `Fix ${input.platform} deployment`],
+        { timeoutMs: 60000 },
+      );
+      if (commitResult.code !== 0) {
+        return {
+          accepted: false,
+          rejectionReason: `git commit failed: ${commitResult.stderr || commitResult.stdout}`,
+          summary: extractDeploymentHealingSummary(agentResult.stdout),
+          fixBranch,
+          agentResult,
+        };
+      }
+    }
 
     const logResult = await deps.runCommand(
       "git",

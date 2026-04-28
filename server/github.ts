@@ -382,6 +382,41 @@ export function buildFeedbackAuditToken(feedbackId: string): string {
   return `codefactory-feedback:${feedbackId}`;
 }
 
+const APP_COMMENT_FOOTER_PATTERN = /Posted by \[oh-my-pr\]\(https:\/\/github\.com\/yungookim\/oh-my-pr\)/i;
+const AGENT_COMMAND_COMMENT_MARKER = "<!-- codefactory-agent-command -->";
+const AUDIT_TRAIL_COMMENT_PATTERN = /<!--\s*codefactory-feedback:[^>]+-->/i;
+
+function classifyNonActionableAppFeedback(body: string): string | null {
+  if (body.includes(AGENT_COMMAND_COMMENT_MARKER)) {
+    return "oh-my-pr agent command comment";
+  }
+
+  if (AUDIT_TRAIL_COMMENT_PATTERN.test(body)) {
+    return "oh-my-pr audit trail comment";
+  }
+
+  if (APP_COMMENT_FOOTER_PATTERN.test(body)) {
+    return "oh-my-pr status comment";
+  }
+
+  return null;
+}
+
+function applyIngestLifecycleDefaults(item: FeedbackItem): FeedbackItem {
+  const appReason = classifyNonActionableAppFeedback(item.body);
+  if (!appReason) {
+    return item;
+  }
+
+  return {
+    ...item,
+    decision: "reject",
+    decisionReason: appReason,
+    status: "rejected",
+    statusReason: appReason,
+  };
+}
+
 function isGitHubActionsCheckRun(run: GitHubCheckRunResponse): run is GitHubCheckRunResponse & { id: number } {
   return run.app?.slug === "github-actions" && typeof run.id === "number";
 }
@@ -597,16 +632,61 @@ function toGitHubIntegrationError(
   );
 }
 
+function getGitHubErrorStatus(error: unknown): number | null {
+  const status = (error as GitHubErrorLike | undefined)?.status;
+  return typeof status === "number" ? status : null;
+}
+
+function getGitHubErrorCode(error: unknown): string | null {
+  const code = (error as { code?: unknown } | undefined)?.code;
+  if (typeof code === "string" && code.trim()) {
+    return code;
+  }
+
+  const causeCode = (error as { cause?: { code?: unknown } } | undefined)?.cause?.code;
+  return typeof causeCode === "string" && causeCode.trim() ? causeCode : null;
+}
+
+function isTransientGitHubError(error: unknown): boolean {
+  if (error instanceof GitHubIntegrationError) {
+    return false;
+  }
+
+  const status = getGitHubErrorStatus(error);
+  if (status !== null && [408, 500, 502, 503, 504].includes(status)) {
+    return true;
+  }
+
+  const code = getGitHubErrorCode(error);
+  if (code && /^(ECONNRESET|EAI_AGAIN|ETIMEDOUT|ESOCKETTIMEDOUT)$/i.test(code)) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b(ECONNRESET|EAI_AGAIN|ETIMEDOUT|socket hang up|network error|fetch failed)\b/i.test(message);
+}
+
 async function withGitHubErrorHandling<T>(
   context: string,
   resource: ParsedPRUrl | ParsedRepoSlug,
   request: () => Promise<T>,
 ): Promise<T> {
-  try {
-    return await request();
-  } catch (error) {
-    throw toGitHubIntegrationError(error, context, resource);
+  const maxAttempts = 2;
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await request();
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts && isTransientGitHubError(error)) {
+        continue;
+      }
+      throw toGitHubIntegrationError(error, context, resource);
+    }
   }
+
+  throw toGitHubIntegrationError(lastError, context, resource);
 }
 
 export async function buildOctokit(
@@ -1499,7 +1579,8 @@ export async function fetchFeedbackItemsForPR(
     })
     .filter((item) => item.body.trim().length > 0);
 
-  const combined = [...reviewCommentItems, ...reviewItems, ...issueCommentItems];
+  const combined = [...reviewCommentItems, ...reviewItems, ...issueCommentItems]
+    .map(applyIngestLifecycleDefaults);
 
   combined.sort((a, b) => {
     return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();

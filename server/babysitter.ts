@@ -1,11 +1,15 @@
 import { randomUUID } from "crypto";
+import { access } from "fs/promises";
+import path from "path";
 import type { AgentRun, CheckSnapshot, FeedbackItem, HealingSession, PR } from "@shared/schema";
 import type { IStorage } from "./storage";
 import {
   applyFixesWithAgent,
+  checkAgentHealth,
   evaluateFixNecessityWithAgent,
   resolveAgent,
   runCommand,
+  type AgentHealthResult,
   type CodingAgent,
 } from "./agentRunner";
 import {
@@ -58,6 +62,7 @@ import {
 
 const DEFAULT_GIT_USER_NAME = "PR Babysitter";
 const DEFAULT_GIT_USER_EMAIL = "pr-babysitter@local";
+const AGENT_HEALTH_CACHE_TTL_MS = 60_000;
 const APP_NAME = "oh-my-pr";
 const APP_REPOSITORY_URL = "https://github.com/yungookim/oh-my-pr";
 const APP_REPOSITORY_LINK = `[${APP_NAME}](${APP_REPOSITORY_URL})`;
@@ -86,6 +91,8 @@ type GitHubService = {
 
 type BabysitterRuntime = {
   applyFixesWithAgent: typeof applyFixesWithAgent;
+  checkAgentHealth?: typeof checkAgentHealth;
+  checkDependencyPreflight?: (params: DependencyPreflightParams) => Promise<DependencyPreflightResult>;
   evaluateFixNecessityWithAgent: typeof evaluateFixNecessityWithAgent;
   resolveAgent: typeof resolveAgent;
   runCommand: typeof runCommand;
@@ -93,6 +100,17 @@ type BabysitterRuntime = {
   ciPollIntervalMs?: number;
   now?: () => Date;
 };
+
+type DependencyPreflightParams = {
+  cwd: string;
+  pr: PR;
+  pullSummary: GitHubPullSummary;
+  requiresVerification: boolean;
+};
+
+type DependencyPreflightResult =
+  | { ok: true }
+  | { ok: false; reason: string };
 
 type ReleaseManagerLike = {
   enqueueMergedPullReleaseEvaluation(input: {
@@ -132,6 +150,8 @@ const defaultGitHubService: GitHubService = {
 
 const defaultBabysitterRuntime: BabysitterRuntime = {
   applyFixesWithAgent,
+  checkAgentHealth,
+  checkDependencyPreflight,
   evaluateFixNecessityWithAgent,
   resolveAgent,
   runCommand,
@@ -346,14 +366,13 @@ function buildConflictResolutionPrompt(params: {
     "1) Resolve ALL merge conflicts in the listed files.",
     "2) Preserve the intent of both the base branch and head branch changes.",
     "3) When in doubt, prefer the head branch (PR) changes, since that is the author's work.",
-    "4) After resolving conflicts, stage the resolved files with `git add`.",
-    "5) Complete the merge with `git commit --no-edit`.",
-    `6) Push the result to ${remoteName} HEAD:${pullSummary.headRef}.`,
-    "7) Summarize what you resolved in your final response.",
+    "4) Leave the resolved files in the worktree. The babysitter app will handle Git finalization.",
+    "5) Do not stage files, create commits, or push branches.",
+    "6) Summarize what you resolved in your final response.",
     "",
     "Do not wait for user input, confirmation, or approval at any point.",
     "Do not rewrite unrelated files.",
-    "Use the available git tooling in this environment.",
+    "Use the available git tooling for inspection and verification only.",
   ].join("\n");
 }
 
@@ -411,7 +430,8 @@ function buildAgentFixPrompt(params: {
     "Make only targeted changes that resolve the approved tasks.",
     "Do not wait for user input, confirmation, or approval at any point.",
     "Do not rewrite unrelated files.",
-    "Use the available git tooling in this environment.",
+    "Use the available git tooling for inspection and verification only.",
+    "Leave file edits uncommitted; the babysitter app will handle Git finalization after your run.",
     "GitHub follow-up replies and review-thread resolution will be handled by the babysitter after your run.",
     "If a task is invalid after inspection, explain it in your final response and include the exact audit token.",
     "",
@@ -426,7 +446,7 @@ function buildAgentFixPrompt(params: {
     "",
     "When done:",
     "1) Run the relevant verification for your changes.",
-    `2) If you changed files, commit and push to ${remoteName} HEAD:${pullSummary.headRef}.`,
+    "2) Leave any changed files in the worktree for the babysitter app to finalize.",
     "3) For each feedback item you addressed or were blocked on, emit a summary block in the following format:",
     "   FEEDBACK_SUMMARY_START <auditToken>",
     "   <A concise 1-2 sentence summary of what you did or why you were blocked>",
@@ -797,6 +817,17 @@ function summarizeCommandFailure(result: Awaited<ReturnType<typeof runCommand>>)
   return result.stderr.trim() || result.stdout.trim() || "no output";
 }
 
+function isGitInfrastructureFailure(message: string): boolean {
+  return /\b(Could not resolve host|ENOTFOUND|EAI_AGAIN|ECONNRESET|network error|Failed to connect|Connection timed out)\b/i.test(message);
+}
+
+function formatGitFailure(context: string, result: Awaited<ReturnType<typeof runCommand>>): string {
+  const summary = summarizeCommandFailure(result);
+  return isGitInfrastructureFailure(summary)
+    ? `Infrastructure Git failure while ${context}: ${summary}`
+    : `${context} failed: ${summary}`;
+}
+
 function summarizeUnknownError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -837,6 +868,53 @@ async function ensureGitIdentity(worktreePath: string, run: typeof runCommand): 
   }
 }
 
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return true;
+  } catch (error) {
+    if (
+      error instanceof Error
+      && "code" in error
+      && (error.code === "ENOENT" || error.code === "ENOTDIR")
+    ) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function checkDependencyPreflight(params: DependencyPreflightParams): Promise<DependencyPreflightResult> {
+  if (!params.requiresVerification) {
+    return { ok: true };
+  }
+
+  const packageJsonPath = path.join(params.cwd, "package.json");
+  if (!(await pathExists(packageJsonPath))) {
+    return { ok: true };
+  }
+
+  const hasLockfile = await Promise.all([
+    pathExists(path.join(params.cwd, "package-lock.json")),
+    pathExists(path.join(params.cwd, "npm-shrinkwrap.json")),
+    pathExists(path.join(params.cwd, "pnpm-lock.yaml")),
+    pathExists(path.join(params.cwd, "yarn.lock")),
+  ]).then((results) => results.some(Boolean));
+
+  if (!hasLockfile) {
+    return { ok: true };
+  }
+
+  if (!(await pathExists(path.join(params.cwd, "node_modules")))) {
+    return {
+      ok: false,
+      reason: "Node dependency cache is missing in the PR worktree; install dependencies before starting remediation",
+    };
+  }
+
+  return { ok: true };
+}
+
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -851,6 +929,7 @@ export class PRBabysitter {
   private readonly deploymentHealingManager?: DeploymentHealingManager;
   private readonly scheduleBackgroundJob?: ScheduleBackgroundJob;
   private readonly clock: () => Date;
+  private readonly agentHealthCache = new Map<CodingAgent, { checkedAtMs: number; result: AgentHealthResult }>();
 
   constructor(
     storage: IStorage,
@@ -871,6 +950,45 @@ export class PRBabysitter {
 
   private now(): Date {
     return this.clock();
+  }
+
+  private async readAgentHealth(agent: CodingAgent): Promise<AgentHealthResult> {
+    const nowMs = this.now().getTime();
+    const cached = this.agentHealthCache.get(agent);
+    if (cached && nowMs - cached.checkedAtMs < AGENT_HEALTH_CACHE_TTL_MS) {
+      return cached.result;
+    }
+
+    const result = this.runtime.checkAgentHealth
+      ? await this.runtime.checkAgentHealth(agent)
+      : { ok: true } as AgentHealthResult;
+    this.agentHealthCache.set(agent, { checkedAtMs: nowMs, result });
+    return result;
+  }
+
+  private async pauseAutomationForAgentFailure(agent: CodingAgent, reason: string, prIds: string[]): Promise<void> {
+    const message = `Agent health check failed for ${agent}: ${reason}`;
+    await this.storage.updateRuntimeState({
+      drainMode: true,
+      drainRequestedAt: this.now().toISOString(),
+      drainReason: message,
+    });
+
+    await Promise.all(prIds.map((prId) =>
+      this.storage.addLog(prId, "error", `Automation paused: ${message}`, {
+        phase: "agent.health",
+      }),
+    ));
+  }
+
+  private async ensureAgentHealthy(agent: CodingAgent, prIds: string[]): Promise<void> {
+    const health = await this.readAgentHealth(agent);
+    if (health.ok) {
+      return;
+    }
+
+    await this.pauseAutomationForAgentFailure(agent, health.reason, prIds);
+    throw new Error(`Agent health check failed for ${agent}: ${health.reason}`);
   }
 
   getActiveRunCount(): number {
@@ -1144,16 +1262,28 @@ export class PRBabysitter {
     }
 
     const config = await this.storage.getConfig();
-    const repoSettingsByRepo = new Map(
-      (await this.storage.listRepoSettings()).map((repo) => [repo.repo, repo]),
-    );
-    const octokit = await this.github.buildOctokit(config);
-
     const tracked = await this.storage.getPRs();
     const repoCandidates = new Set<string>([
       ...tracked.map((pr) => pr.repo),
       ...config.watchedRepos,
     ]);
+    const selectedAgent = config.codingAgent as CodingAgent;
+    const watchedPrIds = tracked
+      .filter((pr) => pr.watchEnabled !== false && pr.status !== "archived")
+      .map((pr) => pr.id);
+    if (repoCandidates.size > 0) {
+      try {
+        await this.ensureAgentHealthy(selectedAgent, watchedPrIds);
+      } catch {
+        return;
+      }
+    }
+
+    const repoSettingsByRepo = new Map(
+      (await this.storage.listRepoSettings()).map((repo) => [repo.repo, repo]),
+    );
+    const octokit = await this.github.buildOctokit(config);
+
     const needsAuthenticatedLogin = Array.from(repoCandidates).some(
       (repo) => (repoSettingsByRepo.get(repo)?.ownPrsOnly ?? true),
     );
@@ -1725,6 +1855,62 @@ export class PRBabysitter {
       return result;
     };
 
+    const commitDirtyWorktree = async (params: {
+      currentPrId: string;
+      cwd: string;
+      commitArgs: string[];
+      phase: string;
+      context: string;
+    }): Promise<boolean> => {
+      const status = await runLoggedCommand({
+        currentPrId: params.currentPrId,
+        command: "git",
+        args: ["status", "--porcelain"],
+        cwd: params.cwd,
+        timeoutMs: 5000,
+        phase: params.phase,
+        successMessage: "Collected worktree git status",
+      });
+      if (status.code !== 0) {
+        throw new Error(formatGitFailure("checking worktree status", status));
+      }
+
+      if (!status.stdout.trim()) {
+        await queueLog(params.currentPrId, "info", `No worktree changes to commit after ${params.context}`, {
+          phase: params.phase,
+        });
+        return false;
+      }
+
+      const addResult = await runLoggedCommand({
+        currentPrId: params.currentPrId,
+        command: "git",
+        args: ["add", "-A"],
+        cwd: params.cwd,
+        timeoutMs: 30000,
+        phase: params.phase,
+        successMessage: "Staged worktree changes",
+      });
+      if (addResult.code !== 0) {
+        throw new Error(formatGitFailure("staging worktree changes", addResult));
+      }
+
+      const commitResult = await runLoggedCommand({
+        currentPrId: params.currentPrId,
+        command: "git",
+        args: params.commitArgs,
+        cwd: params.cwd,
+        timeoutMs: 60000,
+        phase: params.phase,
+        successMessage: "Committed worktree changes",
+      });
+      if (commitResult.code !== 0) {
+        throw new Error(formatGitFailure("committing worktree changes", commitResult));
+      }
+
+      return true;
+    };
+
     let followUpTasks: FeedbackItem[] = [];
     const forcedFixPrompt = options?.forceAgentPrompt ?? null;
     const forcedResolvedAgent = options?.forceResolvedAgent ?? null;
@@ -1752,6 +1938,11 @@ export class PRBabysitter {
         phase: "run",
         metadata: { preferredAgent, recoveryMode },
       });
+
+      const config = await this.storage.getConfig();
+      const selectedAgent = forcedResolvedAgent || preferredAgent;
+      await this.ensureAgentHealthy(selectedAgent, [prId]);
+
       await updateRunRecord({ phase: "run.sync" });
 
       let pr = await this.syncFeedbackForPR(prId, {
@@ -1759,8 +1950,10 @@ export class PRBabysitter {
         logStart: true,
         phase: "sync",
       });
-      const config = await this.storage.getConfig();
       const agent = forcedResolvedAgent || (await this.runtime.resolveAgent(preferredAgent));
+      if (agent !== selectedAgent) {
+        await this.ensureAgentHealthy(agent, [pr.id]);
+      }
       await updateRunRecord({
         resolvedAgent: agent,
       });
@@ -2224,6 +2417,26 @@ export class PRBabysitter {
             phase: "git.identity",
           });
 
+          const dependencyPreflight = await (this.runtime.checkDependencyPreflight ?? checkDependencyPreflight)({
+            cwd: worktreePath,
+            pr,
+            pullSummary,
+            requiresVerification: hasCommentOrStatusAgentWork || hasConflicts || docsAssessmentNeeded || hasDocsTask,
+          });
+          if (!dependencyPreflight.ok) {
+            await queueLog(pr.id, "error", `Dependency preflight failed: ${dependencyPreflight.reason}`, {
+              phase: "preflight.dependencies",
+              metadata: {
+                headSha: pullSummary.headSha,
+                reason: dependencyPreflight.reason,
+              },
+            });
+            throw new Error(`Dependency preflight failed: ${dependencyPreflight.reason}`);
+          }
+          await queueLog(pr.id, "info", "Dependency preflight passed", {
+            phase: "preflight.dependencies",
+          });
+
           if (docsAssessmentNeeded) {
             await queueLog(pr.id, "info", "Documentation assessment started", {
               phase: "evaluate.docs",
@@ -2443,7 +2656,8 @@ export class PRBabysitter {
               await conflictStderr.flush();
 
               if (conflictResult.code !== 0) {
-                throw new Error(`Agent failed to resolve merge conflicts (${conflictResult.code}): ${conflictResult.stderr || conflictResult.stdout}`);
+                const failureReason = formatConciseFailureReason(conflictResult.stderr || conflictResult.stdout);
+                throw new Error(`Agent failed to resolve merge conflicts (${conflictResult.code}): ${failureReason}`);
               }
 
               await queueLog(pr.id, "info", "Agent completed merge conflict resolution", {
@@ -2451,34 +2665,32 @@ export class PRBabysitter {
                 metadata: { code: conflictResult.code },
               });
 
-              const postMergeStatus = await this.runtime.runCommand("git", ["status", "--porcelain"], {
+              const unresolvedAfterAgent = await this.runtime.runCommand("git", ["diff", "--name-only", "--diff-filter=U"], {
                 cwd: worktreePath,
                 timeoutMs: 5000,
               });
-              if (postMergeStatus.stdout.trim()) {
-                throw new Error(`Agent left uncommitted changes after conflict resolution: ${postMergeStatus.stdout.trim()}`);
+              if (unresolvedAfterAgent.code !== 0) {
+                throw new Error(formatGitFailure("checking unresolved merge conflicts", unresolvedAfterAgent));
+              }
+              if (unresolvedAfterAgent.stdout.trim()) {
+                throw new Error(`Agent left unresolved merge conflicts: ${unresolvedAfterAgent.stdout.trim()}`);
               }
 
-              await queueLog(pr.id, "info", "Merge conflicts resolved and committed", {
+              await commitDirtyWorktree({
+                currentPrId: pr.id,
+                cwd: worktreePath,
+                commitArgs: ["commit", "--no-edit"],
+                phase: "conflict",
+                context: "merge conflict resolution",
+              });
+
+              await queueLog(pr.id, "info", "Merge conflicts resolved and committed by babysitter", {
                 phase: "conflict",
               });
             } else {
               await queueLog(pr.id, "info", "Merge completed without conflicts (GitHub mergeability may have been stale)", {
                 phase: "conflict",
               });
-
-              const mergePush = await runLoggedCommand({
-                currentPrId: pr.id,
-                command: "git",
-                args: ["push", remoteName, `HEAD:${pullSummary.headRef}`],
-                cwd: worktreePath,
-                timeoutMs: 120000,
-                phase: "conflict",
-                successMessage: `Pushed merge result to ${remoteName}/${pullSummary.headRef}`,
-              });
-              if (mergePush.code !== 0) {
-                throw new Error(`git push ${remoteName} HEAD:${pullSummary.headRef} failed: ${mergePush.stderr || mergePush.stdout}`);
-              }
             }
           }
 
@@ -2556,7 +2768,7 @@ export class PRBabysitter {
               // Update status replies on failure.
               const failureReason = formatConciseFailureReason(applyResult.stderr || applyResult.stdout);
               await Promise.all(effectiveCommentTasks.map((task) => updateItemStatus(task.id, STATUS_MESSAGES.agentFailed(failureReason))));
-              throw new Error(`Agent apply failed (${applyResult.code}): ${applyResult.stderr || applyResult.stdout}`);
+              throw new Error(`Agent apply failed (${applyResult.code}): ${failureReason}`);
             }
 
             // Update status replies: agent succeeded.
@@ -2579,23 +2791,14 @@ export class PRBabysitter {
             });
           }
 
-          const status = await runLoggedCommand({
+          await commitDirtyWorktree({
             currentPrId: pr.id,
-            command: "git",
-            args: ["status", "--porcelain"],
             cwd: worktreePath,
-            timeoutMs: 5000,
+            commitArgs: ["commit", "-m", `Apply babysitter fixes for PR #${pr.number}`],
             phase: "verify.git.status",
-            successMessage: "Collected worktree git status",
+            context: "agent run",
           });
-          if (status.code !== 0) {
-            throw new Error(`git status failed: ${status.stderr || status.stdout}`);
-          }
-
-          if (status.stdout.trim()) {
-            throw new Error(`Agent left uncommitted changes in the worktree: ${status.stdout.trim()}`);
-          }
-          await queueLog(pr.id, "info", "Worktree is clean after agent run", {
+          await queueLog(pr.id, "info", "Worktree is clean after babysitter finalization", {
             phase: "verify.git.status",
           });
 
@@ -2637,13 +2840,54 @@ export class PRBabysitter {
           }
 
           const localHeadSha = localHead.stdout.trim();
-          const remoteHeadSha = remoteHead.stdout.trim();
-          branchMoved = remoteHeadSha !== pullSummary.headSha;
+          let remoteHeadSha = remoteHead.stdout.trim();
           const localCommitCreated = localHeadSha !== pullSummary.headSha;
 
           if (localCommitCreated && remoteHeadSha !== localHeadSha) {
-            throw new Error("Babysitter created a local commit but did not push it to the PR head branch");
+            const pushResult = await runLoggedCommand({
+              currentPrId: pr.id,
+              command: "git",
+              args: ["push", remoteName, `HEAD:${pullSummary.headRef}`],
+              cwd: worktreePath,
+              timeoutMs: 120000,
+              phase: "verify.git.push",
+              successMessage: `Pushed babysitter commit to ${remoteName}/${pullSummary.headRef}`,
+            });
+            if (pushResult.code !== 0) {
+              throw new Error(formatGitFailure(`pushing ${remoteName}/${pullSummary.headRef}`, pushResult));
+            }
+
+            const refreshedRemoteFetch = await runLoggedCommand({
+              currentPrId: pr.id,
+              command: "git",
+              args: ["-C", repoCacheDir, "fetch", remoteName, pullSummary.headRef],
+              timeoutMs: 120000,
+              phase: "verify.git.fetch-head",
+              successMessage: `Fetched ${remoteName}/${pullSummary.headRef} after babysitter push`,
+            });
+            if (refreshedRemoteFetch.code !== 0) {
+              throw new Error(formatGitFailure(`fetching ${remoteName}/${pullSummary.headRef} after push`, refreshedRemoteFetch));
+            }
+
+            const refreshedRemoteHead = await runLoggedCommand({
+              currentPrId: pr.id,
+              command: "git",
+              args: ["-C", repoCacheDir, "rev-parse", "FETCH_HEAD"],
+              timeoutMs: 5000,
+              phase: "verify.git.remote-head",
+              successMessage: "Collected remote PR head SHA after babysitter push",
+            });
+            if (refreshedRemoteHead.code !== 0) {
+              throw new Error(formatGitFailure("reading remote PR head after push", refreshedRemoteHead));
+            }
+            remoteHeadSha = refreshedRemoteHead.stdout.trim();
           }
+
+          if (localCommitCreated && remoteHeadSha !== localHeadSha) {
+            throw new Error("Babysitter created a local commit but could not verify it on the PR head branch");
+          }
+
+          branchMoved = remoteHeadSha !== pullSummary.headSha;
 
           if (statusTasks.length > 0 && !branchMoved) {
             throw new Error("Agent did not update the PR head branch for accepted failing status tasks");
@@ -2658,7 +2902,7 @@ export class PRBabysitter {
           }
 
           if (hasConflicts && !branchMoved) {
-            throw new Error("Agent did not push conflict resolution to the PR head branch");
+            throw new Error("Conflict resolution was not pushed to the PR head branch");
           }
 
           if (hasDocsTask && docsTaskOutcome?.outcome === "no_change") {
@@ -2919,7 +3163,7 @@ export class PRBabysitter {
         }
       }
 
-      // Post-push CI monitoring: if the agent pushed changes, poll for CI
+      // Post-push CI monitoring: if the app pushed changes, poll for CI
       // results on the new commit and alert the user if failures persist.
       if (branchMoved && headShaForFollowUp) {
         await queueLog(pr.id, "info", "Waiting for CI/CD checks on new commit...", {
@@ -2948,7 +3192,7 @@ export class PRBabysitter {
             const alertBody = [
               `## \u26a0\ufe0f ${formatAppName(includeRepositoryLinksInGitHubComments)} CI Alert`,
               "",
-              `The agent pushed changes (commit \`${headShaForFollowUp.slice(0, 7)}\`), but CI/CD checks are still failing:`,
+              `The babysitter pushed changes (commit \`${headShaForFollowUp.slice(0, 7)}\`), but CI/CD checks are still failing:`,
               "",
               ...ciResult.failures.map((f) => `- **${f.context}**: ${f.description}${f.targetUrl ? ` ([details](${f.targetUrl}))` : ""}`),
               "",
@@ -3094,7 +3338,7 @@ export class PRBabysitter {
         // Determine if this is a non-critical GitHub integration failure
         // (e.g. couldn't post a comment or resolve a thread) vs a real
         // agent/processing failure. GitHub errors that happen *after* the
-        // agent successfully pushed code are warnings, not failures.
+        // app successfully pushed code are warnings, not failures.
         const isGitHubError = error instanceof GitHubIntegrationError;
         const isNonCritical = isGitHubError && branchMoved;
         const logLevel = isNonCritical ? "warn" : "error";

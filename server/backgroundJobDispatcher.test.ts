@@ -54,6 +54,7 @@ test("BackgroundJobDispatcher requeues expired leases on start and completes rec
   });
 
   let handled = 0;
+  const reclaimedTargets: string[] = [];
   const dispatcher = new BackgroundJobDispatcher({
     storage,
     queue,
@@ -66,6 +67,9 @@ test("BackgroundJobDispatcher requeues expired leases on start and completes rec
         handled += 1;
       },
     },
+    onReclaimedJobs: (jobs) => {
+      reclaimedTargets.push(...jobs.map((reclaimed) => reclaimed.targetId));
+    },
   });
 
   try {
@@ -76,6 +80,7 @@ test("BackgroundJobDispatcher requeues expired leases on start and completes rec
     const stored = await storage.getBackgroundJob(job.id);
     assert.equal(stored?.status, "completed");
     assert.equal(stored?.attemptCount, 2);
+    assert.deepEqual(reclaimedTargets, ["pr-1"]);
   } finally {
     dispatcher.stop();
   }
