@@ -108,18 +108,18 @@
   }
 
   .doc-prose a {
-    color: #93c5fd;
+    color: theme('colors.brand.400');
     text-decoration: none;
-    border-bottom: 1px solid rgba(147, 197, 253, 0.45);
+    border-bottom: 1px solid theme('colors.brand.400 / 45%');
   }
 
   .doc-prose a:hover {
-    color: #bfdbfe;
-    border-bottom-color: rgba(191, 219, 254, 0.8);
+    color: theme('colors.brand.300');
+    border-bottom-color: theme('colors.brand.300 / 80%');
   }
 
   .doc-prose a:focus-visible {
-    outline: 1px solid #93c5fd;
+    outline: 1px solid theme('colors.brand.400');
     outline-offset: 3px;
   }
 

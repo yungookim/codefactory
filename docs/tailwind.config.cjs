@@ -8,6 +8,7 @@ module.exports = {
     extend: {
       colors: {
         brand: {
+          300: "#bfdbfe",
           400: "#93c5fd",
           500: "#60a5fa",
           600: "#2563eb",
