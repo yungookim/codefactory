@@ -474,6 +474,34 @@ Recommendation:
 10. Compact tool-layer failure summaries.
    - Keep raw logs available, but promote one root-cause reason per failed run.
 
+## Post-Fix Run Marker - 2026-04-28
+
+Use this section as the baseline for the next log-analysis pass. It records the run that implemented and verified the priority fixes above.
+
+- Branch: `report-unresolved-log-issues`
+- PR: `https://github.com/yungookim/oh-my-pr/pull/120`
+- Fix commit: `94debc13a8ba1875dfd11bdd28f5ac20e43cd155`
+- Local QA report: `.gstack/qa-reports/qa-report-127-0-0-1-2026-04-28.md`
+- Project-scoped QA copy: `~/.gstack/projects/yungookim-oh-my-pr/dgyk-report-unresolved-log-issues-test-outcome-20260428T075900.md`
+- Verification run: `npm run test:all` passed with 408 tests, `npm run check` passed, `npm run build` passed, `npm run lint` passed, and browser smoke found no changed-scope defects.
+
+Important evaluation boundary: do not judge these fixes against log entries produced before a runtime includes commit `94debc13a8ba1875dfd11bdd28f5ac20e43cd155`. The original failure window ended around `2026-04-28T01:39Z`; the QA verification was a local app run on April 28, 2026 and did not itself process live watched PRs.
+
+Next log-analysis pass should compare post-deploy/post-merge runtime logs against these expected outcomes:
+
+| Fix area | Evidence to look for in new logs |
+| --- | --- |
+| Agent health gating | Unauthenticated or missing selected agents pause automation before new babysitter jobs are scheduled or leased. Repeated Claude 401 loops should stop. |
+| App-owned Git commit/push | Agent logs should no longer show instructions or attempts to `git commit` / `git push`; app runtime should stage, commit, push, and verify after file edits. |
+| Self-authored comment filtering | oh-my-pr status/audit comments should be ingested as non-actionable and should not trigger repeated evaluator runs. |
+| GitHub retry/infrastructure classification | `ECONNRESET`, DNS, and push failures should be retried or classified as infrastructure, not code-remediation failures. |
+| Lease recovery | Expired `babysit_pr` leases should be reclaimed with the target PR logged before requeueing. No stale April 28-style leased job should remain indefinitely. |
+| Healing transitions | `awaiting_repair_slot -> verifying` should transition cleanly through supported paths without illegal transition errors. |
+| Dependency preflight | Remediation should not start when required test/build tooling is unavailable; logs should show preflight/environment classification instead. |
+| CI non-actionable persistence | Cancelled external checks should not be repeatedly reprocessed as fresh branch-fixable work. |
+| Stale worktree recovery | Expired leases should be reclaimed before orphaned worktrees are cleaned or repo caches are recloned. |
+| Tool-layer summaries | Failed runs should preserve raw logs but promote one compact actionable root-cause reason. |
+
 ## Source Queries Used
 
 ```sql
