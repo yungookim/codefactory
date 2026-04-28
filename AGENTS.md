@@ -62,6 +62,9 @@ Use `npm install` to install dependencies. `npm run dev` starts the local servic
 ## Coding Style & Naming Conventions
 Use strict TypeScript, 2-space indentation, double quotes, and semicolons to match the existing code. Keep React code under `client/src/`, server modules under `server/`, and shared contracts in `shared/`. Prefer the existing path aliases: `@/` for client imports and `@shared/` for shared modules. Follow established file naming: camelCase for server helpers such as `repoWorkspace.ts`, kebab-case for route files such as `not-found.tsx`, and `*.test.ts` for tests.
 
+## Design Guidance
+Before product UI or UX changes, read `.impeccable.md` and follow its Design Context. Keep the app dark-first, developer-native, dense, transparent about automation, and extremely simple. Avoid enterprise-suite patterns like Jira, Confluence, Microsoft Teams, and ServiceNow.
+
 ## Testing Guidelines
 Follow the standardized test guidance in `test.md`. Use the red-green-refactor loop for every feature, bug fix, refactor, or behavior change. Before completion, run the relevant Node test suite and `npm run check`. Maintain at least 70% coverage of the affected critical path for critical app workflows.
 
