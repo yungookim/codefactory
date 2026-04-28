@@ -100,7 +100,7 @@ export default function Settings() {
               Automation
             </h2>
             <div className="flex flex-col gap-4 rounded border border-border p-4">
-              <div className="flex items-center justify-between gap-3">
+              <label className="flex items-center justify-between gap-3 cursor-pointer">
                 <div>
                   <div className="text-sm">Auto-resolve conflicts</div>
                   <div className="text-[11px] text-muted-foreground">
@@ -109,7 +109,6 @@ export default function Settings() {
                 </div>
                 <input
                   type="checkbox"
-                  aria-label="Auto-resolve conflicts"
                   checked={config?.autoResolveMergeConflicts ?? true}
                   onChange={(e) =>
                     updateConfigMutation.mutate({
@@ -120,8 +119,8 @@ export default function Settings() {
                   data-testid="checkbox-auto-resolve-conflicts"
                   className="h-4 w-4 accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                 />
-              </div>
-              <div className="flex items-center justify-between gap-3">
+              </label>
+              <label className="flex items-center justify-between gap-3 cursor-pointer">
                 <div>
                   <div className="text-sm">Auto-update docs</div>
                   <div className="text-[11px] text-muted-foreground">
@@ -130,7 +129,6 @@ export default function Settings() {
                 </div>
                 <input
                   type="checkbox"
-                  aria-label="Auto-update docs"
                   checked={config?.autoUpdateDocs ?? true}
                   onChange={(e) =>
                     updateConfigMutation.mutate({
@@ -141,7 +139,7 @@ export default function Settings() {
                   data-testid="checkbox-auto-update-docs"
                   className="h-4 w-4 accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                 />
-              </div>
+              </label>
             </div>
           </section>
 
