@@ -1143,8 +1143,8 @@ export default function Dashboard() {
       <OnboardingPanel />
 
       <div className="flex flex-1 overflow-hidden">
-        <div className="flex w-80 shrink-0 flex-col border-r border-border">
-          <div className="flex border-b border-border">
+        <div className="flex min-h-0 w-80 shrink-0 flex-col overflow-y-auto border-r border-border">
+          <div className="sticky top-0 z-10 flex shrink-0 border-b border-border bg-background">
             <button
               onClick={() => setViewMode("active")}
               data-testid="tab-active"
@@ -1332,7 +1332,7 @@ export default function Dashboard() {
               </form>
             </>
           )}
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1">
             {(isArchived ? isLoadingArchived : isLoading) ? (
               <div className="p-4 text-[12px] text-muted-foreground">Loading...</div>
             ) : displayedPRs.length === 0 ? (
