@@ -69,6 +69,9 @@ test("runtime queueBabysit enqueues a babysit job using the configured agent", a
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0]?.targetId, pr.id);
   assert.equal(jobs[0]?.payload.preferredAgent, "claude");
+  assert.equal(jobs[0]?.payload.activityLabel, "Babysitting PR #42");
+  assert.equal(jobs[0]?.payload.activityDetail, "acme/widgets - feat: add widget");
+  assert.equal(jobs[0]?.payload.activityTargetUrl, pr.url);
 });
 
 test("runtime setWatchEnabled updates the PR and emits a change event", async () => {
@@ -120,6 +123,9 @@ test("runtime askQuestion persists the question and enqueues a durable job", asy
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0]?.targetId, question.id);
   assert.equal(jobs[0]?.payload.prId, pr.id);
+  assert.equal(jobs[0]?.payload.activityLabel, "Answering question for PR #42");
+  assert.equal(jobs[0]?.payload.activityDetail, "acme/widgets - feat: add widget");
+  assert.equal(jobs[0]?.payload.activityTargetUrl, pr.url);
 });
 
 test("runtime updateConfig persists updates and exposes them through getConfig", async () => {

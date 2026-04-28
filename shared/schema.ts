@@ -166,6 +166,32 @@ export const backgroundJobSchema = z.object({
 });
 export type BackgroundJob = z.infer<typeof backgroundJobSchema>;
 
+export const activityStatusEnum = z.enum(["in_progress", "queued"]);
+export type ActivityStatus = z.infer<typeof activityStatusEnum>;
+
+export const activityItemSchema = z.object({
+  id: z.string(),
+  kind: backgroundJobKindEnum,
+  status: activityStatusEnum,
+  label: z.string(),
+  detail: z.string().nullable(),
+  targetId: z.string(),
+  targetUrl: z.string().nullable(),
+  queuedAt: z.string(),
+  availableAt: z.string(),
+  startedAt: z.string().nullable(),
+  updatedAt: z.string(),
+  attemptCount: z.number().int().nonnegative(),
+});
+export type ActivityItem = z.infer<typeof activityItemSchema>;
+
+export const activitySnapshotSchema = z.object({
+  inProgress: z.array(activityItemSchema),
+  queued: z.array(activityItemSchema),
+  generatedAt: z.string(),
+});
+export type ActivitySnapshot = z.infer<typeof activitySnapshotSchema>;
+
 export const questionStatusEnum = z.enum(["pending", "answering", "answered", "error"]);
 export type QuestionStatus = z.infer<typeof questionStatusEnum>;
 

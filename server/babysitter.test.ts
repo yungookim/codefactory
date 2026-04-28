@@ -458,6 +458,9 @@ test("syncAndBabysitTrackedRepos enqueues social changelog generation as a backg
   });
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].status, "queued");
+  assert.equal(jobs[0].payload.activityLabel, "Generating social changelog");
+  assert.equal(jobs[0].payload.activityDetail, `${changelogs[0].date} - 5 merged PRs`);
+  assert.equal(jobs[0].payload.activityTargetUrl, null);
 });
 
 test("syncAndBabysitTrackedRepos enqueues babysit_pr jobs when a background scheduler is provided", async () => {
@@ -517,6 +520,9 @@ test("syncAndBabysitTrackedRepos enqueues babysit_pr jobs when a background sche
   });
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].payload.preferredAgent, "claude");
+  assert.equal(jobs[0].payload.activityLabel, "Babysitting PR #42");
+  assert.equal(jobs[0].payload.activityDetail, "octo/example - Example PR");
+  assert.equal(jobs[0].payload.activityTargetUrl, pr.url);
 });
 
 test("syncAndBabysitTrackedRepos repairs missing review-thread metadata on archived PRs", async () => {

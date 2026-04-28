@@ -4,6 +4,7 @@ import type { CodingAgent } from "./agentRunner";
 import { parseRepoSlug } from "./github";
 import type { IStorage } from "./storage";
 import { buildBackgroundJobDedupeKey, type ScheduleBackgroundJob } from "./backgroundJobQueue";
+import { buildActivityPayload } from "./activityPayload";
 import {
   evaluateReleaseWorthinessWithAgent,
   type ReleaseAgentPullSummary,
@@ -112,7 +113,7 @@ export class ReleaseManager {
     );
     if (existing) {
       if (!isTerminalReleaseStatus(existing.status)) {
-        this.scheduleProcessing(existing.id);
+        this.scheduleProcessing(existing);
       }
       return existing;
     }
@@ -139,7 +140,7 @@ export class ReleaseManager {
       completedAt: null,
     });
 
-    this.scheduleProcessing(created.id);
+    this.scheduleProcessing(created);
     return created;
   }
 
@@ -187,7 +188,7 @@ export class ReleaseManager {
       });
       const next = updated ?? existing;
       if (!isTerminalReleaseStatus(next.status)) {
-        this.scheduleProcessing(next.id);
+        this.scheduleProcessing(next);
       }
       return next;
     }
@@ -215,7 +216,7 @@ export class ReleaseManager {
       completedAt: null,
     });
 
-    this.scheduleProcessing(created.id);
+    this.scheduleProcessing(created);
     return created;
   }
 
@@ -235,7 +236,7 @@ export class ReleaseManager {
       return undefined;
     }
 
-    this.scheduleProcessing(id);
+    this.scheduleProcessing(reset);
     return reset;
   }
 
@@ -442,13 +443,21 @@ export class ReleaseManager {
     }
   }
 
-  private scheduleProcessing(id: string): void {
+  private scheduleProcessing(run: ReleaseRun): void {
+    const id = run.id;
     if (this.scheduleBackgroundJob) {
       this.scheduleBackgroundJob(
         "process_release_run",
         id,
         buildBackgroundJobDedupeKey("process_release_run", id),
-        { releaseRunId: id },
+        {
+          releaseRunId: id,
+          ...buildActivityPayload({
+            label: `Processing release for ${run.repo}`,
+            detail: `PR #${run.triggerPrNumber} - ${run.triggerPrTitle}`,
+            targetUrl: run.triggerPrUrl,
+          }),
+        },
       ).catch((error) => {
         console.error(`Failed to schedule release run ${id}:`, error);
       });
