@@ -20,6 +20,7 @@ describe("DEFAULT_CONFIG", () => {
     const requiredFields = [
       "githubTokens",
       "codingAgent",
+      "fallbackToNextCodingAgent",
       "maxTurns",
       "batchWindowMs",
       "pollIntervalMs",
@@ -108,6 +109,10 @@ describe("DEFAULT_CONFIG", () => {
       validAgents.includes(DEFAULT_CONFIG.codingAgent),
       `codingAgent should be one of ${validAgents.join(", ")}, got ${DEFAULT_CONFIG.codingAgent}`,
     );
+  });
+
+  it("does not fall back to another coding agent by default", () => {
+    assert.equal(DEFAULT_CONFIG.fallbackToNextCodingAgent, false);
   });
 
   it("enables docs auto-update by default", () => {

@@ -76,6 +76,7 @@ test("SqliteStorage reloads config and PR state from the same root", async () =>
   await first.updateConfig({
     githubTokens: ["ghs_first", "ghs_second"],
     pollIntervalMs: 45000,
+    fallbackToNextCodingAgent: true,
     autoCreateReleases: false,
     autoUpdateDocs: false,
     includeRepositoryLinksInGitHubComments: false,
@@ -206,6 +207,7 @@ test("SqliteStorage reloads config and PR state from the same root", async () =>
   const logs = await second.getLogs(pr.id);
 
   assert.equal(config.pollIntervalMs, 45000);
+  assert.equal(config.fallbackToNextCodingAgent, true);
   assert.equal(config.autoCreateReleases, false);
   assert.equal(config.autoUpdateDocs, false);
   assert.equal(config.includeRepositoryLinksInGitHubComments, false);

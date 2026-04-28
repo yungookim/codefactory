@@ -28,13 +28,20 @@ export async function commandExists(command: string): Promise<boolean> {
   return result.code === 0;
 }
 
-export async function resolveAgent(preferred: CodingAgent): Promise<CodingAgent> {
+export async function resolveAgent(
+  preferred: CodingAgent,
+  options?: { allowFallback?: boolean },
+): Promise<CodingAgent> {
   if (!AGENTS.includes(preferred)) {
     preferred = "codex";
   }
 
   if (await commandExists(preferred)) {
     return preferred;
+  }
+
+  if (!options?.allowFallback) {
+    throw new Error(`Configured coding agent ${preferred} CLI is not installed`);
   }
 
   const fallback = preferred === "codex" ? "claude" : "codex";

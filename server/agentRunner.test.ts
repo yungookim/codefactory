@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { evaluateFixNecessityWithAgent, runCommand } from "./agentRunner";
+import { evaluateFixNecessityWithAgent, resolveAgent, runCommand } from "./agentRunner";
 
 test("runCommand reports a timeout even when the child exits 0 after SIGTERM", async () => {
   const result = await runCommand(
@@ -53,6 +53,53 @@ test("evaluateFixNecessityWithAgent throws a clear error when codex writes no ou
     } else {
       process.env.NODE_OPTIONS = originalNodeOptions;
     }
+    process.env.PATH = originalPath;
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("resolveAgent does not fall back when fallback is disabled", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "fake-agent-bin-"));
+  const originalPath = process.env.PATH;
+
+  try {
+    process.env.PATH = tempRoot;
+
+    await assert.rejects(
+      () => resolveAgent("claude"),
+      /Configured coding agent claude CLI is not installed/,
+    );
+  } finally {
+    process.env.PATH = originalPath;
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("resolveAgent uses the next coding agent when fallback is enabled", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "fake-agent-bin-"));
+  const fakeCodexPath = path.join(
+    tempRoot,
+    process.platform === "win32" ? "codex.exe" : "codex",
+  );
+  const fakeWhichPath = path.join(
+    tempRoot,
+    process.platform === "win32" ? "which.cmd" : "which",
+  );
+  const originalPath = process.env.PATH;
+
+  try {
+    await copyFile(process.execPath, fakeCodexPath);
+    await chmod(fakeCodexPath, 0o755);
+    await writeFile(
+      fakeWhichPath,
+      `#!/bin/sh\nif [ "$1" = "codex" ]; then echo "${fakeCodexPath}"; exit 0; fi\nexit 1\n`,
+      "utf8",
+    );
+    await chmod(fakeWhichPath, 0o755);
+    process.env.PATH = tempRoot;
+
+    assert.equal(await resolveAgent("claude", { allowFallback: true }), "codex");
+  } finally {
     process.env.PATH = originalPath;
     await rm(tempRoot, { recursive: true, force: true });
   }

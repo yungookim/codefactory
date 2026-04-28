@@ -7,6 +7,7 @@ import type {
   DeploymentHealingSession,
   HealingSession,
   LogEntry,
+  OperatorWarning,
   PR,
   PRQuestion,
   ReleaseRun,
@@ -167,6 +168,65 @@ function readJobStringPayload(job: BackgroundJob, key: string): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
+type AgentAuthFailure = {
+  agentLabel: "Claude" | "Codex";
+  fixSteps: string[];
+};
+
+const AGENT_AUTH_FIX_STEPS: Record<AgentAuthFailure["agentLabel"], string[]> = {
+  Claude: [
+    "Run `claude auth login` on this machine.",
+    "Restart oh-my-pr if it was launched before you refreshed credentials.",
+    "Rerun the babysitter for this PR.",
+  ],
+  Codex: [
+    "Run `codex login` on this machine.",
+    "Restart oh-my-pr if it was launched before you refreshed credentials.",
+    "Rerun the babysitter for this PR.",
+  ],
+};
+
+function agentAuthFailure(agentLabel: AgentAuthFailure["agentLabel"]): AgentAuthFailure {
+  return {
+    agentLabel,
+    fixSteps: AGENT_AUTH_FIX_STEPS[agentLabel],
+  };
+}
+
+function classifyAgentAuthFailure(job: BackgroundJob): AgentAuthFailure | null {
+  if (job.kind !== "babysit_pr" || !job.lastError) {
+    return null;
+  }
+
+  const error = job.lastError.toLowerCase();
+  const isAuthFailure = error.includes("failed to authenticate")
+    || error.includes("authentication_error")
+    || error.includes("invalid authentication credentials")
+    || error.includes("api error: 401");
+  if (!isAuthFailure) {
+    return null;
+  }
+
+  if (error.includes("claude evaluation failed")) {
+    return agentAuthFailure("Claude");
+  }
+
+  if (error.includes("codex evaluation failed")) {
+    return agentAuthFailure("Codex");
+  }
+
+  const preferredAgent = readJobStringPayload(job, "preferredAgent");
+  if (error.includes("agent apply failed") && preferredAgent === "claude") {
+    return agentAuthFailure("Claude");
+  }
+
+  if (error.includes("agent apply failed") && preferredAgent === "codex") {
+    return agentAuthFailure("Codex");
+  }
+
+  return null;
+}
+
 export function mapMergedPullsToReleaseSummaries(pulls: MergedPRSummary[]): ReleaseAgentPullSummary[] {
   return pulls.flatMap((pull) => {
     const mergeSha = pull.mergeCommitSha?.trim();
@@ -315,10 +375,6 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     const deploymentHealingTargets = new Set<string>();
 
     for (const job of jobs) {
-      if (readActivityPayload(job.payload)) {
-        continue;
-      }
-
       if (job.kind === "babysit_pr") {
         prIds.add(job.targetId);
       } else if (job.kind === "answer_pr_question") {
@@ -452,6 +508,30 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     };
   };
 
+  const mapOperatorWarning = (job: BackgroundJob, context: ActivityDescriptionContext): OperatorWarning | null => {
+    const authFailure = classifyAgentAuthFailure(job);
+    if (!authFailure) {
+      return null;
+    }
+
+    const pr = context.prsById.get(job.targetId);
+    if (!pr || pr.status !== "error") {
+      return null;
+    }
+
+    return {
+      id: job.id,
+      severity: "warning",
+      title: `${authFailure.agentLabel} authentication failed`,
+      message: `Babysitter could not run ${authFailure.agentLabel} for PR #${pr.number} in ${pr.repo} because local agent credentials are invalid or expired.`,
+      fixSteps: authFailure.fixSteps,
+      targetId: job.targetId,
+      targetUrl: pr.url,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+    };
+  };
+
   const waitForBackgroundIdle = async (timeoutMs: number): Promise<boolean> => {
     const [dispatcherIdle, babysitterIdle, releaseIdle] = await Promise.all([
       backgroundJobDispatcher.waitForIdle(timeoutMs),
@@ -535,18 +615,26 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     getRuntimeSnapshot,
 
     async listActivities() {
-      const [leasedJobs, queuedJobs] = await Promise.all([
+      const [leasedJobs, queuedJobs, failedJobs] = await Promise.all([
         storage.listBackgroundJobs({ status: "leased" }),
         storage.listBackgroundJobs({ status: "queued" }),
+        storage.listBackgroundJobs({ kind: "babysit_pr", status: "failed" }),
       ]);
 
-      const descriptionContext = await buildActivityDescriptionContext([...leasedJobs, ...queuedJobs]);
+      const failedWarningJobs = failedJobs.filter((job) => classifyAgentAuthFailure(job));
+      const descriptionContext = await buildActivityDescriptionContext([...leasedJobs, ...queuedJobs, ...failedWarningJobs]);
       const inProgress = leasedJobs.map((job) => mapActivityJob(job, descriptionContext));
       const queued = queuedJobs.map((job) => mapActivityJob(job, descriptionContext));
+      const warnings = failedWarningJobs
+        .map((job) => mapOperatorWarning(job, descriptionContext))
+        .filter((warning): warning is OperatorWarning => Boolean(warning))
+        .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+        .slice(0, 5);
 
       return {
         inProgress,
         queued,
+        warnings,
         generatedAt: new Date().toISOString(),
       };
     },

@@ -61,6 +61,7 @@ type ConfigRow = {
   github_token: string;
   github_tokens_json: string;
   coding_agent: Config["codingAgent"];
+  fallback_to_next_coding_agent: number;
   model: string;
   max_turns: number;
   batch_window_ms: number;
@@ -492,6 +493,7 @@ export class SqliteStorage implements IStorage {
         github_token TEXT NOT NULL,
         github_tokens_json TEXT NOT NULL DEFAULT '[]',
         coding_agent TEXT NOT NULL,
+        fallback_to_next_coding_agent INTEGER NOT NULL DEFAULT 0,
         model TEXT NOT NULL,
         max_turns INTEGER NOT NULL,
         batch_window_ms INTEGER NOT NULL,
@@ -787,6 +789,7 @@ export class SqliteStorage implements IStorage {
     this.ensureColumn("feedback_items", "status", "TEXT NOT NULL DEFAULT 'pending'");
     this.ensureColumn("feedback_items", "status_reason", "TEXT");
     this.ensureColumn("config", "github_tokens_json", "TEXT NOT NULL DEFAULT '[]'");
+    this.ensureColumn("config", "fallback_to_next_coding_agent", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("config", "auto_resolve_merge_conflicts", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("config", "auto_create_releases", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("config", "auto_update_docs", "INTEGER NOT NULL DEFAULT 1");
@@ -848,6 +851,9 @@ export class SqliteStorage implements IStorage {
     return {
       githubTokens,
       codingAgent: row.coding_agent,
+      fallbackToNextCodingAgent: Boolean(
+        row.fallback_to_next_coding_agent ?? Number(DEFAULT_CONFIG.fallbackToNextCodingAgent),
+      ),
       maxTurns: row.max_turns,
       batchWindowMs: row.batch_window_ms,
       pollIntervalMs: row.poll_interval_ms,
@@ -888,6 +894,7 @@ export class SqliteStorage implements IStorage {
           github_token,
           github_tokens_json,
           coding_agent,
+          fallback_to_next_coding_agent,
           model,
           max_turns,
           batch_window_ms,
@@ -908,11 +915,12 @@ export class SqliteStorage implements IStorage {
           deployment_check_poll_interval_ms,
           trusted_reviewers_json,
           ignored_bots_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           github_token = excluded.github_token,
           github_tokens_json = excluded.github_tokens_json,
           coding_agent = excluded.coding_agent,
+          fallback_to_next_coding_agent = excluded.fallback_to_next_coding_agent,
           model = excluded.model,
           max_turns = excluded.max_turns,
           batch_window_ms = excluded.batch_window_ms,
@@ -938,6 +946,7 @@ export class SqliteStorage implements IStorage {
         config.githubTokens[0] ?? "",
         JSON.stringify(config.githubTokens),
         config.codingAgent,
+        Number(config.fallbackToNextCodingAgent),
         legacyModelValue,
         config.maxTurns,
         config.batchWindowMs,
@@ -1545,7 +1554,7 @@ export class SqliteStorage implements IStorage {
 
   async getConfig(): Promise<Config> {
     const row = this.get<ConfigRow>(`
-      SELECT github_token, github_tokens_json, coding_agent, model, max_turns, batch_window_ms,
+      SELECT github_token, github_tokens_json, coding_agent, fallback_to_next_coding_agent, model, max_turns, batch_window_ms,
              poll_interval_ms, max_changes_per_run, auto_resolve_merge_conflicts, auto_create_releases,
              auto_update_docs, include_repository_links_in_github_comments, auto_heal_ci, max_healing_attempts_per_session,
              max_healing_attempts_per_fingerprint, max_concurrent_healing_runs, healing_cooldown_ms,
