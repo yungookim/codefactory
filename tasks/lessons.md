@@ -1,5 +1,14 @@
 # Lessons Learned
 
+## 2026-04-28 - Mark log-analysis fixes with a future evaluation baseline
+- Pattern: After implementing fixes from a log-analysis report, the user had to ask me to record the run so the next log review can tell whether the fixes actually worked.
+- Rule: When closing work driven by log analysis, add a tracked post-fix run marker that records the branch, PR, commit, verification evidence, evaluation boundary, and expected future log signals.
+- Prevention checklist:
+  - Update the original log report or a tracked follow-up file before considering the fix complete.
+  - State the timestamp/commit boundary so future analysis does not judge old logs against new fixes.
+  - List concrete success signals for each fix area, not just "tests passed."
+  - Include the QA report path and PR URL so future sessions can connect implementation, verification, and runtime evidence.
+
 ## 2026-04-24 - Keep product branding on the current oh-my-pr name
 - Pattern: I shipped UI/standalone parity work while leaving older Code Factory branding in browser metadata, page headers, native app metadata, and runtime-facing copy.
 - Rule: When touching UI, standalone app, or operator-facing surfaces in this repo, search for stale `Code Factory`, `code factory`, `code-factory`, and `codefactory` branding and keep user-visible names aligned to `oh-my-pr`.

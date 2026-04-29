@@ -74,6 +74,27 @@ test("classifyCIFailure marks timeouts as flaky or ambiguous", () => {
   assert.match(result.summary, /Flaky or ambiguous/);
 });
 
+test("classifyCIFailure marks cancelled check runs as blocked external", () => {
+  const snapshot = createCheckSnapshot({
+    prId: "pr-1",
+    sha: "abc123",
+    provider: "github.check_run",
+    context: "Playwright E2E",
+    status: "completed",
+    conclusion: "cancelled",
+    description: "Check run cancelled by workflow concurrency",
+    targetUrl: "https://github.com/owner/repo/actions/runs/2",
+    observedAt: "2026-04-01T12:00:00.000Z",
+  });
+
+  const result = classifyCIFailure(snapshot);
+
+  assert.equal(result.classification, "blocked_external");
+  assert.equal(result.category, "cancelled");
+  assert.equal(result.fingerprint, "github-check-run:cancelled:playwright-e2e");
+  assert.match(result.summary, /External CI failure/);
+});
+
 test("classifyCIFailure treats AI review check failures as blocked external", () => {
   const snapshot = createCheckSnapshot({
     prId: "pr-1",

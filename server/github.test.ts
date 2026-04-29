@@ -14,6 +14,7 @@ import {
   fetchPullSummary,
   formatRepoSlug,
   getLatestSemverTagForRepo,
+  listOpenPullsForRepo,
   listMergedPullsSince,
   listReleasesForRepo,
   listTagsForRepo,
@@ -674,6 +675,51 @@ test("fetchCheckSnapshotsForRef bounds parallel GitHub Actions job detail reques
   );
 });
 
+test("listOpenPullsForRepo retries transient GitHub connection resets", async () => {
+  let attempts = 0;
+  const octokit = {
+    paginate: async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error("read ECONNRESET");
+      }
+
+      return [
+        {
+          number: 42,
+          title: "Retry me",
+          html_url: "https://github.com/owner/repo/pull/42",
+          user: { login: "octocat" },
+          head: {
+            ref: "feature/retry",
+            sha: "abc123",
+            repo: {
+              full_name: "owner/repo",
+              clone_url: "https://github.com/owner/repo.git",
+            },
+          },
+          base: {
+            ref: "main",
+            repo: {
+              full_name: "owner/repo",
+              clone_url: "https://github.com/owner/repo.git",
+            },
+          },
+          mergeable: null,
+        },
+      ];
+    },
+    pulls: {
+      list: Symbol("list"),
+    },
+  };
+
+  const pulls = await listOpenPullsForRepo(octokit as never, { owner: "owner", repo: "repo" });
+
+  assert.equal(attempts, 2);
+  assert.equal(pulls[0]?.number, 42);
+});
+
 test("fetchFeedbackItemsForPR keeps review bots that are not explicitly ignored", async () => {
   let callIndex = 0;
 
@@ -813,6 +859,87 @@ test("fetchFeedbackItemsForPR keeps review bots that are not explicitly ignored"
   assert.ok(reviewCommentItem.threadId, "expected threadId to be present");
   assert.equal(reviewCommentItem.status, "pending");
   assert.equal(reviewCommentItem.statusReason, null);
+});
+
+test("fetchFeedbackItemsForPR marks oh-my-pr status and audit comments non-actionable at ingest", async () => {
+  const listReviewComments = Symbol("listReviewComments");
+  const listReviews = Symbol("listReviews");
+  const listIssueComments = Symbol("listIssueComments");
+  const octokit = {
+    paginate: async (method: symbol) => {
+      if (method === listReviewComments) {
+        return [];
+      }
+
+      if (method === listReviews) {
+        return [];
+      }
+
+      if (method === listIssueComments) {
+        return [
+          {
+            id: 201,
+            node_id: "IC_kwDO_status",
+            body: "**Accepted** - this comment requires code changes. Queuing fix...\n\nPosted by [oh-my-pr](https://github.com/yungookim/oh-my-pr)",
+            created_at: "2026-03-15T11:00:00Z",
+            html_url: "https://github.com/yungookim/oh-my-pr/pull/1#issuecomment-201",
+            user: { login: "octocat", type: "User" },
+          },
+          {
+            id: 202,
+            node_id: "IC_kwDO_audit",
+            body: "Addressed in commit `abc1234`.\n\n<!-- codefactory-feedback:gh-review-comment-1 -->",
+            created_at: "2026-03-15T11:01:00Z",
+            html_url: "https://github.com/yungookim/oh-my-pr/pull/1#issuecomment-202",
+            user: { login: "octocat", type: "User" },
+          },
+          {
+            id: 203,
+            node_id: "IC_kwDO_user",
+            body: "Please fix the retry loop.",
+            created_at: "2026-03-15T11:02:00Z",
+            html_url: "https://github.com/yungookim/oh-my-pr/pull/1#issuecomment-203",
+            user: { login: "reviewer", type: "User" },
+          },
+        ];
+      }
+
+      throw new Error("Unexpected paginate call");
+    },
+    graphql: async () => ({
+      repository: {
+        pullRequest: {
+          reviewThreads: {
+            nodes: [],
+            pageInfo: {
+              hasNextPage: false,
+              endCursor: null,
+            },
+          },
+        },
+      },
+    }),
+    pulls: {
+      listReviewComments,
+      listReviews,
+    },
+    issues: {
+      listComments: listIssueComments,
+    },
+  };
+
+  const items = await fetchFeedbackItemsForPR(
+    octokit as never,
+    { owner: "yungookim", repo: "oh-my-pr", number: 1 },
+    config,
+  );
+
+  assert.equal(items.length, 3);
+  assert.equal(items[0]?.status, "rejected");
+  assert.match(items[0]?.statusReason ?? "", /oh-my-pr/i);
+  assert.equal(items[1]?.status, "rejected");
+  assert.match(items[1]?.statusReason ?? "", /audit/i);
+  assert.equal(items[2]?.status, "pending");
 });
 
 test("fetchFeedbackItemsForPR paginates review thread comments beyond the first page", async () => {

@@ -141,7 +141,7 @@ export function buildCIHealingRepairPrompt(input: CIHealingRepairPromptInput): s
     "Work only on the failures listed below.",
     "Do not expand scope to unrelated files or tasks.",
     "Make the smallest safe code change that clears the listed checks.",
-    "Commit and push your fix to the PR branch.",
+    "Leave any file edits unstaged and uncommitted. The app will stage, commit, push, and verify them.",
     "At the end of your response, include exactly one line in this format:",
     "CI_HEALING_SUMMARY: <one short sentence about what changed and how it was verified>",
     "",
@@ -174,7 +174,7 @@ export function buildCIHealingRepairPrompt(input: CIHealingRepairPromptInput): s
   lines.push(
     "",
     "Verification requirements:",
-    "1. If you make code changes, ensure the branch is pushed before you finish.",
+    "1. Do not run git commit or git push.",
     "2. Keep the diff focused on the targeted fingerprints above.",
     "3. If you cannot make progress, explain the blocker in the summary line.",
   );
@@ -230,6 +230,44 @@ async function readGitStatusPorcelain(
     .filter((line) => line.trim().length > 0);
 }
 
+async function runGitOrThrow(
+  deps: CIHealingRepairDependencies,
+  cwd: string,
+  args: string[],
+  context: string,
+  timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
+): Promise<CommandResult> {
+  const result = await deps.runCommand("git", ["-C", cwd, ...args], {
+    timeoutMs,
+  });
+
+  if (result.code !== 0) {
+    throw new Error(`${context} failed: ${result.stderr || result.stdout || "no output"}`);
+  }
+
+  return result;
+}
+
+async function commitWorktreeChanges(
+  deps: CIHealingRepairDependencies,
+  cwd: string,
+  prNumber: number,
+): Promise<boolean> {
+  const status = await readGitStatusPorcelain(deps, cwd);
+  if (status.length === 0) {
+    return false;
+  }
+
+  await runGitOrThrow(deps, cwd, ["add", "-A"], "git add -A");
+  await runGitOrThrow(
+    deps,
+    cwd,
+    ["commit", "-m", `Apply CI healing fixes for PR #${prNumber}`],
+    "git commit",
+  );
+  return true;
+}
+
 async function readRemoteHeadSha(
   deps: CIHealingRepairDependencies,
   repoCacheDir: string,
@@ -253,6 +291,20 @@ async function readRemoteHeadSha(
   }
 
   return headResult.stdout.trim();
+}
+
+async function pushLocalHead(
+  deps: CIHealingRepairDependencies,
+  worktreePath: string,
+  remoteName: string,
+  headRef: string,
+): Promise<void> {
+  await runGitOrThrow(
+    deps,
+    worktreePath,
+    ["push", remoteName, `HEAD:${headRef}`],
+    `git push ${remoteName} HEAD:${headRef}`,
+  );
 }
 
 export async function runCIHealingRepairAttempt(input: CIHealingWorktreeInput & {
@@ -284,18 +336,29 @@ export async function runCIHealingRepairAttempt(input: CIHealingWorktreeInput & 
       env: input.env,
     });
 
+    if (agentResult.code === 0) {
+      await commitWorktreeChanges(deps, worktree.worktreePath, input.prNumber);
+    }
+
     const localHeadSha = await readHeadSha(deps, worktree.worktreePath);
     const worktreeStatus = await readGitStatusPorcelain(deps, worktree.worktreePath);
     const worktreeDirty = worktreeStatus.length > 0;
+    const localCommitCreated = localHeadSha !== input.headSha;
+
+    if (agentResult.code === 0 && !worktreeDirty && localCommitCreated) {
+      await pushLocalHead(deps, worktree.worktreePath, worktree.remoteName, input.headRef);
+    }
 
     const remoteHeadSha = worktreeDirty
       ? input.headSha
       : await readRemoteHeadSha(deps, worktree.repoCacheDir, worktree.remoteName, input.headRef);
-
-    const localCommitCreated = localHeadSha !== input.headSha;
     const pushedNewSha = remoteHeadSha !== input.headSha;
     const branchMoved = pushedNewSha;
-    const accepted = agentResult.code === 0 && !worktreeDirty && pushedNewSha;
+    const accepted = agentResult.code === 0
+      && !worktreeDirty
+      && localCommitCreated
+      && pushedNewSha
+      && remoteHeadSha === localHeadSha;
     let rejectionReason: string | null = null;
 
     if (!accepted) {
@@ -303,8 +366,12 @@ export async function runCIHealingRepairAttempt(input: CIHealingWorktreeInput & 
         rejectionReason = summarizeCommandResult(agentResult, `agent exited with code ${agentResult.code}`);
       } else if (worktreeDirty) {
         rejectionReason = `dirty worktree after agent run: ${worktreeStatus[0] ?? "unknown changes"}`;
+      } else if (!localCommitCreated) {
+        rejectionReason = "agent made no file changes";
       } else if (localCommitCreated && !pushedNewSha) {
         rejectionReason = `local commit ${localHeadSha} was created but not pushed`;
+      } else if (remoteHeadSha !== localHeadSha) {
+        rejectionReason = `remote ${worktree.remoteName}/${input.headRef} ended at ${remoteHeadSha}, expected ${localHeadSha}`;
       } else if (!pushedNewSha) {
         rejectionReason = `remote ${worktree.remoteName}/${input.headRef} did not move from ${input.headSha}`;
       } else {
