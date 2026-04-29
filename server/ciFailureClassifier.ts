@@ -18,6 +18,7 @@ const HEALABLE_KEYWORDS = [
 ];
 
 const BLOCKED_KEYWORDS = [
+  { category: "ai-review", fingerprint: "ai-review", pattern: /\b(ai[- ]?review|claude[- ]?review|claude[- ]?code[- ]?review)\b/i },
   { category: "missing-secret", fingerprint: "missing-secret", pattern: /\b(secret|token|credential|auth|authorization|unauthorized|forbidden|permission|access denied)\b/i },
   { category: "external-outage", fingerprint: "external-outage", pattern: /\b(outage|unavailable|service unavailable|502|503|504|network error|dns|connection refused|rate limit|quota|api error)\b/i },
 ];
