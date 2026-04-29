@@ -1,4 +1,4 @@
-export type CliMode = "tui" | "web" | "mcp" | "help" | "version";
+export type CliMode = "web" | "mcp" | "help" | "version";
 
 export type ParsedCliArgs = {
   mode: CliMode;
@@ -9,7 +9,7 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
   const command = argv[0];
 
   if (!command) {
-    return { mode: "tui" };
+    return { mode: "web" };
   }
 
   if (command === "web") {
@@ -42,7 +42,7 @@ export function formatCliHelp(version: string): string {
   feedback, and dispatches AI agents to fix code locally.
 
   Usage:
-    oh-my-pr              Start the terminal UI
+    oh-my-pr              Start the dashboard server
     oh-my-pr web          Start the dashboard server
     oh-my-pr mcp          Start the MCP server
     oh-my-pr --help       Show this help message

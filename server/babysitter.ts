@@ -40,7 +40,7 @@ import {
   type ParsedRepoSlug,
   type StatusReplyRef,
 } from "./github";
-import { CIHealingManager } from "./ciHealingManager";
+import { CIHealingManager, isTerminalHealingState } from "./ciHealingManager";
 import { classifyCIFailures, type ClassifiedCIFailure } from "./ciFailureClassifier";
 import { isFailingCheckSnapshot } from "./ciCheckIngestor";
 import { runCIHealingRepairAttempt } from "./ciHealingAgent";
@@ -48,6 +48,7 @@ import { generateSocialChangelog } from "./socialChangelogAgent";
 import { getCodeFactoryPaths } from "./paths";
 import { ensureRepoCache, preparePrWorktree, removePrWorktree } from "./repoWorkspace";
 import { buildBackgroundJobDedupeKey, type ScheduleBackgroundJob } from "./backgroundJobQueue";
+import { buildActivityPayload } from "./activityPayload";
 import type { DeploymentHealingManager } from "./deploymentHealingManager";
 import { detectDeploymentPlatform } from "./deploymentPlatformDetector";
 import {
@@ -991,6 +992,23 @@ export class PRBabysitter {
     throw new Error(`Agent health check failed for ${agent}: ${health.reason}`);
   }
 
+  private async supersedeActiveHealingSessionsForArchivedPr(prId: string): Promise<void> {
+    const sessions = await this.storage.listHealingSessions({ prId });
+    const endedAt = this.now().toISOString();
+
+    for (const session of sessions) {
+      if (isTerminalHealingState(session.state)) {
+        continue;
+      }
+
+      await this.storage.updateHealingSession(session.id, {
+        state: "superseded",
+        endedAt,
+        escalationReason: "PR archived on GitHub",
+      });
+    }
+  }
+
   getActiveRunCount(): number {
     return this.inProgress.size;
   }
@@ -1357,6 +1375,7 @@ export class PRBabysitter {
           }
 
           await this.storage.updatePR(pr.id, { status: "archived" });
+          await this.supersedeActiveHealingSessionsForArchivedPr(pr.id);
           await this.storage.addLog(pr.id, "info", `PR #${pr.number} is no longer open on GitHub — archived`, {
             phase: "watcher",
           });
@@ -1446,6 +1465,11 @@ export class PRBabysitter {
                       repo: repoSlug, platform: detected.platform, mergeSha: depMergeSha,
                       triggerPrNumber: pr.number, triggerPrTitle: pr.title,
                       triggerPrUrl: pr.url, baseBranch: depBaseBranch,
+                      ...buildActivityPayload({
+                        label: `Healing ${detected.platform} deployment`,
+                        detail: `${repoSlug} PR #${pr.number} - ${pr.title}`,
+                        targetUrl: pr.url,
+                      }),
                     },
                   );
                   await this.storage.addLog(pr.id, "info",
@@ -1513,7 +1537,14 @@ export class PRBabysitter {
             "babysit_pr",
             local.id,
             buildBackgroundJobDedupeKey("babysit_pr", local.id),
-            { preferredAgent: config.codingAgent as CodingAgent },
+            {
+              preferredAgent: config.codingAgent as CodingAgent,
+              ...buildActivityPayload({
+                label: `Babysitting PR #${local.number}`,
+                detail: `${local.repo} - ${local.title}`,
+                targetUrl: local.url,
+              }),
+            },
           );
         } else {
           await this.babysitPR(local.id, config.codingAgent as CodingAgent);
@@ -1592,6 +1623,11 @@ export class PRBabysitter {
           "generate_social_changelog",
           changelog.id,
           buildBackgroundJobDedupeKey("generate_social_changelog", changelog.id),
+          buildActivityPayload({
+            label: "Generating social changelog",
+            detail: `${changelog.date} - ${changelog.triggerCount} merged PRs`,
+            targetUrl: null,
+          }),
         );
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -1780,8 +1816,30 @@ export class PRBabysitter {
       phase: string,
       stream: "stdout" | "stderr",
       level: "info" | "warn",
+      maxLines?: number,
     ) => {
       let buffer = "";
+      let loggedLines = 0;
+      let loggedTruncation = false;
+
+      const enqueueLine = (trimmed: string) => {
+        if (maxLines !== undefined && loggedLines >= maxLines) {
+          if (!loggedTruncation) {
+            loggedTruncation = true;
+            return queueLog(currentPrId, level, `[${stream}] output truncated after ${maxLines} line(s)`, {
+              phase,
+              metadata: { stream, truncated: true, maxLines },
+            });
+          }
+          return logQueue;
+        }
+
+        loggedLines += 1;
+        return queueLog(currentPrId, level, `[${stream}] ${trimmed}`, {
+          phase,
+          metadata: { stream },
+        });
+      };
 
       return {
         onChunk: (chunk: string) => {
@@ -1790,20 +1848,17 @@ export class PRBabysitter {
           for (const line of drained.lines) {
             const trimmed = line.trim();
             if (!trimmed) continue;
-            void queueLog(currentPrId, level, `[${stream}] ${trimmed}`, {
-              phase,
-              metadata: { stream },
-            });
+            void enqueueLine(trimmed);
           }
         },
         flush: async () => {
           const trimmed = buffer.trim();
-          if (!trimmed) return;
           buffer = "";
-          await queueLog(currentPrId, level, `[${stream}] ${trimmed}`, {
-            phase,
-            metadata: { stream },
-          });
+          if (trimmed) {
+            await enqueueLine(trimmed);
+            return;
+          }
+          await logQueue;
         },
       };
     };
@@ -1816,15 +1871,16 @@ export class PRBabysitter {
       timeoutMs?: number;
       phase: string;
       successMessage: string;
+      maxOutputLogLines?: number;
     }) => {
-      const { currentPrId, command, args, cwd, timeoutMs, phase, successMessage } = params;
+      const { currentPrId, command, args, cwd, timeoutMs, phase, successMessage, maxOutputLogLines } = params;
 
       await queueLog(currentPrId, "info", `Running ${formatCommand(command, args)}`, {
         phase,
       });
 
-      const stdoutLogger = createChunkLogger(currentPrId, phase, "stdout", "info");
-      const stderrLogger = createChunkLogger(currentPrId, phase, "stderr", "warn");
+      const stdoutLogger = createChunkLogger(currentPrId, phase, "stdout", "info", maxOutputLogLines);
+      const stderrLogger = createChunkLogger(currentPrId, phase, "stderr", "warn", maxOutputLogLines);
 
       const result = await this.runtime.runCommand(command, args, {
         cwd,
@@ -2024,7 +2080,16 @@ export class PRBabysitter {
           classifiedHealingFailures,
         );
 
-        if (blockedHealingFailures.length > 0) {
+        if (isTerminalHealingState(healingSession.state)) {
+          await queueLog(pr.id, "info", `CI healing session ${healingSession.id} is already ${healingSession.state}; skipping repair transition`, {
+            phase: "healing.state",
+            metadata: {
+              healingSessionId: healingSession.id,
+              healingState: healingSession.state,
+              headSha: pullSummary.headSha,
+            },
+          });
+        } else if (blockedHealingFailures.length > 0) {
           healingSession = await healingManager.markBlocked(
             healingSession.id,
             blockedHealingFailures[0]?.summary ?? "CI failure classified as blocked_external",
@@ -2297,7 +2362,8 @@ export class PRBabysitter {
         : null;
       let hasDocsTask = Boolean(docsTaskSummary);
       const needsWorktree = hasCommentOrStatusAgentWork || hasConflicts || docsAssessmentNeeded || hasDocsTask;
-      const shouldRunCIHealingAgent = Boolean(
+      let healingRetryBlockedReason: string | null = null;
+      const wouldRunCIHealingAgent = Boolean(
         config.autoHealCI
         && healingSession
         && healingSession.state === "awaiting_repair_slot"
@@ -2306,6 +2372,35 @@ export class PRBabysitter {
         && !hasConflicts
         && !docsAssessmentNeeded
         && !hasDocsTask,
+      );
+
+      if (wouldRunCIHealingAgent && healingSession) {
+        const retryFingerprint = healableHealingFailures[0]?.fingerprint ?? healingSession.latestFingerprint ?? undefined;
+        const retryBudget = await healingManager.canRetry(healingSession.id, retryFingerprint);
+        if (!retryBudget.canRetry) {
+          healingRetryBlockedReason = retryBudget.reason ?? "retry budget rejected the healing attempt";
+          healingSession = await healingManager.markEscalated(healingSession.id, healingRetryBlockedReason, {
+            currentHeadSha: pullSummary.headSha,
+            latestFingerprint: retryFingerprint ?? healingSession.latestFingerprint,
+          });
+          await queueLog(pr.id, "warn", `CI healing retry skipped: ${healingRetryBlockedReason}`, {
+            phase: "healing.retry",
+            metadata: {
+              healingSessionId: healingSession.id,
+              fingerprint: retryFingerprint ?? null,
+              sessionAttempts: retryBudget.sessionAttempts,
+              fingerprintAttempts: retryBudget.fingerprintAttempts,
+              maxSessionAttempts: retryBudget.maxSessionAttempts,
+              maxFingerprintAttempts: retryBudget.maxFingerprintAttempts,
+            },
+          });
+        }
+      }
+
+      const shouldRunCIHealingAgent = Boolean(
+        wouldRunCIHealingAgent
+        && healingSession?.state === "awaiting_repair_slot"
+        && !healingRetryBlockedReason,
       );
 
       if (config.autoUpdateDocs && currentHeadDocsAssessment && !docsAssessmentNeeded) {
@@ -2493,6 +2588,7 @@ export class PRBabysitter {
                 timeoutMs: 10000,
                 phase: "evaluate.docs",
                 successMessage: "Collected diff preview for docs assessment",
+                maxOutputLogLines: 20,
               });
               if (diffPreviewResult.code !== 0) {
                 throw new Error(`Failed to collect diff preview for docs assessment: ${summarizeCommandFailure(diffPreviewResult)}`);

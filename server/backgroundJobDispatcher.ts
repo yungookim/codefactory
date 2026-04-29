@@ -23,6 +23,8 @@ export class BackgroundJobDispatcher {
   private readonly pollIntervalMs: number;
   private readonly leaseMs: number;
   private readonly heartbeatIntervalMs: number;
+  private readonly maxAttempts: number;
+  private readonly retryBackoffMs: number;
   private readonly now: () => Date;
   private readonly onError: (error: unknown) => void;
   private readonly onReclaimedJobs: (jobs: BackgroundJob[]) => void;
@@ -40,6 +42,8 @@ export class BackgroundJobDispatcher {
     pollIntervalMs?: number;
     leaseMs?: number;
     heartbeatIntervalMs?: number;
+    maxAttempts?: number;
+    retryBackoffMs?: number;
     now?: () => Date;
     onError?: (error: unknown) => void;
     onReclaimedJobs?: (jobs: BackgroundJob[]) => void;
@@ -52,6 +56,8 @@ export class BackgroundJobDispatcher {
     this.pollIntervalMs = params.pollIntervalMs ?? 1_000;
     this.leaseMs = params.leaseMs ?? 30_000;
     this.heartbeatIntervalMs = params.heartbeatIntervalMs ?? 10_000;
+    this.maxAttempts = Math.max(1, params.maxAttempts ?? 3);
+    this.retryBackoffMs = Math.max(0, params.retryBackoffMs ?? 30_000);
     this.now = params.now ?? (() => new Date());
     this.onError = params.onError ?? ((error) => {
       console.error("Background job dispatcher error", error);
@@ -192,25 +198,7 @@ export class BackgroundJobDispatcher {
           now: this.now(),
         });
       } catch (error) {
-        try {
-          if (error instanceof CancelBackgroundJobError) {
-            await this.queue.cancel({
-              jobId: job.id,
-              leaseToken,
-              error: error.message || null,
-              now: this.now(),
-            });
-          } else {
-            await this.queue.fail({
-              jobId: job.id,
-              leaseToken,
-              error: summarizeError(error),
-              now: this.now(),
-            });
-          }
-        } catch (finalizeError) {
-          this.onError(finalizeError);
-        }
+        await this.finalizeFailedJob(job, leaseToken, error);
       } finally {
         if (heartbeatTimer) {
           clearInterval(heartbeatTimer);
@@ -233,6 +221,61 @@ export class BackgroundJobDispatcher {
     if (reclaimed.length > 0) {
       this.onReclaimedJobs(reclaimed);
     }
+  }
+
+  private async finalizeFailedJob(
+    job: BackgroundJob,
+    leaseToken: string,
+    error: unknown,
+  ): Promise<void> {
+    const now = this.now();
+    const action = this.resolveFailureAction(job, error);
+
+    try {
+      switch (action) {
+        case "cancel":
+          await this.queue.cancel({
+            jobId: job.id,
+            leaseToken,
+            error: error instanceof CancelBackgroundJobError ? (error.message || null) : null,
+            now,
+          });
+          return;
+        case "retry":
+          await this.queue.retry({
+            jobId: job.id,
+            leaseToken,
+            error: summarizeError(error),
+            now,
+            availableAt: new Date(now.getTime() + this.retryBackoffMs),
+          });
+          return;
+        case "fail":
+          await this.queue.fail({
+            jobId: job.id,
+            leaseToken,
+            error: summarizeError(error),
+            now,
+          });
+          return;
+      }
+    } catch (finalizeError) {
+      this.onError(
+        new Error(
+          `Failed to ${action} background job ${job.id} (kind=${job.kind}, attempt=${job.attemptCount}): ${
+            finalizeError instanceof Error ? finalizeError.message : String(finalizeError)
+          }`,
+          { cause: finalizeError },
+        ),
+      );
+    }
+  }
+
+  private resolveFailureAction(job: BackgroundJob, error: unknown): "cancel" | "retry" | "fail" {
+    if (error instanceof CancelBackgroundJobError) {
+      return "cancel";
+    }
+    return job.attemptCount < this.maxAttempts ? "retry" : "fail";
   }
 }
 

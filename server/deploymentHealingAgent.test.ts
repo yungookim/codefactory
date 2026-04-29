@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildDeploymentHealingPrompt, extractDeploymentHealingSummary } from "./deploymentHealingAgent";
+import { buildDeploymentHealingPrompt, extractDeploymentHealingSummary, runDeploymentHealingRepair } from "./deploymentHealingAgent";
 
 test("buildDeploymentHealingPrompt includes platform and log", () => {
   const prompt = buildDeploymentHealingPrompt({
@@ -34,4 +34,46 @@ test("extractDeploymentHealingSummary falls back to last line", () => {
 test("extractDeploymentHealingSummary handles empty output", () => {
   const summary = extractDeploymentHealingSummary("");
   assert.equal(summary, "No agent summary provided");
+});
+
+test("runDeploymentHealingRepair rejects non-zero agent exits even when commits exist", async () => {
+  const result = await runDeploymentHealingRepair({
+    repo: "owner/repo",
+    platform: "vercel",
+    mergeSha: "merge123",
+    triggerPrNumber: 42,
+    triggerPrTitle: "Add feature",
+    triggerPrUrl: "https://github.com/owner/repo/pull/42",
+    deploymentLog: "Cannot find module",
+    baseBranch: "main",
+    repoCloneUrl: "https://github.com/owner/repo.git",
+    agent: "claude",
+    githubToken: "ghs_test",
+    dependencies: {
+      ensureRepoCache: async () => ({ repoCacheDir: "/tmp/repo-cache", healed: false }),
+      applyFixesWithAgent: async () => ({
+        code: 2,
+        stdout: "DEPLOYMENT_FIX_SUMMARY: attempted a fix",
+        stderr: "agent crashed",
+      }),
+      runCommand: async (command, args) => {
+        assert.equal(command, "git");
+        const signature = args.join(" ");
+        if (signature.includes("checkout -b")) {
+          return { code: 0, stdout: "", stderr: "" };
+        }
+        if (signature.includes("log merge123..HEAD --oneline")) {
+          return { code: 0, stdout: "abc123 fix deployment\n", stderr: "" };
+        }
+        if (signature.includes("checkout --detach")) {
+          return { code: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected git command: ${signature}`);
+      },
+    },
+  });
+
+  assert.equal(result.accepted, false);
+  assert.match(result.rejectionReason ?? "", /agent failed \(2\): agent crashed/);
+  assert.equal(result.summary, "attempted a fix");
 });

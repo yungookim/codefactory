@@ -1,12 +1,19 @@
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import * as Collapsible from "@radix-ui/react-collapsible";
+import { Activity as ActivityIcon } from "lucide-react";
 import { queryClient, apiRequest, fetchJson } from "@/lib/queryClient";
 import { getRepoHref } from "@/lib/repoHref";
-import type { Config, FeedbackItem, HealingSession, LogEntry, PR, PRQuestion, ReleaseRun, WatchedRepo } from "@shared/schema";
+import { getRepoAddControlsOpen } from "@/lib/repoAddControls";
+import type { ActivityItem, ActivitySnapshot, Config, FeedbackItem, HealingSession, LogEntry, PR, PRQuestion, ReleaseRun, WatchedRepo } from "@shared/schema";
 import { OnboardingPanel } from "@/components/OnboardingPanel";
 import { UpdateBanner } from "@/components/UpdateBanner";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -63,6 +70,14 @@ const WATCH_SCOPE_OPTIONS = [
   { value: "team", label: "My PRs + teammates" },
 ] as const;
 
+const EMPTY_ACTIVITY_SNAPSHOT: ActivitySnapshot = {
+  failed: [],
+  inProgress: [],
+  queued: [],
+  generatedAt: "",
+};
+const MAX_VISIBLE_LOGS = 200;
+
 type WatchScope = (typeof WATCH_SCOPE_OPTIONS)[number]["value"];
 type RepoSettings = WatchedRepo & {
   ownPrsOnly?: boolean;
@@ -80,8 +95,8 @@ function getWatchScope(ownPrsOnly?: boolean): WatchScope {
 const HEALING_TONE_CLASSES: Record<"neutral" | "info" | "warning" | "success" | "danger", string> = {
   neutral: "border-border text-muted-foreground",
   info: "border-foreground text-foreground",
-  warning: "border-yellow-600 text-yellow-600",
-  success: "border-green-600 text-green-600",
+  warning: "border-warning-border bg-warning-muted text-warning-foreground",
+  success: "border-success-border bg-success-muted text-success-foreground",
   danger: "border-destructive text-destructive",
 };
 
@@ -139,7 +154,7 @@ function WatchScopeControl({
           <label
             key={option.value}
             data-testid={`${testIdPrefix}-${option.value}`}
-            className={`cursor-pointer border px-2 text-[10px] transition-colors ${
+            className={`cursor-pointer border px-2 text-[10px] transition-colors focus-within:ring-1 focus-within:ring-ring focus-within:ring-offset-1 focus-within:ring-offset-background ${
               compact ? "py-0.5" : "py-1"
             } ${
               active
@@ -161,6 +176,125 @@ function WatchScopeControl({
         );
       })}
     </div>
+  );
+}
+
+function ActivityRow({ activity }: { activity: ActivityItem }) {
+  const timeLabel = activity.status === "failed"
+    ? formatClock(activity.updatedAt)
+    : activity.status === "in_progress"
+    ? formatClock(activity.startedAt) ?? formatClock(activity.updatedAt)
+    : formatClock(activity.availableAt) ?? formatClock(activity.queuedAt);
+  const content = (
+    <div className="flex min-w-0 items-start gap-2 px-2 py-1.5 text-left">
+      <span
+        className={`mt-1.5 h-1.5 w-1.5 shrink-0 ${
+          activity.status === "failed"
+            ? "bg-destructive"
+            : activity.status === "in_progress"
+              ? "animate-pulse bg-foreground"
+              : "bg-muted-foreground"
+        }`}
+      />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[12px] leading-4 text-foreground">{activity.label}</span>
+        {activity.detail && (
+          <span className="block truncate text-[11px] leading-4 text-muted-foreground">{activity.detail}</span>
+        )}
+        {activity.status === "failed" && activity.lastError && (
+          <span className="block truncate text-[11px] leading-4 text-destructive">{activity.lastError}</span>
+        )}
+      </span>
+      {timeLabel && (
+        <span className="shrink-0 text-[10px] leading-4 text-muted-foreground">{timeLabel}</span>
+      )}
+    </div>
+  );
+
+  if (activity.targetUrl) {
+    return (
+      <a
+        href={activity.targetUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="block outline-none hover:bg-muted focus:bg-muted focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+      >
+        {content}
+      </a>
+    );
+  }
+
+  return <div>{content}</div>;
+}
+
+function ActivitySection({
+  title,
+  items,
+  emptyLabel,
+}: {
+  title: string;
+  items: ActivityItem[];
+  emptyLabel: string;
+}) {
+  return (
+    <div className="py-1">
+      <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">{title}</div>
+      {items.length > 0 ? (
+        <div className="max-h-52 overflow-y-auto">
+          {items.map((activity) => (
+            <ActivityRow key={activity.id} activity={activity} />
+          ))}
+        </div>
+      ) : (
+        <div className="px-2 pb-2 text-[11px] text-muted-foreground">{emptyLabel}</div>
+      )}
+    </div>
+  );
+}
+
+function ActivityMenu({ activities }: { activities: ActivitySnapshot }) {
+  const failedCount = activities.failed.length;
+  const inProgressCount = activities.inProgress.length;
+  const queuedCount = activities.queued.length;
+  const totalCount = failedCount + inProgressCount + queuedCount;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        className="inline-flex items-center gap-1 border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+        aria-label="Open activity menu"
+        data-testid="activity-menu-trigger"
+      >
+        <ActivityIcon className="h-3 w-3" aria-hidden="true" />
+        <span>activity</span>
+        <span className="text-foreground">{totalCount}</span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-80 p-0">
+        <div className="border-b border-border px-2 py-2">
+          <div className="text-[12px] font-medium">Activities</div>
+          <div className="text-[11px] text-muted-foreground">
+            {failedCount} failed / {inProgressCount} in progress / {queuedCount} queued
+          </div>
+        </div>
+        <ActivitySection
+          title="Failed"
+          items={activities.failed}
+          emptyLabel="No failed activities."
+        />
+        <div className="border-t border-border" />
+        <ActivitySection
+          title="In progress"
+          items={activities.inProgress}
+          emptyLabel="No activities running right now."
+        />
+        <div className="border-t border-border" />
+        <ActivitySection
+          title="Queued"
+          items={activities.queued}
+          emptyLabel="Queue is empty."
+        />
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -190,9 +324,9 @@ function ReadyToMergeIndicator({
       rel="noopener noreferrer"
       onClick={onClick}
       data-testid={testId}
-      className={`inline-flex items-center border border-green-600 bg-green-600/10 font-medium uppercase text-green-500 transition-colors hover:bg-green-600/20 ${className}`}
+      className={`inline-flex items-center border border-success-border bg-success-muted font-medium uppercase text-success-foreground transition-colors hover:bg-success-muted/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background ${className}`}
     >
-      <span className={`inline-block rounded-full bg-green-500 ${dotClassName}`} />
+      <span className={`inline-block rounded-full bg-success ${dotClassName}`} />
       {label}
       {hint && <span className={hintClassName}>{hint}</span>}
     </a>
@@ -231,7 +365,15 @@ function AgentIndicator({ pr }: { pr: PR }) {
   );
 }
 
-function PRRow({ pr, isSelected, onSelect }: { pr: PR; isSelected: boolean; onSelect: () => void }) {
+const PRRow = memo(function PRRow({
+  pr,
+  isSelected,
+  onSelect,
+}: {
+  pr: PR;
+  isSelected: boolean;
+  onSelect: (id: string) => void;
+}) {
   const checkedAt = formatClock(pr.lastChecked);
   const watchEnabled = isPRWatchEnabled(pr);
   const agentActive = pr.status === "processing" || countActiveFeedbackStatuses(pr.feedbackItems).inProgress > 0;
@@ -239,7 +381,7 @@ function PRRow({ pr, isSelected, onSelect }: { pr: PR; isSelected: boolean; onSe
 
   return (
     <div
-      onClick={onSelect}
+      onClick={() => onSelect(pr.id)}
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) {
           return;
@@ -247,7 +389,7 @@ function PRRow({ pr, isSelected, onSelect }: { pr: PR; isSelected: boolean; onSe
 
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          onSelect();
+          onSelect(pr.id);
         }
       }}
       role="button"
@@ -274,7 +416,7 @@ function PRRow({ pr, isSelected, onSelect }: { pr: PR; isSelected: boolean; onSe
               onClick={(event) => event.stopPropagation()}
               className="mt-1.5 ml-[3.75rem] gap-1.5 px-2 py-0.5 text-[11px] tracking-wider"
               dotClassName="h-1.5 w-1.5"
-              hintClassName="text-[10px] normal-case tracking-normal text-green-500/70"
+              hintClassName="text-[10px] normal-case tracking-normal text-success-foreground/75"
             />
           )}
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 pl-[3.75rem] text-[11px] text-muted-foreground">
@@ -283,7 +425,7 @@ function PRRow({ pr, isSelected, onSelect }: { pr: PR; isSelected: boolean; onSe
               target="_blank"
               rel="noopener noreferrer"
               onClick={(event) => event.stopPropagation()}
-              className="underline decoration-border underline-offset-2 transition-colors hover:text-foreground"
+              className="underline decoration-border underline-offset-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
             >
               {pr.repo}
             </a>
@@ -305,7 +447,7 @@ function PRRow({ pr, isSelected, onSelect }: { pr: PR; isSelected: boolean; onSe
       </div>
     </div>
   );
-}
+});
 
 function FeedbackRow({
   item,
@@ -335,6 +477,7 @@ function FeedbackRow({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/prs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/prs", prId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activities"] });
       queryClient.invalidateQueries({ queryKey: ["/api/logs"] });
     },
     onError: (error) => {
@@ -368,32 +511,40 @@ function FeedbackRow({
           <div className="flex shrink-0 items-center gap-1">
             {!readOnly && (item.status === "failed" || item.status === "warning") && (
               <button
+                type="button"
                 onClick={() => retryMutation.mutate()}
                 disabled={retryMutation.isPending}
                 data-testid={`retry-${item.id}`}
-                className="px-1.5 py-0.5 text-[10px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background border border-border text-muted-foreground disabled:opacity-30"
+                aria-label={`Retry feedback from ${item.author}`}
+                title="Retry feedback item"
+                className="border border-border px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
               >
-                R
+                Retry
               </button>
             )}
             <Collapsible.Trigger asChild>
               <button
+                type="button"
                 data-testid={`toggle-${item.id}`}
-                className="px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background border border-border"
+                aria-label={`${collapsedByDefault ? "Show" : "Hide"} feedback details from ${item.author}`}
+                title="Toggle feedback details"
+                className="border border-border px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
               >
-                ↕
+                Details
               </button>
             </Collapsible.Trigger>
             {!readOnly && ["accept", "reject", "flag"].map((decision) => (
               <button
+                type="button"
                 key={decision}
                 onClick={() => overrideMutation.mutate(decision)}
                 data-testid={`override-${decision}-${item.id}`}
-                className={`px-1.5 py-0.5 text-[10px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background ${
+                aria-label={`${decision} feedback from ${item.author}`}
+                className={`px-2 py-0.5 text-[10px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background ${
                   item.decision === decision ? "bg-foreground text-background" : "border border-border text-muted-foreground"
                 }`}
               >
-                {decision.charAt(0)}
+                {decision}
               </button>
             ))}
           </div>
@@ -431,6 +582,11 @@ function LogPanel({ prId }: { prId: string | null }) {
     },
     refetchInterval: 1500,
   });
+  const visibleLogs = useMemo(
+    () => logs.length > MAX_VISIBLE_LOGS ? logs.slice(-MAX_VISIBLE_LOGS) : logs,
+    [logs],
+  );
+  const hiddenLogCount = logs.length - visibleLogs.length;
 
   useEffect(() => {
     const scroller = scrollerRef.current;
@@ -447,28 +603,41 @@ function LogPanel({ prId }: { prId: string | null }) {
         {logs.length === 0 ? (
           <span className="text-muted-foreground">No log entries.</span>
         ) : (
-          logs.map((log) => (
-            <div key={log.id} className="border-b border-border/60 py-2 last:border-b-0" data-testid={`log-${log.id}`}>
-              <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
-                <span>{formatClock(log.timestamp)}</span>
-                <span className={
-                  log.level === "error" ? "text-destructive" :
-                  log.level === "warn" ? "text-foreground/80" :
-                  "text-foreground/55"
-                }>
-                  {log.level}
-                </span>
-                {log.phase && <span className="border border-border px-1 py-0">{log.phase}</span>}
-                {log.runId && <span className="normal-case text-foreground/45">run {log.runId.slice(0, 8)}</span>}
+          <>
+            {hiddenLogCount > 0 && (
+              <div className="border-b border-border/60 pb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+                Showing latest {MAX_VISIBLE_LOGS} of {logs.length} entries.
               </div>
-              <div className="mt-1 break-words text-foreground/75">{log.message}</div>
-              {log.metadata && Object.keys(log.metadata).length > 0 && (
-                <pre className="mt-1 whitespace-pre-wrap break-all text-[10px] text-muted-foreground">
-                  {JSON.stringify(log.metadata, null, 2)}
-                </pre>
-              )}
-            </div>
-          ))
+            )}
+            {visibleLogs.map((log) => {
+              const metadataText = log.metadata && Object.keys(log.metadata).length > 0
+                ? JSON.stringify(log.metadata, null, 2)
+                : null;
+
+              return (
+                <div key={log.id} className="border-b border-border/60 py-2 last:border-b-0" data-testid={`log-${log.id}`}>
+                  <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+                    <span>{formatClock(log.timestamp)}</span>
+                    <span className={
+                      log.level === "error" ? "text-destructive" :
+                      log.level === "warn" ? "text-foreground/80" :
+                      "text-foreground/55"
+                    }>
+                      {log.level}
+                    </span>
+                    {log.phase && <span className="border border-border px-1 py-0">{log.phase}</span>}
+                    {log.runId && <span className="normal-case text-foreground/45">run {log.runId.slice(0, 8)}</span>}
+                  </div>
+                  <div className="mt-1 break-words text-foreground/75">{log.message}</div>
+                  {metadataText && (
+                    <pre className="mt-1 whitespace-pre-wrap break-all text-[10px] text-muted-foreground">
+                      {metadataText}
+                    </pre>
+                  )}
+                </div>
+              );
+            })}
+          </>
         )}
       </div>
     </div>
@@ -570,12 +739,13 @@ function RightPanel({ prId }: { prId: string | null }) {
   const [tab, setTab] = useState<"activity" | "ask">("ask");
 
   return (
-    <div className="w-80 shrink-0 border-l border-border flex flex-col">
+    <div className="flex min-h-[24rem] w-full shrink-0 flex-col border-t border-border lg:min-h-0 lg:w-80 lg:border-l lg:border-t-0">
       <div className="flex border-b border-border">
         <button
+          type="button"
           onClick={() => setTab("ask")}
           data-testid="tab-ask"
-          className={`flex-1 px-3 py-2 text-[11px] uppercase tracking-wider transition-colors ${
+          className={`flex-1 px-3 py-2 text-[11px] uppercase tracking-wider transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset ${
             tab === "ask"
               ? "bg-muted text-foreground"
               : "text-muted-foreground hover:text-foreground"
@@ -584,9 +754,10 @@ function RightPanel({ prId }: { prId: string | null }) {
           Ask Agent
         </button>
         <button
+          type="button"
           onClick={() => setTab("activity")}
           data-testid="tab-activity"
-          className={`flex-1 px-3 py-2 text-[11px] uppercase tracking-wider transition-colors ${
+          className={`flex-1 px-3 py-2 text-[11px] uppercase tracking-wider transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset ${
             tab === "activity"
               ? "bg-muted text-foreground"
               : "text-muted-foreground hover:text-foreground"
@@ -624,6 +795,7 @@ function QAPanel({ prId }: { prId: string }) {
       apiRequest("POST", `/api/prs/${prId}/questions`, { question }).then((res) => res.json()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/prs", prId, "questions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activities"] });
       setInput("");
     },
   });
@@ -684,14 +856,15 @@ function QAPanel({ prId }: { prId: string }) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Was the review done? Why did this fail?"
+            aria-label="Question for selected pull request"
             data-testid="input-question"
-            className="flex-1 border border-border bg-transparent px-2 py-1 text-[12px] placeholder:text-muted-foreground/50 focus:border-foreground focus:outline-none"
+            className="flex-1 border border-border bg-transparent px-2 py-1 text-[12px] placeholder:text-muted-foreground/50 focus:border-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
           />
           <button
             type="submit"
             disabled={askMutation.isPending || !input.trim()}
             data-testid="button-ask"
-            className="border border-border px-2 py-1 text-[11px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background disabled:opacity-30"
+            className="border border-border px-2 py-1 text-[11px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
           >
             {askMutation.isPending ? "..." : "Ask"}
           </button>
@@ -743,6 +916,7 @@ export default function Dashboard() {
   const [selectedPRId, setSelectedPRId] = useState<string | null>(null);
   const [addUrl, setAddUrl] = useState("");
   const [addRepo, setAddRepo] = useState("");
+  const [addControlsOpen, setAddControlsOpen] = useState<boolean | null>(null);
   const [watchScope, setWatchScope] = useState<WatchScope>("mine");
   const [viewMode, setViewMode] = useState<"active" | "archived">("active");
 
@@ -765,6 +939,11 @@ export default function Dashboard() {
     queryKey: ["/api/healing-sessions"],
     queryFn: async () => fetchJson<HealingSession[]>("/api/healing-sessions"),
     refetchInterval: 5000,
+  });
+
+  const { data: activities = EMPTY_ACTIVITY_SNAPSHOT } = useQuery<ActivitySnapshot>({
+    queryKey: ["/api/activities"],
+    refetchInterval: 3000,
   });
 
   const { data: repos = [] } = useQuery<RepoSettings[]>({
@@ -790,6 +969,7 @@ export default function Dashboard() {
 
   const selectedPR = displayedPRs.find((pr) => pr.id === selectedPRId) ?? null;
   const selectedPRWatchEnabled = selectedPR ? isPRWatchEnabled(selectedPR) : true;
+  const repoAddControlsOpen = getRepoAddControlsOpen(addControlsOpen, repos.length);
 
   const addMutation = useMutation({
     mutationFn: async (url: string) => {
@@ -798,6 +978,7 @@ export default function Dashboard() {
     },
     onSuccess: (data: PR) => {
       queryClient.invalidateQueries({ queryKey: ["/api/prs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activities"] });
       queryClient.invalidateQueries({ queryKey: ["/api/repos/settings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/onboarding/status"] });
       setAddUrl("");
@@ -815,6 +996,7 @@ export default function Dashboard() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/prs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activities"] });
       queryClient.invalidateQueries({ queryKey: ["/api/logs"] });
     },
     onError: (error) => {
@@ -858,6 +1040,7 @@ export default function Dashboard() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/prs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activities"] });
       queryClient.invalidateQueries({ queryKey: ["/api/repos/settings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/onboarding/status"] });
     },
@@ -873,6 +1056,7 @@ export default function Dashboard() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/releases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activities"] });
       toast({ description: "Release queued." });
     },
     onError: (error) => {
@@ -926,10 +1110,10 @@ export default function Dashboard() {
   });
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div className="flex min-h-screen flex-col lg:h-screen lg:overflow-hidden">
       <UpdateBanner />
-      <header className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
-        <div className="flex items-center gap-3">
+      <header className="flex shrink-0 flex-col gap-2 border-b border-border px-4 py-2.5 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-3">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-label="oh-my-pr">
             <rect x="1" y="1" width="14" height="14" stroke="currentColor" strokeWidth="1.5" />
             <path d="M4 5h8M4 8h5M4 11h6" stroke="currentColor" strokeWidth="1" />
@@ -943,23 +1127,24 @@ export default function Dashboard() {
           </span>
           <Link
             href="/changelogs"
-            className="text-[11px] text-muted-foreground hover:text-foreground focus:outline-none"
+            className="text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
           >
             changelogs
           </Link>
           <Link
             href="/releases"
-            className="text-[11px] text-muted-foreground hover:text-foreground focus:outline-none"
+            className="text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
           >
             releases
           </Link>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <span className="text-[11px] text-muted-foreground">
             {prs.length} PR{prs.length !== 1 ? "s" : ""} in {repos.length} repo{repos.length !== 1 ? "s" : ""}
           </span>
-          <label className="text-[11px] uppercase tracking-wider text-muted-foreground">Agent</label>
+          <label htmlFor="dashboard-coding-agent" className="text-[11px] uppercase tracking-wider text-muted-foreground">Agent</label>
           <select
+            id="dashboard-coding-agent"
             value={config?.codingAgent ?? "codex"}
             onChange={(e) => {
               const newAgent = e.target.value as Config["codingAgent"];
@@ -969,59 +1154,31 @@ export default function Dashboard() {
             }}
             disabled={updateConfigMutation.isPending}
             data-testid="select-coding-agent"
-            className="border border-border bg-transparent px-2 py-0.5 text-[11px] focus:border-foreground focus:outline-none disabled:opacity-50"
+            className="border border-border bg-transparent px-2 py-0.5 text-[11px] focus:border-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-50"
           >
             <option value="codex">codex</option>
             <option value="claude">claude</option>
           </select>
-          <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={config?.autoResolveMergeConflicts ?? true}
-              onChange={(e) =>
-                updateConfigMutation.mutate({
-                  autoResolveMergeConflicts: e.target.checked,
-                })
-              }
-              disabled={updateConfigMutation.isPending}
-              data-testid="checkbox-auto-resolve-conflicts"
-              className="accent-foreground"
-            />
-            Auto-resolve conflicts
-          </label>
-          <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={config?.autoUpdateDocs ?? true}
-              onChange={(e) =>
-                updateConfigMutation.mutate({
-                  autoUpdateDocs: e.target.checked,
-                })
-              }
-              disabled={updateConfigMutation.isPending}
-              data-testid="checkbox-auto-update-docs"
-              className="accent-foreground"
-            />
-            Auto-update docs
-          </label>
           <Link
             href="/settings"
-            className="border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground"
+            className="border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
           >
             settings
           </Link>
+          <ActivityMenu activities={activities} />
         </div>
       </header>
 
       <OnboardingPanel />
 
-      <div className="flex flex-1 overflow-hidden">
-        <div className="flex w-80 shrink-0 flex-col border-r border-border">
+      <div className="flex flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+        <div className="flex max-h-[42vh] w-full shrink-0 flex-col border-b border-border lg:max-h-none lg:w-80 lg:border-b-0 lg:border-r">
           <div className="flex border-b border-border">
             <button
+              type="button"
               onClick={() => setViewMode("active")}
               data-testid="tab-active"
-              className={`flex-1 px-3 py-2 text-[11px] uppercase tracking-wider transition-colors ${
+              className={`flex-1 px-3 py-2 text-[11px] uppercase tracking-wider transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset ${
                 viewMode === "active"
                   ? "bg-muted text-foreground"
                   : "text-muted-foreground hover:text-foreground"
@@ -1030,9 +1187,10 @@ export default function Dashboard() {
               Active ({prs.length})
             </button>
             <button
+              type="button"
               onClick={() => setViewMode("archived")}
               data-testid="tab-archived"
-              className={`flex-1 px-3 py-2 text-[11px] uppercase tracking-wider transition-colors ${
+              className={`flex-1 px-3 py-2 text-[11px] uppercase tracking-wider transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset ${
                 viewMode === "archived"
                   ? "bg-muted text-foreground"
                   : "text-muted-foreground hover:text-foreground"
@@ -1043,166 +1201,189 @@ export default function Dashboard() {
           </div>
           {!isArchived && (
             <>
-              <div className="border-b border-border px-3 py-2 text-[11px] text-muted-foreground">
-                Add a PR or watch a repo. Sync and babysit start automatically.
-              </div>
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (addUrl.trim()) addMutation.mutate(addUrl.trim());
-                }}
-                className="border-b border-border p-3"
+              <Collapsible.Root
+                open={repoAddControlsOpen}
+                onOpenChange={setAddControlsOpen}
+                className="border-b border-border"
               >
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={addUrl}
-                    onChange={(e) => setAddUrl(e.target.value)}
-                    placeholder="github.com/owner/repo/pull/123"
-                    data-testid="input-add-pr"
-                    className="flex-1 border border-border bg-transparent px-2 py-1 text-[12px] placeholder:text-muted-foreground/50 focus:border-foreground focus:outline-none"
-                  />
-                  <button
-                    type="submit"
-                    disabled={addMutation.isPending || !addUrl.trim()}
-                    data-testid="button-add-pr"
-                    className="border border-border px-2 py-1 text-[11px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background disabled:opacity-30"
-                  >
-                    Add
-                  </button>
-                </div>
-              </form>
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const repo = addRepo.trim();
-                  if (repo) {
-                    addRepoMutation.mutate({ repo, watchScope });
-                  }
-                }}
-                className="border-b border-border p-3"
-              >
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={addRepo}
-                    onChange={(e) => setAddRepo(e.target.value)}
-                    placeholder="owner/repo"
-                    data-testid="input-add-repo"
-                    className="flex-1 border border-border bg-transparent px-2 py-1 text-[12px] placeholder:text-muted-foreground/50 focus:border-foreground focus:outline-none"
-                  />
-                  <button
-                    type="submit"
-                    disabled={addRepoMutation.isPending || !addRepo.trim()}
-                    data-testid="button-add-repo"
-                    className="border border-border px-2 py-1 text-[11px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background disabled:opacity-30"
-                  >
-                    Watch
-                  </button>
-                </div>
-                <div className="mt-3">
-                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                    Track automatically
-                  </div>
-                  <WatchScopeControl
-                    value={watchScope}
-                    onChange={setWatchScope}
-                    disabled={addRepoMutation.isPending}
-                    name="watch-scope"
-                    testIdPrefix="watch-scope"
-                  />
-                </div>
-                <div className="mt-3">
-                  <div className="mb-1 flex items-center justify-between">
-                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                      Tracked repositories
-                    </span>
+                <div className="flex items-center justify-between gap-2 px-3 py-2 text-[11px] text-muted-foreground">
+                  <span>
+                    {repos.length > 0
+                      ? "Add a PR or watch another repo."
+                      : "Add a PR or watch a repo. Sync and babysit start automatically."}
+                  </span>
+                  <Collapsible.Trigger asChild>
                     <button
                       type="button"
-                      onClick={() => syncReposMutation.mutate()}
-                      disabled={syncReposMutation.isPending}
-                      data-testid="button-sync-repos"
-                      className="border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background disabled:opacity-30"
+                      data-testid="button-toggle-add-controls"
+                      className="shrink-0 border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                     >
-                      {syncReposMutation.isPending ? "Fetching…" : "Fetch"}
+                      {repoAddControlsOpen ? "Hide" : "Add"}
                     </button>
-                  </div>
-                  {repos.length === 0 ? (
-                    <div className="text-[11px] text-muted-foreground">No repositories being watched yet.</div>
-                  ) : (
-                    <div className="space-y-1 text-[12px]">
-                      {repos.map((repo) => {
-                        const manualReleasePending = manualReleaseMutation.isPending
-                          && manualReleaseMutation.variables === repo.repo;
+                  </Collapsible.Trigger>
+                </div>
+                <Collapsible.Content>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (addUrl.trim()) addMutation.mutate(addUrl.trim());
+                    }}
+                    className="border-t border-border p-3"
+                  >
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={addUrl}
+                        onChange={(e) => setAddUrl(e.target.value)}
+                        placeholder="github.com/owner/repo/pull/123"
+                        aria-label="GitHub pull request URL"
+                        data-testid="input-add-pr"
+                        className="flex-1 border border-border bg-transparent px-2 py-1 text-[12px] placeholder:text-muted-foreground/50 focus:border-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                      />
+                      <button
+                        type="submit"
+                        disabled={addMutation.isPending || !addUrl.trim()}
+                        data-testid="button-add-pr"
+                        className="border border-border px-2 py-1 text-[11px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </form>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const repo = addRepo.trim();
+                      if (repo) {
+                        addRepoMutation.mutate({ repo, watchScope });
+                      }
+                    }}
+                    className="border-t border-border p-3"
+                  >
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={addRepo}
+                        onChange={(e) => setAddRepo(e.target.value)}
+                        placeholder="owner/repo"
+                        aria-label="Repository owner and name"
+                        data-testid="input-add-repo"
+                        className="flex-1 border border-border bg-transparent px-2 py-1 text-[12px] placeholder:text-muted-foreground/50 focus:border-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                      />
+                      <button
+                        type="submit"
+                        disabled={addRepoMutation.isPending || !addRepo.trim()}
+                        data-testid="button-add-repo"
+                        className="border border-border px-2 py-1 text-[11px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
+                      >
+                        Watch
+                      </button>
+                    </div>
+                    <div className="mt-3">
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                        Track automatically
+                      </div>
+                      <WatchScopeControl
+                        value={watchScope}
+                        onChange={setWatchScope}
+                        disabled={addRepoMutation.isPending}
+                        name="watch-scope"
+                        testIdPrefix="watch-scope"
+                      />
+                    </div>
+                  </form>
+                </Collapsible.Content>
+              </Collapsible.Root>
+              <div className="border-b border-border p-3">
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Tracked repositories
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => syncReposMutation.mutate()}
+                    disabled={syncReposMutation.isPending}
+                    data-testid="button-sync-repos"
+                    className="border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
+                  >
+                    {syncReposMutation.isPending ? "Fetching..." : "Fetch"}
+                  </button>
+                </div>
+                {repos.length === 0 ? (
+                  <div className="text-[11px] text-muted-foreground">No repositories being watched yet.</div>
+                ) : (
+                  <div className="space-y-1 text-[12px]">
+                    {repos.map((repo) => {
+                      const manualReleasePending = manualReleaseMutation.isPending
+                        && manualReleaseMutation.variables === repo.repo;
 
-                        return (
-                          <div
-                            key={repo.repo}
-                            className="space-y-2 border border-border/60 px-2 py-2"
+                      return (
+                        <div
+                          key={repo.repo}
+                          className="space-y-2 border border-border/60 px-2 py-2"
+                        >
+                          <a
+                            href={getRepoHref(repo.repo)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            data-testid={`tracked-repo-${repo.repo.replace("/", "-")}`}
+                            className="min-w-0 break-all text-foreground/75 underline decoration-border underline-offset-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                           >
-                            <a
-                              href={getRepoHref(repo.repo)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              data-testid={`tracked-repo-${repo.repo.replace("/", "-")}`}
-                              className="min-w-0 break-all text-foreground/75 underline decoration-border underline-offset-2 transition-colors hover:text-foreground"
-                            >
-                              {repo.repo}
-                            </a>
-                            <div className="flex flex-wrap items-start justify-between gap-2">
-                              <div>
-                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                                  Track automatically
-                                </div>
-                                <WatchScopeControl
-                                  value={getWatchScope(repo.ownPrsOnly)}
-                                  onChange={(value) =>
+                            {repo.repo}
+                          </a>
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div>
+                              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                Track automatically
+                              </div>
+                              <WatchScopeControl
+                                value={getWatchScope(repo.ownPrsOnly)}
+                                onChange={(value) =>
+                                  updateRepoSettingsMutation.mutate({
+                                    repo: repo.repo,
+                                    ownPrsOnly: value === "mine",
+                                  })
+                                }
+                                disabled={updateRepoSettingsMutation.isPending}
+                                name={`tracked-repo-scope-${repo.repo}`}
+                                testIdPrefix={`tracked-repo-scope-${repo.repo.replace("/", "-")}`}
+                                compact
+                              />
+                            </div>
+                            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 self-end">
+                              <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                                <input
+                                  type="checkbox"
+                                  checked={repo.autoCreateReleases}
+                                  onChange={(e) =>
                                     updateRepoSettingsMutation.mutate({
                                       repo: repo.repo,
-                                      ownPrsOnly: value === "mine",
+                                      autoCreateReleases: e.target.checked,
                                     })
                                   }
                                   disabled={updateRepoSettingsMutation.isPending}
-                                  name={`tracked-repo-scope-${repo.repo}`}
-                                  testIdPrefix={`tracked-repo-scope-${repo.repo.replace("/", "-")}`}
-                                  compact
+                                  data-testid={`tracked-repo-auto-release-${repo.repo.replace("/", "-")}`}
+                                  className="accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                                 />
-                              </div>
-                              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 self-end">
-                                <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                                  <input
-                                    type="checkbox"
-                                    checked={repo.autoCreateReleases}
-                                    onChange={(e) =>
-                                      updateRepoSettingsMutation.mutate({
-                                        repo: repo.repo,
-                                        autoCreateReleases: e.target.checked,
-                                      })
-                                    }
-                                    disabled={updateRepoSettingsMutation.isPending}
-                                    data-testid={`tracked-repo-auto-release-${repo.repo.replace("/", "-")}`}
-                                    className="accent-foreground"
-                                  />
-                                  Auto-release
-                                </label>
-                                <button
-                                  type="button"
-                                  onClick={() => manualReleaseMutation.mutate(repo.repo)}
-                                  disabled={manualReleaseMutation.isPending}
-                                  data-testid={`tracked-repo-manual-release-${repo.repo.replace("/", "-")}`}
-                                  className="border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background disabled:opacity-30"
-                                >
-                                  {manualReleasePending ? "Releasing…" : "Release"}
-                                </button>
-                              </div>
+                                Auto-release
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => manualReleaseMutation.mutate(repo.repo)}
+                                disabled={manualReleaseMutation.isPending}
+                                data-testid={`tracked-repo-manual-release-${repo.repo.replace("/", "-")}`}
+                                className="border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
+                              >
+                                {manualReleasePending ? "Releasing..." : "Release"}
+                              </button>
                             </div>
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </form>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </>
           )}
           <div className="flex-1 overflow-y-auto">
@@ -1220,20 +1401,20 @@ export default function Dashboard() {
                   key={pr.id}
                   pr={pr}
                   isSelected={pr.id === selectedPRId}
-                  onSelect={() => setSelectedPRId(pr.id)}
+                  onSelect={setSelectedPRId}
                 />
               ))
             )}
           </div>
         </div>
 
-        <div className="flex flex-1 flex-col overflow-hidden">
+        <div className="flex min-h-[32rem] flex-1 flex-col overflow-hidden lg:min-h-0">
           {selectedPR ? (
             <>
               <div className="shrink-0 border-b border-border px-4 py-3">
                 <div className="mb-1 flex items-start justify-between gap-4">
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <StatusDot status={selectedPR.status} />
                       <span className="truncate font-medium">{selectedPR.title}</span>
                       <AgentIndicator pr={selectedPR} />
@@ -1242,7 +1423,7 @@ export default function Dashboard() {
                         href={selectedPR.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="shrink-0 text-[11px] text-muted-foreground underline decoration-border underline-offset-2 transition-colors hover:text-foreground"
+                        className="shrink-0 text-[11px] text-muted-foreground underline decoration-border underline-offset-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                       >
                         {selectedPR.repo}#{selectedPR.number}
                       </a>
@@ -1272,20 +1453,22 @@ export default function Dashboard() {
                     </div>
                   </div>
                   {!isArchived && (
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
                       <button
+                        type="button"
                         onClick={() => applyMutation.mutate(selectedPR.id)}
                         disabled={applyMutation.isPending || selectedPR.status === "processing"}
                         data-testid="button-apply"
-                        className="border border-border px-2 py-0.5 text-[10px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background disabled:opacity-30"
+                        className="border border-border px-2 py-0.5 text-[10px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
                       >
                         {selectedPR.status === "processing" ? "Running" : "Run now"}
                       </button>
                       <button
+                        type="button"
                         onClick={() => watchMutation.mutate({ id: selectedPR.id, enabled: !selectedPRWatchEnabled })}
                         disabled={watchMutation.isPending}
                         data-testid="button-toggle-watch"
-                        className="border border-border px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background disabled:opacity-30"
+                        className="border border-border px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
                       >
                         {selectedPRWatchEnabled ? "Pause watch" : "Resume watch"}
                       </button>
@@ -1300,7 +1483,7 @@ export default function Dashboard() {
                     hint="Open PR on GitHub →"
                     className="mt-2 gap-2 px-3 py-1.5 text-[12px] tracking-wider"
                     dotClassName="h-2 w-2"
-                    hintClassName="text-[11px] normal-case tracking-normal text-green-500/70"
+                    hintClassName="text-[11px] normal-case tracking-normal text-success-foreground/75"
                   />
                 )}
                 <div className="text-[11px] text-muted-foreground">

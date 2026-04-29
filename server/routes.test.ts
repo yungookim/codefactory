@@ -272,6 +272,176 @@ test("POST /api/repos/sync enqueues a durable sync_watched_repos job", async () 
   }
 });
 
+test("GET /api/activities lists failed, in-progress, and queued jobs", async () => {
+  const harness = await createHarness();
+  const pr = await seedPR(harness.storage, {
+    title: "fix activity menu",
+    repo: "acme/widgets",
+    number: 77,
+    url: "https://github.com/acme/widgets/pull/77",
+  });
+
+  try {
+    const runningJob = await harness.storage.enqueueBackgroundJob({
+      kind: "babysit_pr",
+      targetId: pr.id,
+      dedupeKey: `babysit_pr:${pr.id}`,
+      payload: { preferredAgent: "claude" },
+      availableAt: "2026-04-26T10:00:00.000Z",
+    });
+    await harness.storage.claimNextBackgroundJob({
+      workerId: "worker-1",
+      leaseToken: "lease-1",
+      leaseExpiresAt: "2026-04-26T10:10:00.000Z",
+      now: "2026-04-26T10:01:00.000Z",
+    });
+
+    const queuedJob = await harness.storage.enqueueBackgroundJob({
+      kind: "sync_watched_repos",
+      targetId: "runtime:1",
+      dedupeKey: "sync_watched_repos",
+      availableAt: "2026-04-26T10:02:00.000Z",
+    });
+
+    const failedJob = await harness.storage.enqueueBackgroundJob({
+      kind: "answer_pr_question",
+      targetId: "question-1",
+      dedupeKey: "answer_pr_question:question-1",
+      payload: { prId: pr.id },
+      availableAt: "2026-04-26T10:03:00.000Z",
+    });
+    const claimedFailed = await harness.storage.claimNextBackgroundJob({
+      workerId: "worker-2",
+      leaseToken: "lease-2",
+      leaseExpiresAt: "2026-04-26T10:10:00.000Z",
+      now: "2026-04-26T10:03:30.000Z",
+      kinds: ["answer_pr_question"],
+    });
+    assert.equal(claimedFailed?.id, failedJob.id);
+    await harness.storage.failBackgroundJob(
+      failedJob.id,
+      "lease-2",
+      "question agent timed out",
+      "2026-04-26T10:04:00.000Z",
+    );
+
+    const response = await fetch(`${harness.baseUrl}/api/activities`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as {
+      failed: Array<{
+        id: string;
+        kind: string;
+        status: string;
+        label: string;
+        detail: string | null;
+        targetId: string;
+        lastError: string | null;
+      }>;
+      inProgress: Array<{
+        id: string;
+        kind: string;
+        status: string;
+        label: string;
+        detail: string | null;
+        targetId: string;
+        targetUrl: string | null;
+      }>;
+      queued: Array<{
+        id: string;
+        kind: string;
+        status: string;
+        label: string;
+        detail: string | null;
+        targetId: string;
+      }>;
+    };
+
+    assert.equal(body.failed.length, 1);
+    assert.equal(body.failed[0]?.id, failedJob.id);
+    assert.equal(body.failed[0]?.kind, "answer_pr_question");
+    assert.equal(body.failed[0]?.status, "failed");
+    assert.equal(body.failed[0]?.label, "Answering question for PR #77");
+    assert.equal(body.failed[0]?.detail, "acme/widgets - fix activity menu");
+    assert.equal(body.failed[0]?.targetId, "question-1");
+    assert.equal(body.failed[0]?.lastError, "question agent timed out");
+
+    assert.equal(body.inProgress.length, 1);
+    assert.equal(body.inProgress[0]?.id, runningJob.id);
+    assert.equal(body.inProgress[0]?.kind, "babysit_pr");
+    assert.equal(body.inProgress[0]?.status, "in_progress");
+    assert.equal(body.inProgress[0]?.label, "Babysitting PR #77");
+    assert.equal(body.inProgress[0]?.detail, "acme/widgets - fix activity menu");
+    assert.equal(body.inProgress[0]?.targetId, pr.id);
+    assert.equal(body.inProgress[0]?.targetUrl, pr.url);
+
+    assert.equal(body.queued.length, 1);
+    assert.equal(body.queued[0]?.id, queuedJob.id);
+    assert.equal(body.queued[0]?.kind, "sync_watched_repos");
+    assert.equal(body.queued[0]?.status, "queued");
+    assert.equal(body.queued[0]?.label, "Sync watched repositories");
+    assert.equal(body.queued[0]?.targetId, "runtime:1");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("GET /api/activities batches PR activity metadata", async () => {
+  const harness = await createHarness();
+  const firstPr = await seedPR(harness.storage, {
+    title: "fix activity menu",
+    repo: "acme/widgets",
+    number: 77,
+    url: "https://github.com/acme/widgets/pull/77",
+  });
+  const secondPr = await seedPR(harness.storage, {
+    title: "answer follow-up",
+    repo: "acme/widgets",
+    number: 78,
+    url: "https://github.com/acme/widgets/pull/78",
+  });
+
+  try {
+    await harness.storage.enqueueBackgroundJob({
+      kind: "babysit_pr",
+      targetId: firstPr.id,
+      dedupeKey: `babysit_pr:${firstPr.id}`,
+      payload: { preferredAgent: "claude" },
+    });
+    await harness.storage.enqueueBackgroundJob({
+      kind: "answer_pr_question",
+      targetId: "question-1",
+      dedupeKey: "answer_pr_question:question-1",
+      payload: { prId: secondPr.id },
+    });
+
+    const getPR = harness.storage.getPR.bind(harness.storage);
+    harness.storage.getPR = async (id: string) => {
+      throw new Error(`unexpected per-job PR lookup for ${id}`);
+    };
+
+    const response = await fetch(`${harness.baseUrl}/api/activities`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as {
+      queued: Array<{
+        label: string;
+        detail: string | null;
+        targetUrl: string | null;
+      }>;
+    };
+
+    assert.deepEqual(
+      body.queued.map((item) => [item.label, item.detail, item.targetUrl]),
+      [
+        ["Babysitting PR #77", "acme/widgets - fix activity menu", firstPr.url],
+        ["Answering question for PR #78", "acme/widgets - answer follow-up", secondPr.url],
+      ],
+    );
+    harness.storage.getPR = getPR;
+  } finally {
+    await harness.close();
+  }
+});
+
 test("POST /api/repos/release queues a manual release run for the requested repo", async () => {
   const storage = new MemStorage();
   const harness = await createHarness(storage, {

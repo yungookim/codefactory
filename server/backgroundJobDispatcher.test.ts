@@ -267,3 +267,83 @@ test("BackgroundJobDispatcher cancels jobs when the handler raises a cancel erro
     dispatcher.stop();
   }
 });
+
+test("BackgroundJobDispatcher retries transient handler errors before completing", async () => {
+  const storage = new MemStorage();
+  const queue = new BackgroundJobQueue(storage);
+  const job = await queue.enqueue("babysit_pr", "pr-1", "babysit_pr:pr-1", {
+    prId: "pr-1",
+  });
+
+  let attempts = 0;
+  const dispatcher = new BackgroundJobDispatcher({
+    storage,
+    queue,
+    workerId: "dispatcher-1",
+    pollIntervalMs: 5,
+    leaseMs: 30_000,
+    heartbeatIntervalMs: 10,
+    maxAttempts: 2,
+    retryBackoffMs: 0,
+    handlers: {
+      babysit_pr: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error("temporary GitHub outage");
+        }
+      },
+    },
+  });
+
+  try {
+    await dispatcher.start();
+    await waitForCondition(() => attempts === 2, 500);
+    assert.equal(await dispatcher.waitForIdle(250), true);
+
+    const stored = await storage.getBackgroundJob(job.id);
+    assert.equal(stored?.status, "completed");
+    assert.equal(stored?.attemptCount, 2);
+    assert.equal(stored?.lastError, null);
+  } finally {
+    dispatcher.stop();
+  }
+});
+
+test("BackgroundJobDispatcher fails handler errors after retry attempts are exhausted", async () => {
+  const storage = new MemStorage();
+  const queue = new BackgroundJobQueue(storage);
+  const job = await queue.enqueue("babysit_pr", "pr-1", "babysit_pr:pr-1", {
+    prId: "pr-1",
+  });
+
+  let attempts = 0;
+  const dispatcher = new BackgroundJobDispatcher({
+    storage,
+    queue,
+    workerId: "dispatcher-1",
+    pollIntervalMs: 5,
+    leaseMs: 30_000,
+    heartbeatIntervalMs: 10,
+    maxAttempts: 2,
+    retryBackoffMs: 0,
+    handlers: {
+      babysit_pr: async () => {
+        attempts += 1;
+        throw new Error("persistent failure");
+      },
+    },
+  });
+
+  try {
+    await dispatcher.start();
+    await waitForCondition(async () => (await storage.getBackgroundJob(job.id))?.status === "failed", 500);
+
+    const stored = await storage.getBackgroundJob(job.id);
+    assert.equal(attempts, 2);
+    assert.equal(stored?.status, "failed");
+    assert.equal(stored?.attemptCount, 2);
+    assert.match(stored?.lastError ?? "", /persistent failure/);
+  } finally {
+    dispatcher.stop();
+  }
+});

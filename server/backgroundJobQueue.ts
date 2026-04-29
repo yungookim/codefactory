@@ -33,6 +33,11 @@ export type BackgroundJobFailParams = BackgroundJobFinalizeParams & {
   error: string;
 };
 
+export type BackgroundJobRetryParams = BackgroundJobFinalizeParams & {
+  error: string;
+  availableAt?: QueueDateInput;
+};
+
 export type BackgroundJobCancelParams = BackgroundJobFinalizeParams & {
   error?: string | null;
 };
@@ -114,6 +119,17 @@ export class BackgroundJobQueue {
       params.leaseToken,
       params.error,
       this.resolveNow(params.now),
+    );
+  }
+
+  async retry(params: BackgroundJobRetryParams): Promise<BackgroundJob | undefined> {
+    const now = this.resolveNow(params.now);
+    return this.storage.retryBackgroundJob(
+      params.jobId,
+      params.leaseToken,
+      params.error,
+      this.resolveNow(params.availableAt ?? now),
+      now,
     );
   }
 

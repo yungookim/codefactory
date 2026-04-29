@@ -51,7 +51,7 @@ test("getHealingSessionBadgeClass returns destructive styling for blocked sessio
 test("getHealingSessionBadgeClass returns success styling for healed sessions", () => {
   assert.equal(
     getHealingSessionBadgeClass("healed"),
-    "border-green-600 text-green-500 bg-green-600/10",
+    "border-success-border text-success-foreground bg-success-muted",
   );
 });
 

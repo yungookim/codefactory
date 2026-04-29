@@ -1,5 +1,5 @@
 import type { CodingAgent, CommandResult } from "./agentRunner";
-import { applyFixesWithAgent, runCommand } from "./agentRunner";
+import { applyFixesWithAgent, runCommand, summarizeCommandResult } from "./agentRunner";
 import { ensureRepoCache } from "./repoWorkspace";
 import type { DeploymentPlatform } from "@shared/schema";
 
@@ -137,7 +137,7 @@ export async function runDeploymentHealingRepair(
     if (agentResult.code !== 0) {
       return {
         accepted: false,
-        rejectionReason: `agent exited with code ${agentResult.code}`,
+        rejectionReason: summarizeCommandResult(agentResult, `agent failed (${agentResult.code})`),
         summary: extractDeploymentHealingSummary(agentResult.stdout),
         fixBranch,
         agentResult,

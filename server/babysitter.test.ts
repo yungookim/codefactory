@@ -400,6 +400,62 @@ test("syncAndBabysitTrackedRepos queues release evaluation for merged archived P
   assert.ok(logs.some((log) => log.message.includes("queued release evaluation")));
 });
 
+test("syncAndBabysitTrackedRepos supersedes active healing sessions when archiving closed PRs", async () => {
+  const storage = new MemStorage();
+  const pr = await storage.addPR({
+    number: 43,
+    title: "Closed PR with active healing",
+    repo: "octo/example",
+    branch: "feature/healing",
+    author: "octocat",
+    url: "https://github.com/octo/example/pull/43",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+    watchEnabled: false,
+  });
+  const session = await storage.createHealingSession({
+    prId: pr.id,
+    repo: pr.repo,
+    prNumber: pr.number,
+    initialHeadSha: "head123",
+    currentHeadSha: "head123",
+    state: "awaiting_repair_slot",
+    endedAt: null,
+    blockedReason: null,
+    escalationReason: null,
+    latestFingerprint: "github-check-run:tests:backend-build-and-test",
+    attemptCount: 0,
+    lastImprovementScore: null,
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    makeWatcherGitHubService(),
+    {
+      resolveAgent: async () => "codex",
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+    },
+  );
+
+  await babysitter.syncAndBabysitTrackedRepos();
+
+  const updatedPr = await storage.getPR(pr.id);
+  const updatedSession = await storage.getHealingSession(session.id);
+  assert.equal(updatedPr?.status, "archived");
+  assert.equal(updatedSession?.state, "superseded");
+  assert.match(updatedSession?.escalationReason ?? "", /PR archived/);
+  assert.ok(updatedSession?.endedAt);
+});
+
 test("syncAndBabysitTrackedRepos enqueues social changelog generation as a background job", async () => {
   const storage = new MemStorage();
   const backgroundJobQueue = new BackgroundJobQueue(storage);
@@ -458,6 +514,9 @@ test("syncAndBabysitTrackedRepos enqueues social changelog generation as a backg
   });
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].status, "queued");
+  assert.equal(jobs[0].payload.activityLabel, "Generating social changelog");
+  assert.equal(jobs[0].payload.activityDetail, `${changelogs[0].date} - 5 merged PRs`);
+  assert.equal(jobs[0].payload.activityTargetUrl, null);
 });
 
 test("syncAndBabysitTrackedRepos enqueues babysit_pr jobs when a background scheduler is provided", async () => {
@@ -517,6 +576,9 @@ test("syncAndBabysitTrackedRepos enqueues babysit_pr jobs when a background sche
   });
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].payload.preferredAgent, "claude");
+  assert.equal(jobs[0].payload.activityLabel, "Babysitting PR #42");
+  assert.equal(jobs[0].payload.activityDetail, "octo/example - Example PR");
+  assert.equal(jobs[0].payload.activityTargetUrl, pr.url);
 });
 
 test("syncAndBabysitTrackedRepos repairs missing review-thread metadata on archived PRs", async () => {
@@ -2839,6 +2901,101 @@ test("babysitPR reassesses docs when the head SHA changes", async () => {
   }
 });
 
+test("babysitPR caps verbose diff preview logs during docs assessment", async () => {
+  const storage = new MemStorage();
+  const pr = await storage.addPR({
+    number: 106,
+    title: "Verbose docs diff",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const diffPreview = Array.from(
+    { length: 120 },
+    (_, index) => `+changed implementation line ${index + 1}`,
+  ).join("\n");
+  let capturedDocsPrompt = "";
+  const baseRunCommand = makeGitRunCommand({ localHeadSha: "abc123", remoteHeadSha: "abc123" });
+  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "codefactory-home-"));
+  process.env.CODEFACTORY_HOME = worktreeRoot;
+
+  try {
+    const babysitter = new PRBabysitter(
+      storage,
+      {
+        buildOctokit: async () => ({}) as never,
+        fetchFeedbackItemsForPR: async () => [],
+        fetchPullSummary: async () => makePullSummary(pr, { headSha: "abc123" }),
+        listFailingStatuses: async () => [],
+        checkCISettled: async () => true,
+        listOpenPullsForRepo: async () => [],
+        postFollowUpForFeedbackItem: async () => undefined,
+        resolveReviewThread: async () => undefined,
+        resolveGitHubAuthToken: async () => "test-token",
+        addReactionToComment: async () => {},
+        postStatusReplyForFeedbackItem: async () => null,
+        updateStatusReply: async () => {},
+      },
+      {
+        resolveAgent: async () => "codex",
+        ciPollIntervalMs: 0,
+        evaluateFixNecessityWithAgent: async ({ prompt }) => {
+          capturedDocsPrompt = prompt;
+          return { needsFix: false, reason: "Docs are still accurate" };
+        },
+        applyFixesWithAgent: async () => {
+          throw new Error("Should not run the agent when docs assessment says no fix is needed");
+        },
+        runCommand: async (command, args, options) => {
+          if (command === "git" && args[0] === "diff" && args[1] === "--no-color") {
+            options?.onStdoutChunk?.(`${diffPreview}\n`);
+            return { code: 0, stdout: `${diffPreview}\n`, stderr: "" };
+          }
+
+          if (command === "git" && args[0] === "diff" && args[1] === "--name-only") {
+            const stdout = "src/feature.ts\nREADME.md\n";
+            options?.onStdoutChunk?.(stdout);
+            return { code: 0, stdout, stderr: "" };
+          }
+
+          if (command === "git" && args[0] === "diff" && args[1] === "--stat") {
+            const stdout = "src/feature.ts | 120 +++++++++++++++++++++++++++++++++++++\n";
+            options?.onStdoutChunk?.(stdout);
+            return { code: 0, stdout, stderr: "" };
+          }
+
+          const result = await baseRunCommand(command, args);
+          options?.onStdoutChunk?.(result.stdout);
+          options?.onStderrChunk?.(result.stderr);
+          return result;
+        },
+      },
+    );
+
+    await babysitter.babysitPR(pr.id, "codex");
+
+    const logs = await storage.getLogs(pr.id);
+    const previewLogs = logs.filter(
+      (log) => log.phase === "evaluate.docs" && log.message.includes("+changed implementation line"),
+    );
+    assert.equal(previewLogs.length, 20);
+    assert.ok(logs.some((log) => log.phase === "evaluate.docs" && log.message.includes("[stdout] output truncated after 20 line(s)")));
+    assert.match(capturedDocsPrompt, /\+changed implementation line 120/);
+  } finally {
+    delete process.env.CODEFACTORY_HOME;
+  }
+});
+
 test("babysitPR retries docs assessment for same-SHA failed state", async () => {
   const storage = new MemStorage();
   const pr = await storage.addPR({
@@ -4571,6 +4728,147 @@ test("babysitPR blocks external CI failures without launching the healing agent"
   assert.equal(sessions[0]?.state, "blocked");
   assert.match(sessions[0]?.blockedReason ?? "", /external ci failure/i);
   assert.equal(healingAgentCalled, false);
+});
+
+test("babysitPR does not reopen terminal healing sessions for the same head SHA", async () => {
+  const storage = new MemStorage();
+  await storage.updateConfig({ autoHealCI: true, autoUpdateDocs: false });
+  const pr = await storage.addPR({
+    number: 46,
+    title: "Already escalated CI",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/escalated-ci",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/46",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const session = await storage.createHealingSession({
+    prId: pr.id,
+    repo: pr.repo,
+    prNumber: pr.number,
+    initialHeadSha: "same-head",
+    currentHeadSha: "same-head",
+    state: "escalated",
+    endedAt: "2026-04-29T03:46:32.083Z",
+    blockedReason: null,
+    escalationReason: "agent exited with code 124",
+    latestFingerprint: "github-check-run:tests:playwright-e2e",
+    attemptCount: 1,
+    lastImprovementScore: null,
+  });
+
+  let healingAgentCalled = false;
+  const babysitter = new PRBabysitter(
+    storage,
+    {
+      ...makeWatcherGitHubService(),
+      fetchPullSummary: async () => makePullSummary(pr, { headSha: "same-head", headRef: pr.branch, branch: pr.branch }),
+      fetchCheckSnapshotsForRef: async (_octokit: unknown, _repo: unknown, prId: string, headSha: string) => [
+        makeCheckSnapshot({ prId, sha: headSha, description: "Playwright E2E failed" }),
+      ],
+    },
+    {
+      resolveAgent: async () => "codex",
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCIHealingRepairAttempt: async () => {
+        healingAgentCalled = true;
+        throw new Error("terminal sessions must not launch a healing agent");
+      },
+    },
+  );
+
+  await babysitter.babysitPR(pr.id, "codex");
+
+  const updatedPr = await storage.getPR(pr.id);
+  const updatedSession = await storage.getHealingSession(session.id);
+  const logs = await storage.getLogs(pr.id);
+
+  assert.equal(updatedPr?.status, "watching");
+  assert.equal(updatedSession?.state, "escalated");
+  assert.equal(healingAgentCalled, false);
+  assert.ok(!logs.some((log) => log.message.includes("Illegal healing session transition")));
+});
+
+test("babysitPR honors CI healing retry budgets before launching the healing agent", async () => {
+  const storage = new MemStorage();
+  await storage.updateConfig({
+    autoHealCI: true,
+    autoUpdateDocs: false,
+    maxHealingAttemptsPerSession: 1,
+  });
+  const pr = await storage.addPR({
+    number: 47,
+    title: "Retry budget exhausted",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/retry-budget",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/47",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const session = await storage.createHealingSession({
+    prId: pr.id,
+    repo: pr.repo,
+    prNumber: pr.number,
+    initialHeadSha: "budget-head",
+    currentHeadSha: "budget-head",
+    state: "awaiting_repair_slot",
+    endedAt: null,
+    blockedReason: null,
+    escalationReason: null,
+    latestFingerprint: "github-check-run:tests:playwright-e2e",
+    attemptCount: 1,
+    lastImprovementScore: null,
+  });
+
+  let healingAgentCalled = false;
+  const babysitter = new PRBabysitter(
+    storage,
+    {
+      ...makeWatcherGitHubService(),
+      fetchPullSummary: async () => makePullSummary(pr, { headSha: "budget-head", headRef: pr.branch, branch: pr.branch }),
+      fetchCheckSnapshotsForRef: async (_octokit: unknown, _repo: unknown, prId: string, headSha: string) => [
+        makeCheckSnapshot({ prId, sha: headSha, description: "Playwright E2E failed" }),
+      ],
+    },
+    {
+      resolveAgent: async () => "codex",
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCIHealingRepairAttempt: async () => {
+        healingAgentCalled = true;
+        throw new Error("retry budget should prevent the healing agent from launching");
+      },
+    },
+  );
+
+  await babysitter.babysitPR(pr.id, "codex");
+
+  const updatedSession = await storage.getHealingSession(session.id);
+  const logs = await storage.getLogs(pr.id);
+
+  assert.equal(healingAgentCalled, false);
+  assert.equal(updatedSession?.state, "escalated");
+  assert.match(updatedSession?.escalationReason ?? "", /session retry budget exhausted/);
+  assert.ok(logs.some((log) => log.phase === "healing.retry" && log.message.includes("session retry budget exhausted")));
 });
 
 test("babysitPR marks a healing session healed when the repair push turns CI green", async () => {

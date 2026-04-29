@@ -95,6 +95,27 @@ test("classifyCIFailure marks cancelled check runs as blocked external", () => {
   assert.match(result.summary, /External CI failure/);
 });
 
+test("classifyCIFailure treats AI review check failures as blocked external", () => {
+  const snapshot = createCheckSnapshot({
+    prId: "pr-1",
+    sha: "abc123",
+    provider: "github.check_run",
+    context: "claude-review",
+    status: "completed",
+    conclusion: "failure",
+    description: "Failed steps: Run Claude Code Review",
+    targetUrl: "https://github.com/owner/repo/actions/runs/1",
+    observedAt: "2026-04-01T12:00:00.000Z",
+  });
+
+  const result = classifyCIFailure(snapshot);
+
+  assert.equal(result.classification, "blocked_external");
+  assert.equal(result.category, "ai-review");
+  assert.equal(result.fingerprint, "github-check-run:ai-review:claude-review");
+  assert.match(result.summary, /External CI failure/);
+});
+
 test("classifyCIFailure returns unknown for signals it cannot categorize", () => {
   const snapshot = createCheckSnapshot({
     prId: "pr-1",

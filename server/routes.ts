@@ -113,6 +113,10 @@ export async function registerRoutes(
     res.json(await runtime.getRuntimeSnapshot());
   });
 
+  app.get("/api/activities", async (_req, res) => {
+    res.json(await runtime.listActivities());
+  });
+
   app.post("/api/runtime/drain", async (req, res) => {
     try {
       const payload = z.object({

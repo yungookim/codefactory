@@ -44,8 +44,9 @@ function CopyButton({ text }: { text: string }) {
 
   return (
     <button
+      type="button"
       onClick={handleCopy}
-      className="border border-border px-2 py-0.5 text-[11px] uppercase tracking-wider text-muted-foreground hover:border-foreground hover:text-foreground focus:outline-none"
+      className="border border-border px-2 py-0.5 text-[11px] uppercase tracking-wider text-muted-foreground hover:border-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
     >
       {copied ? "copied" : "copy"}
     </button>
@@ -83,13 +84,18 @@ function StatusBadge({ status }: { status: SocialChangelog["status"] }) {
 function ChangelogCard({ changelog }: { changelog: SocialChangelog }) {
   const [expanded, setExpanded] = useState(false);
   const sections = changelog.content ? parseSections(changelog.content) : null;
+  const contentId = `changelog-${changelog.id}-content`;
 
   return (
     <div className="border border-border">
       {/* Card header */}
-      <div
-        className="flex cursor-pointer items-center justify-between px-4 py-3 hover:bg-muted/30"
+      <button
+        type="button"
+        className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset disabled:cursor-default disabled:hover:bg-transparent"
         onClick={() => changelog.status === "done" && setExpanded((v) => !v)}
+        disabled={changelog.status !== "done"}
+        aria-expanded={changelog.status === "done" ? expanded : undefined}
+        aria-controls={changelog.status === "done" ? contentId : undefined}
       >
         <div className="flex items-center gap-3">
           <StatusBadge status={changelog.status} />
@@ -102,13 +108,13 @@ function ChangelogCard({ changelog }: { changelog: SocialChangelog }) {
           </span>
         </div>
         {changelog.status === "done" && (
-          <span className="text-[11px] text-muted-foreground">{expanded ? "▲" : "▼"}</span>
+          <span className="text-[11px] text-muted-foreground">{expanded ? "Hide" : "Show"}</span>
         )}
-      </div>
+      </button>
 
       {/* Expanded content */}
       {expanded && changelog.status === "done" && (
-        <div className="border-t border-border px-4 pb-4 pt-3">
+        <div id={contentId} className="border-t border-border px-4 pb-4 pt-3">
           {changelog.error && (
             <p className="mb-3 text-[12px] text-destructive">{changelog.error}</p>
           )}
@@ -156,7 +162,7 @@ export default function Changelogs() {
   });
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div className="flex min-h-screen flex-col">
       <UpdateBanner />
       {/* Header */}
       <header className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
@@ -172,7 +178,7 @@ export default function Changelogs() {
         </div>
         <Link
           href="/"
-          className="text-[11px] text-muted-foreground hover:text-foreground focus:outline-none"
+          className="text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         >
           ← back to dashboard
         </Link>

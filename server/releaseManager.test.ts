@@ -299,6 +299,9 @@ test("ReleaseManager enqueues a durable release job and still executes the relea
   assert.equal(queuedJobs.length, 1);
   assert.equal(queuedJobs[0].targetId, created.id);
   assert.equal(queuedJobs[0].dedupeKey, buildBackgroundJobDedupeKey("process_release_run", created.id));
+  assert.equal(queuedJobs[0].payload.activityLabel, "Processing release for yungookim/oh-my-pr");
+  assert.equal(queuedJobs[0].payload.activityDetail, "PR #71 - Release automation");
+  assert.equal(queuedJobs[0].payload.activityTargetUrl, "https://github.com/yungookim/oh-my-pr/pull/71");
   assert.equal(await manager.waitForIdle(), true);
 
   const processed = await manager.processReleaseRun(created.id);
