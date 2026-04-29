@@ -236,6 +236,69 @@ test("runCIHealingRepairAttempt rejects when the remote SHA does not move", asyn
   assert.equal(cleanupCalled, true);
 });
 
+test("runCIHealingRepairAttempt preserves stderr when the agent exits non-zero", async () => {
+  const result = await runCIHealingRepairAttempt({
+    prNumber: 42,
+    repoFullName: "acme/widgets",
+    repoCloneUrl: "https://github.com/acme/widgets.git",
+    headRepoFullName: "acme/widgets",
+    headRepoCloneUrl: "https://github.com/acme/widgets.git",
+    headRef: "feature/heal-ci",
+    baseRef: "main",
+    headSha: "old-sha",
+    title: "Fix the compiler",
+    url: "https://github.com/acme/widgets/pull/42",
+    author: "octocat",
+    branch: "feature/heal-ci",
+    agent: "claude",
+    failures: [makeFailure()],
+    runId: "run-nonzero",
+    dependencies: {
+      preparePrWorktree: async () => ({
+        repoCacheDir: "/tmp/repo-cache",
+        worktreePath: "/tmp/worktree",
+        healed: false,
+        remoteName: "origin",
+      }),
+      removePrWorktree: async () => {},
+      applyFixesWithAgent: async () => ({
+        code: 124,
+        stdout: "partial context",
+        stderr: "Command timed out after 900000ms",
+        timedOut: true,
+      }),
+      runCommand: async (command, args) => {
+        if (command !== "git") {
+          return { code: 1, stdout: "", stderr: `unexpected command ${command}` };
+        }
+
+        const signature = args.join(" ");
+        if (signature.includes("-C /tmp/worktree rev-parse HEAD")) {
+          return { code: 0, stdout: "old-sha\n", stderr: "" };
+        }
+
+        if (signature.includes("-C /tmp/worktree status --porcelain")) {
+          return { code: 0, stdout: "", stderr: "" };
+        }
+
+        if (signature.includes("-C /tmp/repo-cache fetch origin feature/heal-ci")) {
+          return { code: 0, stdout: "fetched\n", stderr: "" };
+        }
+
+        if (signature.includes("-C /tmp/repo-cache rev-parse FETCH_HEAD")) {
+          return { code: 0, stdout: "old-sha\n", stderr: "" };
+        }
+
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    },
+  });
+
+  assert.equal(result.accepted, false);
+  assert.match(result.rejectionReason ?? "", /agent exited with code 124/);
+  assert.match(result.rejectionReason ?? "", /timed out after 900000ms/);
+});
+
 test("runCIHealingRepairAttempt rejects dirty worktrees before remote verification", async () => {
   const callLog: Array<{ command: string; args: string[] }> = [];
   const result = await runCIHealingRepairAttempt({

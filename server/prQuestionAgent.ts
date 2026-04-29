@@ -1,6 +1,6 @@
 import type { IStorage } from "./storage";
 import type { CodingAgent } from "./agentRunner";
-import { resolveAgent, runCommand } from "./agentRunner";
+import { resolveAgent, runCommand, summarizeCommandResult } from "./agentRunner";
 
 /**
  * Answers a user question about a PR by gathering context (PR state, feedback,
@@ -31,7 +31,7 @@ export async function answerPRQuestion(params: {
     );
 
     if (result.code !== 0) {
-      const errorMsg = result.stderr || result.stdout || `Agent exited with code ${result.code}`;
+      const errorMsg = summarizeCommandResult(result, `Agent exited with code ${result.code}`);
       await storage.updateQuestion(questionId, {
         status: "error",
         error: errorMsg.slice(0, 2000),
@@ -39,7 +39,15 @@ export async function answerPRQuestion(params: {
       return;
     }
 
-    const answer = result.stdout.trim() || "(Agent returned an empty response)";
+    const answer = result.stdout.trim();
+    if (!answer) {
+      await storage.updateQuestion(questionId, {
+        status: "error",
+        error: "Agent returned an empty response",
+        answer: null,
+      });
+      return;
+    }
 
     await storage.updateQuestion(questionId, {
       status: "answered",

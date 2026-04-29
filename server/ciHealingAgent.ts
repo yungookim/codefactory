@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import type { CodingAgent, CommandResult } from "./agentRunner";
-import { applyFixesWithAgent, runCommand } from "./agentRunner";
+import { applyFixesWithAgent, runCommand, summarizeCommandResult } from "./agentRunner";
 import type { ClassifiedCIFailure } from "./ciFailureClassifier";
 import { preparePrWorktree, removePrWorktree } from "./repoWorkspace";
 
@@ -300,7 +300,7 @@ export async function runCIHealingRepairAttempt(input: CIHealingWorktreeInput & 
 
     if (!accepted) {
       if (agentResult.code !== 0) {
-        rejectionReason = `agent exited with code ${agentResult.code}`;
+        rejectionReason = summarizeCommandResult(agentResult, `agent exited with code ${agentResult.code}`);
       } else if (worktreeDirty) {
         rejectionReason = `dirty worktree after agent run: ${worktreeStatus[0] ?? "unknown changes"}`;
       } else if (localCommitCreated && !pushedNewSha) {

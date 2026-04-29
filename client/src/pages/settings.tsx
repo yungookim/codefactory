@@ -47,11 +47,14 @@ export default function Settings() {
   });
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div className="flex min-h-screen flex-col">
       <UpdateBanner />
       <header className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
         <div className="flex items-center gap-3">
-          <Link href="/" className="text-[11px] text-muted-foreground hover:text-foreground">
+          <Link
+            href="/"
+            className="text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+          >
             &larr; back
           </Link>
           <span className="text-sm font-medium tracking-tight">settings</span>
@@ -69,19 +72,20 @@ export default function Settings() {
             <div className="flex flex-col gap-4 rounded border border-border p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-sm">Coding Agent</div>
+                  <label htmlFor="settings-coding-agent" className="text-sm">Coding Agent</label>
                   <div className="text-[11px] text-muted-foreground">
                     CLI agent used to apply fixes
                   </div>
                 </div>
                 <select
+                  id="settings-coding-agent"
                   value={config?.codingAgent ?? "codex"}
                   onChange={(e) => {
                     const newAgent = e.target.value as Config["codingAgent"];
                     updateConfigMutation.mutate({ codingAgent: newAgent });
                   }}
                   disabled={updateConfigMutation.isPending}
-                  className="border border-border bg-transparent px-2 py-1 text-sm focus:border-foreground focus:outline-none disabled:opacity-50"
+                  className="border border-border bg-transparent px-2 py-1 text-sm focus:border-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-50"
                 >
                   <option value="codex">codex</option>
                   <option value="claude">claude</option>
@@ -105,6 +109,55 @@ export default function Settings() {
                   disabled={updateConfigMutation.isPending}
                   className="mt-1 h-4 w-4 accent-foreground"
                   data-testid="checkbox-fallback-to-next-coding-agent"
+                />
+              </label>
+            </div>
+          </section>
+
+          {/* Automation */}
+          <section>
+            <h2 className="mb-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Automation
+            </h2>
+            <div className="flex flex-col gap-4 rounded border border-border p-4">
+              <label className="flex items-center justify-between gap-3 cursor-pointer">
+                <div>
+                  <div className="text-sm">Auto-resolve conflicts</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Ask the agent to resolve merge conflicts when tracked PRs are not mergeable.
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={config?.autoResolveMergeConflicts ?? true}
+                  onChange={(e) =>
+                    updateConfigMutation.mutate({
+                      autoResolveMergeConflicts: e.target.checked,
+                    })
+                  }
+                  disabled={updateConfigMutation.isPending}
+                  data-testid="checkbox-auto-resolve-conflicts"
+                  className="h-4 w-4 accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-3 cursor-pointer">
+                <div>
+                  <div className="text-sm">Auto-update docs</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Automatically assess whether tracked PRs need documentation updates.
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={config?.autoUpdateDocs ?? true}
+                  onChange={(e) =>
+                    updateConfigMutation.mutate({
+                      autoUpdateDocs: e.target.checked,
+                    })
+                  }
+                  disabled={updateConfigMutation.isPending}
+                  data-testid="checkbox-auto-update-docs"
+                  className="h-4 w-4 accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                 />
               </label>
             </div>
@@ -144,25 +197,6 @@ export default function Settings() {
                 onChange={(v) => updateConfigMutation.mutate({ maxChangesPerRun: v })}
                 disabled={updateConfigMutation.isPending}
               />
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm">Auto-update docs</div>
-                  <div className="text-[11px] text-muted-foreground">
-                    Automatically assess whether tracked PRs need documentation updates.
-                  </div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={config?.autoUpdateDocs ?? true}
-                  onChange={(e) =>
-                    updateConfigMutation.mutate({
-                      autoUpdateDocs: e.target.checked,
-                    })
-                  }
-                  disabled={updateConfigMutation.isPending}
-                  className="h-4 w-4 accent-foreground"
-                />
-              </div>
             </div>
           </section>
 
@@ -180,6 +214,7 @@ export default function Settings() {
                 </div>
                 <input
                   type="checkbox"
+                  aria-label="Automatic CI healing"
                   checked={config?.autoHealCI ?? false}
                   onChange={(e) =>
                     updateConfigMutation.mutate({
@@ -187,7 +222,7 @@ export default function Settings() {
                     })
                   }
                   disabled={updateConfigMutation.isPending}
-                  className="h-4 w-4 accent-foreground"
+                  className="h-4 w-4 accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                 />
               </div>
               <SettingRow
@@ -238,7 +273,7 @@ export default function Settings() {
                   checked={config?.autoCreateReleases ?? true}
                   onChange={(e) => updateConfigMutation.mutate({ autoCreateReleases: e.target.checked })}
                   disabled={updateConfigMutation.isPending}
-                  className="mt-1 accent-foreground"
+                  className="mt-1 accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                   data-testid="checkbox-auto-create-releases"
                 />
               </label>
@@ -261,8 +296,9 @@ export default function Settings() {
                   </div>
                   {!showTokenInput && (
                     <button
+                      type="button"
                       onClick={() => setShowTokenInput(true)}
-                      className="border border-border px-2 py-1 text-xs hover:bg-muted"
+                      className="border border-border px-2 py-1 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                     >
                       add
                     </button>
@@ -283,23 +319,26 @@ export default function Settings() {
                         </div>
                         <div className="flex shrink-0 items-center gap-1">
                           <button
+                            type="button"
                             onClick={() => moveGithubToken(index, index - 1)}
                             disabled={index === 0 || updateConfigMutation.isPending}
-                            className="border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+                            className="border border-border px-2 py-1 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-50"
                           >
                             up
                           </button>
                           <button
+                            type="button"
                             onClick={() => moveGithubToken(index, index + 1)}
                             disabled={index === githubTokens.length - 1 || updateConfigMutation.isPending}
-                            className="border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+                            className="border border-border px-2 py-1 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-50"
                           >
                             down
                           </button>
                           <button
+                            type="button"
                             onClick={() => removeGithubToken(index)}
                             disabled={updateConfigMutation.isPending}
-                            className="border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+                            className="border border-border px-2 py-1 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-50"
                           >
                             remove
                           </button>
@@ -317,9 +356,11 @@ export default function Settings() {
                       value={newGithubToken}
                       onChange={(e) => setNewGithubToken(e.target.value)}
                       placeholder="ghp_..."
-                      className="min-w-0 flex-1 border border-border bg-transparent px-2 py-1 text-sm focus:border-foreground focus:outline-none"
+                      aria-label="GitHub token"
+                      className="min-w-0 flex-1 border border-border bg-transparent px-2 py-1 text-sm focus:border-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                     />
                     <button
+                      type="button"
                       onClick={() => {
                         const token = newGithubToken.trim();
                         if (token) {
@@ -329,16 +370,17 @@ export default function Settings() {
                         }
                       }}
                       disabled={!newGithubToken.trim() || updateConfigMutation.isPending}
-                      className="border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+                      className="border border-border px-2 py-1 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-50"
                     >
                       add
                     </button>
                     <button
+                      type="button"
                       onClick={() => {
                         setShowTokenInput(false);
                         setNewGithubToken("");
                       }}
-                      className="px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                      className="px-2 py-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                     >
                       cancel
                     </button>
@@ -355,6 +397,7 @@ export default function Settings() {
                 </div>
                 <input
                   type="checkbox"
+                  aria-label="Repository links in PR comments"
                   checked={config?.includeRepositoryLinksInGitHubComments ?? true}
                   onChange={(e) =>
                     updateConfigMutation.mutate({
@@ -362,7 +405,7 @@ export default function Settings() {
                     })
                   }
                   disabled={updateConfigMutation.isPending}
-                  className="h-4 w-4 accent-foreground"
+                  className="h-4 w-4 accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                 />
               </div>
 
@@ -404,13 +447,17 @@ function SettingRow({
   onChange: (v: number) => void;
   disabled: boolean;
 }) {
+  const inputId = `setting-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+  const descriptionId = `${inputId}-description`;
+
   return (
     <div className="flex items-center justify-between">
       <div>
-        <div className="text-sm">{label}</div>
-        <div className="text-[11px] text-muted-foreground">{description}</div>
+        <label htmlFor={inputId} className="text-sm">{label}</label>
+        <div id={descriptionId} className="text-[11px] text-muted-foreground">{description}</div>
       </div>
       <input
+        id={inputId}
         type="number"
         value={value}
         onChange={(e) => {
@@ -418,7 +465,8 @@ function SettingRow({
           if (!isNaN(n)) onChange(n);
         }}
         disabled={disabled}
-        className="w-28 border border-border bg-transparent px-2 py-1 text-right text-sm focus:border-foreground focus:outline-none disabled:opacity-50"
+        aria-describedby={descriptionId}
+        className="w-28 border border-border bg-transparent px-2 py-1 text-right text-sm focus:border-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-50"
       />
     </div>
   );

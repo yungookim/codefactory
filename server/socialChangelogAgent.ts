@@ -1,7 +1,7 @@
 import type { IStorage } from "./storage";
 import type { SocialChangelogPRSummary } from "@shared/schema";
 import type { CodingAgent } from "./agentRunner";
-import { resolveAgent, runCommand } from "./agentRunner";
+import { resolveAgent, runCommand, summarizeCommandResult } from "./agentRunner";
 
 const DEFAULT_SOCIAL_CHANGELOG_TIMEOUT_MS = 120_000;
 const SOCIAL_CHANGELOG_ERROR_SUMMARY_MAX_CHARS = 2_000;
@@ -40,7 +40,7 @@ export async function generateSocialChangelog(params: {
     );
 
     if (result.code !== 0) {
-      const errorMsg = result.stderr || result.stdout || `Agent exited with code ${result.code}`;
+      const errorMsg = summarizeCommandResult(result, `Agent exited with code ${result.code}`);
       console.error(`social-changelog: generation command failed for ${changelogId} (code=${result.code})`, {
         stdout: result.stdout,
         stderr: result.stderr,
@@ -53,7 +53,17 @@ export async function generateSocialChangelog(params: {
       return;
     }
 
-    const content = result.stdout.trim() || "(Agent returned an empty response)";
+    const content = result.stdout.trim();
+    if (!content) {
+      await storage.updateSocialChangelog(changelogId, {
+        status: "error",
+        error: "Agent returned an empty response",
+        content: null,
+        completedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
     await storage.updateSocialChangelog(changelogId, {
       status: "done",
       content,

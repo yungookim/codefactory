@@ -520,7 +520,7 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     return {
       id: job.id,
       kind: job.kind,
-      status: job.status === "leased" ? "in_progress" : "queued",
+      status: job.status === "leased" ? "in_progress" : job.status === "failed" ? "failed" : "queued",
       label: description.label,
       detail: description.detail,
       targetId: job.targetId,
@@ -530,6 +530,7 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
       startedAt: job.heartbeatAt,
       updatedAt: job.updatedAt,
       attemptCount: job.attemptCount,
+      lastError: job.lastError,
     };
   };
 
@@ -645,14 +646,15 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     getRuntimeSnapshot,
 
     async listActivities() {
-      const [leasedJobs, queuedJobs, failedJobs] = await Promise.all([
+      const [failedJobs, leasedJobs, queuedJobs] = await Promise.all([
+        storage.listBackgroundJobs({ status: "failed" }),
         storage.listBackgroundJobs({ status: "leased" }),
         storage.listBackgroundJobs({ status: "queued" }),
-        storage.listBackgroundJobs({ kind: "babysit_pr", status: "failed" }),
       ]);
 
       const failedWarningJobs = failedJobs.filter((job) => classifyAgentAvailabilityFailure(job));
-      const descriptionContext = await buildActivityDescriptionContext([...leasedJobs, ...queuedJobs, ...failedWarningJobs]);
+      const descriptionContext = await buildActivityDescriptionContext([...failedJobs, ...leasedJobs, ...queuedJobs]);
+      const failed = failedJobs.map((job) => mapActivityJob(job, descriptionContext));
       const inProgress = leasedJobs.map((job) => mapActivityJob(job, descriptionContext));
       const queued = queuedJobs.map((job) => mapActivityJob(job, descriptionContext));
       const warnings = failedWarningJobs
@@ -662,6 +664,7 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
         .slice(0, 5);
 
       return {
+        failed,
         inProgress,
         queued,
         warnings,

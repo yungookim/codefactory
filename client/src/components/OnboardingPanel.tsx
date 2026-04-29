@@ -160,15 +160,15 @@ function StepCard({
   children?: ReactNode;
 }) {
   return (
-    <div className={`border px-3 py-3 ${step.complete ? "border-border bg-background/60" : "border-amber-500/30 bg-amber-500/5"}`}>
+    <div className={`border px-3 py-3 ${step.complete ? "border-border bg-background/60" : "border-warning-border bg-warning-muted"}`}>
       <div className="flex gap-3">
-        <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center border text-[10px] ${step.complete ? "border-border text-foreground" : "border-amber-500/40 text-amber-500"}`}>
+        <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center border text-[10px] ${step.complete ? "border-border text-foreground" : "border-warning-border text-warning-foreground"}`}>
           {step.complete ? "✓" : index}
         </span>
         <div className="min-w-0 flex-1 space-y-1.5">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[11px] font-medium uppercase tracking-wider">{step.title}</span>
-            <span className={`border px-1.5 py-0 text-[10px] uppercase tracking-wider ${step.complete ? "border-border text-muted-foreground" : "border-amber-500/40 text-amber-500"}`}>
+            <span className={`border px-1.5 py-0 text-[10px] uppercase tracking-wider ${step.complete ? "border-border text-muted-foreground" : "border-warning-border text-warning-foreground"}`}>
               {step.complete ? "done" : "next"}
             </span>
           </div>

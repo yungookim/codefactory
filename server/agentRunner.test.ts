@@ -20,6 +20,24 @@ test("runCommand reports a timeout even when the child exits 0 after SIGTERM", a
   assert.match(result.stderr, /timed out after 50ms/i);
 });
 
+test("runCommand escalates timed-out children that ignore SIGTERM", async () => {
+  const startedAt = Date.now();
+  const result = await runCommand(
+    process.execPath,
+    [
+      "-e",
+      "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);",
+    ],
+    { timeoutMs: 50, killTimeoutMs: 50 },
+  );
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.equal(result.code, 124);
+  assert.equal(result.timedOut, true);
+  assert.match(result.stderr, /timed out after 50ms/i);
+  assert.ok(elapsedMs < 1500, `expected forced cleanup, took ${elapsedMs}ms`);
+});
+
 test("evaluateFixNecessityWithAgent throws a clear error when codex writes no output file", async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "fake-codex-bin-"));
   const fakeCodexPath = path.join(

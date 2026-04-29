@@ -166,7 +166,7 @@ export const backgroundJobSchema = z.object({
 });
 export type BackgroundJob = z.infer<typeof backgroundJobSchema>;
 
-export const activityStatusEnum = z.enum(["in_progress", "queued"]);
+export const activityStatusEnum = z.enum(["in_progress", "queued", "failed"]);
 export type ActivityStatus = z.infer<typeof activityStatusEnum>;
 
 export const activityItemSchema = z.object({
@@ -182,6 +182,7 @@ export const activityItemSchema = z.object({
   startedAt: z.string().nullable(),
   updatedAt: z.string(),
   attemptCount: z.number().int().nonnegative(),
+  lastError: z.string().nullable(),
 });
 export type ActivityItem = z.infer<typeof activityItemSchema>;
 
@@ -199,6 +200,7 @@ export const operatorWarningSchema = z.object({
 export type OperatorWarning = z.infer<typeof operatorWarningSchema>;
 
 export const activitySnapshotSchema = z.object({
+  failed: z.array(activityItemSchema),
   inProgress: z.array(activityItemSchema),
   queued: z.array(activityItemSchema),
   warnings: z.array(operatorWarningSchema),

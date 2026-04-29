@@ -6,12 +6,17 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { marked } from "marked";
 
-const DOCS_DIR = path.resolve(import.meta.dirname, "../docs/public");
-const ROOT_DOCS_INDEX = path.resolve(import.meta.dirname, "../docs/index.html");
+const ROOT_DIR = path.resolve(import.meta.dirname, "..");
+const DOCS_DIR = path.join(ROOT_DIR, "docs/public");
+const ROOT_DOCS_INDEX = path.join(ROOT_DIR, "docs/index.html");
 const OUT_DIR = path.join(DOCS_DIR, "_site");
 const SHARED_STYLESHEET = "styles.css";
+const TAILWIND_CONFIG = path.join(ROOT_DIR, "docs/tailwind.config.cjs");
+const TAILWIND_INPUT = path.join(ROOT_DIR, "docs/src/input.css");
+const TAILWIND_BIN = path.join(ROOT_DIR, "node_modules/.bin", process.platform === "win32" ? "tailwindcss.cmd" : "tailwindcss");
 const REPO_URL = "https://github.com/yungookim/oh-my-pr";
 const COMMUNITY_URL = "https://github.com/yungookim/oh-my-pr/discussions";
 const CHANGELOG_URL = "https://github.com/yungookim/oh-my-pr/releases";
@@ -220,35 +225,6 @@ function buildHead(title: string, description: string, stylesheetHref: string): 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="${escapeHtml(description)}" />
   <title>${escapeHtml(title)}</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet" />
-  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-  <script>
-    tailwind.config = {
-      darkMode: "class",
-      theme: {
-        extend: {
-          colors: {
-            brand: {
-              400: "#60a5fa",
-              500: "#3b82f6",
-              600: "#2563eb",
-            },
-            dark: {
-              900: "#0f1115",
-              800: "#1e2128",
-              700: "#2c313c",
-            }
-          },
-          fontFamily: {
-            sans: ["Inter", "ui-sans-serif", "system-ui", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "Helvetica Neue", "Arial", "sans-serif"],
-            mono: ["Fira Code", "ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", "Courier New", "monospace"],
-          }
-        }
-      }
-    };
-  </script>
   <link rel="stylesheet" href="${stylesheetHref}" />
 </head>`;
 }
@@ -261,7 +237,7 @@ function navItemMarkup(label: string, href: string, iconName: IconName, active: 
   const iconColor = active ? "text-slate-400" : "text-slate-500";
 
   return `<li>
-  <a class="flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors ${baseClasses}" href="${href}"${target}>
+  <a class="flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-400 focus-visible:ring-offset-1 focus-visible:ring-offset-dark-900 ${baseClasses}" href="${href}"${target}>
     ${icon(iconName, `h-4 w-4 ${iconColor}`)}
     <span>${escapeHtml(label)}</span>
   </a>
@@ -298,16 +274,12 @@ function renderSidebar(context: RenderContext, activeKey: string | null, docs: D
       <span class="text-base font-semibold text-white">oh-my-pr</span>
       <span class="ml-auto rounded bg-dark-700 px-1.5 py-0.5 text-[10px] text-gray-300">DOCS</span>
     </div>
-    <div class="relative mb-4">
-      ${icon("search", "pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500")}
-      <input class="doc-search-input w-full rounded-md border border-dark-700 bg-dark-800 py-1.5 pl-9 pr-3 text-sm text-gray-300 placeholder-gray-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500" placeholder="Search documents..." type="text" />
-    </div>
     <div class="flex gap-4 text-sm text-gray-400">
-      <a class="flex items-center gap-1.5 transition-colors hover:text-gray-200" href="${REPO_URL}" target="_blank" rel="noreferrer">
+      <a class="flex items-center gap-1.5 transition-colors hover:text-gray-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-400 focus-visible:ring-offset-1 focus-visible:ring-offset-dark-900" href="${REPO_URL}" target="_blank" rel="noreferrer">
         ${icon("github", "h-4 w-4")}
         <span>GitHub</span>
       </a>
-      <a class="flex items-center gap-1.5 transition-colors hover:text-gray-200" href="${COMMUNITY_URL}" target="_blank" rel="noreferrer">
+      <a class="flex items-center gap-1.5 transition-colors hover:text-gray-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-400 focus-visible:ring-offset-1 focus-visible:ring-offset-dark-900" href="${COMMUNITY_URL}" target="_blank" rel="noreferrer">
         ${icon("community", "h-4 w-4")}
         <span>Community</span>
       </a>
@@ -351,13 +323,41 @@ function renderSidebar(context: RenderContext, activeKey: string | null, docs: D
 </aside>`;
 }
 
-function renderMobileHeader(context: RenderContext): string {
-  return `<div class="mb-8 flex items-center justify-between rounded-xl border border-dark-800 bg-dark-800/60 px-4 py-3 md:hidden">
-  <a class="flex items-center gap-2 text-white" href="${context.introHref}">
-    ${icon("logo", "h-5 w-5")}
-    <span class="font-semibold">oh-my-pr</span>
-  </a>
-  <span class="rounded bg-dark-700 px-2 py-1 text-[10px] uppercase tracking-wider text-gray-300">Docs</span>
+function renderMobileNavLink(label: string, href: string, active: boolean, external = false): string {
+  const target = external ? ` target="_blank" rel="noreferrer"` : "";
+  const classes = active
+    ? "border-dark-700 bg-dark-800 text-white"
+    : "border-transparent text-gray-300";
+
+  return `<a class="block border px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-400 ${classes}" href="${href}"${target}>${escapeHtml(label)}</a>`;
+}
+
+function renderMobileHeader(context: RenderContext, activeKey: string | null, docs: DocMeta[]): string {
+  const docsBySlug = new Map(docs.map((doc) => [doc.slug, doc]));
+  const docLinks = DOC_DEFINITIONS
+    .filter((definition) => docsBySlug.has(definition.slug))
+    .map((definition) =>
+      renderMobileNavLink(definition.navLabel, context.docHref(definition.slug), activeKey === definition.slug),
+    )
+    .join("\n");
+
+  return `<div class="mb-8 border-b border-dark-800 pb-4 md:hidden">
+  <div class="flex items-center justify-between">
+    <a class="flex items-center gap-2 text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-400" href="${context.introHref}">
+      ${icon("logo", "h-5 w-5")}
+      <span class="font-semibold">oh-my-pr</span>
+    </a>
+    <span class="border border-dark-700 px-2 py-1 text-[10px] uppercase tracking-wider text-gray-300">Docs</span>
+  </div>
+  <details class="mt-4">
+    <summary class="cursor-pointer border border-dark-700 px-3 py-2 text-sm text-gray-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-400">Browse docs</summary>
+    <nav class="mt-2 grid gap-1">
+      ${renderMobileNavLink("Introduction", context.introHref, activeKey === "intro")}
+      ${docLinks}
+      ${renderMobileNavLink("API Reference", API_REFERENCE_URL, false, true)}
+      ${renderMobileNavLink("Source Code", REPO_URL, false, true)}
+    </nav>
+  </details>
 </div>`;
 }
 
@@ -367,8 +367,8 @@ function renderBottomNav(bottomNav?: BottomNav): string {
   }
 
   return `<div class="mx-auto mt-16 flex w-full max-w-4xl justify-end px-6 pb-8 sm:px-8">
-  <a class="flex w-full min-w-[220px] flex-col items-end rounded-lg bg-brand-500 px-6 py-4 text-white shadow-lg shadow-brand-500/20 transition-colors hover:bg-brand-400 sm:w-auto" href="${bottomNav.href}">
-    <span class="mb-1 text-xs font-semibold uppercase tracking-wider text-blue-100">${escapeHtml(bottomNav.label)}</span>
+  <a class="flex w-full min-w-[220px] flex-col items-end border border-dark-700 bg-dark-800 px-6 py-4 text-white transition-colors hover:bg-dark-700 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-400 focus-visible:ring-offset-1 focus-visible:ring-offset-dark-900 sm:w-auto" href="${bottomNav.href}">
+    <span class="mb-1 text-xs font-semibold uppercase tracking-wider text-gray-300">${escapeHtml(bottomNav.label)}</span>
     <span class="flex items-center gap-2 text-lg font-medium">
       ${escapeHtml(bottomNav.title)}
       <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5l7 7m0 0-7 7m7-7H3" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
@@ -388,11 +388,11 @@ function renderShell(
 ): string {
   return `${buildHead(title, description, context.stylesheetHref)}
 <body class="antialiased text-sm">
-  <div class="flex h-screen overflow-hidden">
+  <div class="flex min-h-screen md:h-screen md:overflow-hidden">
     ${renderSidebar(context, activeKey, docs)}
-    <main class="relative h-screen w-full flex-1 overflow-y-auto" data-purpose="main-content">
+    <main class="relative min-h-screen w-full flex-1 md:h-screen md:overflow-y-auto" data-purpose="main-content">
       <div class="mx-auto max-w-4xl px-6 py-10 pb-28 sm:px-8 sm:py-12 sm:pb-32">
-        ${renderMobileHeader(context)}
+        ${renderMobileHeader(context, activeKey, docs)}
         ${bodyContent}
       </div>
       ${renderBottomNav(bottomNav)}
@@ -421,12 +421,14 @@ function renderLandingCard(context: RenderContext, docs: DocMeta[], slug: string
 
   const description = definition.fallbackDescription;
 
-  return `<a class="group block rounded-xl border border-dark-700 bg-dark-800/50 p-6 transition-colors hover:bg-dark-800" href="${context.docHref(doc.slug)}">
-  <div class="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-dark-700 text-brand-400 transition-colors group-hover:text-blue-300">
-    ${icon(definition.icon, "h-5 w-5")}
-  </div>
-  <h3 class="mb-2 text-lg font-semibold text-white">${escapeHtml(definition.cardTitle)}</h3>
-  <p class="text-sm leading-relaxed text-gray-400">${escapeHtml(description)}</p>
+  return `<a class="group flex items-start justify-between gap-6 border-b border-dark-700 py-4 transition-colors hover:border-brand-500/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-400" href="${context.docHref(doc.slug)}">
+  <span class="min-w-0">
+    <span class="block text-base font-semibold text-white">${escapeHtml(definition.cardTitle)}</span>
+    <span class="mt-1 block text-sm leading-relaxed text-gray-400">${escapeHtml(description)}</span>
+  </span>
+  <span class="mt-1 shrink-0 text-gray-500 transition-colors group-hover:text-brand-400">
+    ${icon(definition.icon, "h-4 w-4")}
+  </span>
 </a>`;
 }
 
@@ -440,62 +442,30 @@ function renderLandingPage(context: RenderContext, docs: DocMeta[]): string {
   const questionsDescription =
     questionsDefinition?.fallbackDescription ?? questionsDoc?.description ?? "Ask natural-language questions about any pull request and get AI-powered answers.";
 
-  const bodyContent = `<header class="mb-12">
-  <div class="mb-6 inline-flex items-center gap-2 rounded-full bg-blue-500/10 px-3 py-1 text-sm font-medium text-blue-400">
-    ${icon("plus", "h-4 w-4")}
-    <span>Welcome to oh-my-pr</span>
-  </div>
-  <h1 class="mb-6 text-4xl font-bold tracking-tight text-white sm:text-5xl">The Autonomous PR Babysitter</h1>
+  const bodyContent = `<header class="mb-12 border-b border-dark-800 pb-10">
+  <h1 class="mb-5 text-4xl font-bold tracking-normal text-white sm:text-5xl">oh-my-pr</h1>
   <p class="mb-8 max-w-3xl text-lg leading-relaxed text-gray-400">
     oh-my-pr watches your GitHub repositories, triages review feedback, and dispatches local AI agents to fix code so you can focus on building instead of babysitting pull requests.
   </p>
 
-  <div class="mb-8 flex flex-wrap gap-3">
-    <span class="inline-flex items-center gap-1.5 rounded border border-dark-700 bg-dark-800 px-3 py-1 text-sm text-gray-300">
-      ${icon("github", "h-4 w-4 text-gray-500")}
-      <span>Open Source (MIT)</span>
-    </span>
-    <span class="inline-flex items-center gap-1.5 rounded border border-dark-700 bg-dark-800 px-3 py-1 text-sm text-gray-300">
-      ${icon("server", "h-4 w-4 text-gray-500")}
-      <span>Runs Locally</span>
-    </span>
-    <span class="inline-flex items-center gap-1.5 rounded border border-dark-700 bg-dark-800 px-3 py-1 text-sm text-gray-300">
-      ${icon("quickstart", "h-4 w-4 text-gray-500")}
-      <span>Claude Code &amp; OpenAI Codex</span>
-    </span>
-    <span class="inline-flex items-center gap-1.5 rounded border border-dark-700 bg-dark-800 px-3 py-1 text-sm text-gray-300">
-      ${icon("shield", "h-4 w-4 text-green-500")}
-      <span>Node.js 22+</span>
-    </span>
-  </div>
-
-  <div class="flex gap-3 rounded-lg border border-blue-500/20 bg-blue-900/20 p-4">
-    ${icon("info", "mt-0.5 h-5 w-5 flex-shrink-0 text-blue-400")}
-    <p class="text-sm leading-relaxed text-blue-100/80">
-      oh-my-pr runs entirely on your machine. Your code never leaves your environment. Get started in under 2 minutes with our
-      <a class="text-blue-400 hover:underline" href="${context.docHref("getting-started")}">quickstart guide</a>.
-    </p>
-  </div>
+  <dl class="grid gap-3 border-y border-dark-800 py-4 text-sm text-gray-300 sm:grid-cols-3">
+    <div><dt class="text-gray-500">Runtime</dt><dd>Local Node.js 22+</dd></div>
+    <div><dt class="text-gray-500">Agents</dt><dd>Claude Code and OpenAI Codex</dd></div>
+    <div><dt class="text-gray-500">License</dt><dd>MIT open source</dd></div>
+  </dl>
 </header>
 
 <section class="mb-16">
-  <h2 class="mb-4 text-2xl font-bold text-white">Get Started</h2>
-  <p class="mb-6 text-gray-400">Everything you need to set up oh-my-pr and start automating your PR workflow.</p>
-  <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+  <h2 class="mb-3 text-2xl font-bold text-white">Start here</h2>
+  <p class="mb-4 text-gray-400">Set up the watcher, connect a repository, and let the dashboard show only what needs attention.</p>
+  <div class="border-t border-dark-700">
     ${getStartedCards}
   </div>
 </section>
 
 <section class="mb-16">
-  <h2 class="mb-4 text-2xl font-bold text-white">Installation</h2>
-  <div class="overflow-hidden rounded-xl border border-dark-700 bg-dark-800">
-    <div class="flex items-center gap-2 border-b border-dark-700 bg-dark-800 px-4 py-2">
-      <div class="flex gap-1.5">
-        <div class="h-3 w-3 rounded-full bg-dark-700"></div>
-        <div class="h-3 w-3 rounded-full bg-dark-700"></div>
-        <div class="h-3 w-3 rounded-full bg-dark-700"></div>
-      </div>
-    </div>
+  <h2 class="mb-4 text-2xl font-bold text-white">Install</h2>
+  <div class="overflow-hidden border border-dark-700 bg-dark-800">
     <div class="overflow-x-auto p-6">
       <pre class="font-mono text-sm leading-relaxed text-gray-300"><code><span class="text-gray-500"># Install globally from npm</span>
 <span class="text-white">npm install -g oh-my-pr</span>
@@ -508,11 +478,11 @@ function renderLandingPage(context: RenderContext, docs: DocMeta[]): string {
 
 <section class="mb-16">
   <h2 class="mb-4 text-2xl font-bold text-white">How It Works</h2>
-  <p class="mb-8 text-gray-400">oh-my-pr follows a six-step autonomous workflow to handle PR feedback end-to-end.</p>
+  <p class="mb-6 text-gray-400">The system keeps a narrow loop: observe, classify, dispatch, verify, and push.</p>
   <div class="space-y-0">
     ${WORKFLOW_STEPS.map(
       (step) => `<div class="flex gap-6 border-b border-dark-700/50 py-6">
-      <div class="w-8 flex-shrink-0 text-3xl font-bold text-blue-500/50">${step.number}</div>
+      <div class="w-8 flex-shrink-0 text-2xl font-bold text-gray-600">${step.number}</div>
       <div>
         <h3 class="mb-1 text-lg font-semibold text-white">${escapeHtml(step.title)}</h3>
         <p class="text-gray-400">${escapeHtml(step.description)}</p>
@@ -524,21 +494,21 @@ function renderLandingPage(context: RenderContext, docs: DocMeta[]): string {
 
 <section class="mb-8">
   <h2 class="mb-4 text-2xl font-bold text-white">Explore</h2>
-  <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-    <a class="group block rounded-xl border border-dark-700 bg-dark-800/50 p-6 transition-colors hover:bg-dark-800" href="${context.docHref("pr-questions")}">
-      <div class="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-dark-700 text-brand-400 transition-colors group-hover:text-blue-300">
-        ${icon("chat", "h-5 w-5")}
-      </div>
-      <h3 class="mb-2 text-lg font-semibold text-white">${escapeHtml(questionsDefinition?.cardTitle ?? "PR Q&A")}</h3>
-      <p class="text-sm leading-relaxed text-gray-400">${escapeHtml(questionsDescription)}</p>
+  <div class="border-t border-dark-700">
+    <a class="group flex items-start justify-between gap-6 border-b border-dark-700 py-4 transition-colors hover:border-brand-500/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-400" href="${context.docHref("pr-questions")}">
+      <span class="min-w-0">
+        <span class="block text-base font-semibold text-white">${escapeHtml(questionsDefinition?.cardTitle ?? "PR Q&A")}</span>
+        <span class="mt-1 block text-sm leading-relaxed text-gray-400">${escapeHtml(questionsDescription)}</span>
+      </span>
+      <span class="mt-1 shrink-0 text-gray-500 transition-colors group-hover:text-brand-400">${icon("chat", "h-4 w-4")}</span>
     </a>
 
-    <a class="group block rounded-xl border border-dark-700 bg-dark-800/50 p-6 transition-colors hover:bg-dark-800" href="${API_REFERENCE_URL}" target="_blank" rel="noreferrer">
-      <div class="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-dark-700 text-brand-400 transition-colors group-hover:text-blue-300">
-        ${icon("doc", "h-5 w-5")}
-      </div>
-      <h3 class="mb-2 text-lg font-semibold text-white">API Reference</h3>
-      <p class="text-sm leading-relaxed text-gray-400">Full REST API documentation for programmatic control of oh-my-pr.</p>
+    <a class="group flex items-start justify-between gap-6 border-b border-dark-700 py-4 transition-colors hover:border-brand-500/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-400" href="${API_REFERENCE_URL}" target="_blank" rel="noreferrer">
+      <span class="min-w-0">
+        <span class="block text-base font-semibold text-white">API Reference</span>
+        <span class="mt-1 block text-sm leading-relaxed text-gray-400">Full REST API documentation for programmatic control of oh-my-pr.</span>
+      </span>
+      <span class="mt-1 shrink-0 text-gray-500 transition-colors group-hover:text-brand-400">${icon("doc", "h-4 w-4")}</span>
     </a>
   </div>
 </section>`;
@@ -566,15 +536,11 @@ function stripLeadingTitleAndDescription(html: string): string {
 
 function renderDocPage(context: RenderContext, doc: DocMeta, docs: DocMeta[], renderedHtml: string): string {
   const bodyContent = `<header class="mb-12 border-b border-dark-800/60 pb-8">
-  <a class="mb-6 inline-flex items-center gap-2 text-sm text-gray-400 transition-colors hover:text-gray-200" href="${context.docsIndexHref}">
+  <a class="mb-6 inline-flex items-center gap-2 text-sm text-gray-400 transition-colors hover:text-gray-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-400" href="${context.docsIndexHref}">
     <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 19l-7-7 7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
     <span>All docs</span>
   </a>
-  <div class="mb-5 inline-flex items-center gap-2 rounded-full bg-blue-500/10 px-3 py-1 text-sm font-medium text-blue-400">
-    ${icon("doc", "h-4 w-4")}
-    <span>Documentation</span>
-  </div>
-  <h1 class="text-4xl font-bold tracking-tight text-white sm:text-5xl">${escapeHtml(doc.title)}</h1>
+  <h1 class="text-4xl font-bold tracking-normal text-white sm:text-5xl">${escapeHtml(doc.title)}</h1>
   <p class="mt-4 max-w-3xl text-lg leading-relaxed text-gray-400">${escapeHtml(doc.description)}</p>
 </header>
 
@@ -646,12 +612,30 @@ function rewriteLinks(html: string): string {
   return html.replace(/href="\.\/([^"]+)\.md"/g, 'href="./$1.html"');
 }
 
+function compileDocsStyles(): void {
+  execFileSync(
+    TAILWIND_BIN,
+    [
+      "-c",
+      TAILWIND_CONFIG,
+      "-i",
+      TAILWIND_INPUT,
+      "-o",
+      path.join(DOCS_DIR, SHARED_STYLESHEET),
+      "--minify",
+    ],
+    {
+      cwd: ROOT_DIR,
+      stdio: "inherit",
+    },
+  );
+}
+
 async function main() {
   if (fs.existsSync(OUT_DIR)) {
     fs.rmSync(OUT_DIR, { recursive: true });
   }
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  fs.copyFileSync(path.join(DOCS_DIR, SHARED_STYLESHEET), path.join(OUT_DIR, SHARED_STYLESHEET));
 
   const files = fs.readdirSync(DOCS_DIR).filter((file) => file.endsWith(".md"));
 
@@ -701,6 +685,8 @@ async function main() {
 
   fs.writeFileSync(path.join(OUT_DIR, "index.html"), renderLandingPage(siteContext, docs));
   fs.writeFileSync(ROOT_DOCS_INDEX, renderLandingPage(rootContext, docs));
+  compileDocsStyles();
+  fs.copyFileSync(path.join(DOCS_DIR, SHARED_STYLESHEET), path.join(OUT_DIR, SHARED_STYLESHEET));
 
   console.log(`  ✓ _site/index.html`);
   console.log(`  ✓ docs/index.html`);

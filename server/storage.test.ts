@@ -252,6 +252,50 @@ test("SqliteStorage reloads config and PR state from the same root", async () =>
   second.close();
 });
 
+test("SqliteStorage getLogs returns the latest 500 entries in chronological order", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codefactory-storage-"));
+  const storage = new SqliteStorage(root);
+  const db = createRawDatabase(root);
+
+  try {
+    const pr = await storage.addPR({
+      number: 107,
+      title: "Long log stream",
+      repo: "alex-morgan-o/lolodex",
+      branch: "feature/logs",
+      author: "octocat",
+      url: "https://github.com/alex-morgan-o/lolodex/pull/107",
+      status: "watching",
+      feedbackItems: [],
+      accepted: 0,
+      rejected: 0,
+      flagged: 0,
+      testsPassed: null,
+      lintPassed: null,
+      lastChecked: null,
+    });
+
+    const insert = db.prepare(`
+      INSERT INTO logs (id, pr_id, timestamp, level, phase, message, metadata_json)
+      VALUES (?, ?, ?, 'info', 'agent', ?, NULL)
+    `);
+
+    for (let i = 1; i <= 501; i += 1) {
+      const timestamp = new Date(Date.UTC(2026, 3, 1, 12, 0, i)).toISOString();
+      insert.run(`log-${i}`, pr.id, timestamp, `Log ${i}`);
+    }
+
+    const logs = await storage.getLogs(pr.id);
+
+    assert.equal(logs.length, 500);
+    assert.equal(logs[0]?.message, "Log 2");
+    assert.equal(logs[499]?.message, "Log 501");
+  } finally {
+    db.close();
+    storage.close();
+  }
+});
+
 test("SqliteStorage returns defaults when singleton rows are missing", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codefactory-storage-"));
   const storage = new SqliteStorage(root);
