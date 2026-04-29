@@ -7,7 +7,7 @@ export function formatFeedbackStatusLabel(status: FeedbackStatus): string {
 export function getFeedbackStatusBadgeClass(status: FeedbackStatus): string {
   if (status === "in_progress") return "border-foreground text-foreground animate-pulse";
   if (status === "failed") return "border-destructive text-destructive";
-  if (status === "warning") return "border-yellow-500 text-yellow-500";
+  if (status === "warning") return "border-warning-border bg-warning-muted text-warning-foreground";
   if (status === "resolved") return "border-foreground/20 text-muted-foreground";
   if (status === "rejected") return "border-foreground/20 text-muted-foreground line-through";
   if (status === "flagged") return "border-foreground/40 text-foreground/60";

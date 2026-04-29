@@ -47,7 +47,7 @@ function nowIso(now: Date): string {
   return now.toISOString();
 }
 
-function isTerminalState(state: HealingSessionState): boolean {
+export function isTerminalHealingState(state: HealingSessionState): boolean {
   return TERMINAL_STATES.includes(state);
 }
 
@@ -82,7 +82,7 @@ export class CIHealingManager {
 
   async getActiveSessionsForPr(prId: string): Promise<HealingSession[]> {
     const sessions = await this.storage.listHealingSessions({ prId });
-    return sessions.filter((session) => !isTerminalState(session.state));
+    return sessions.filter((session) => !isTerminalHealingState(session.state));
   }
 
   async ensureSessionForHead(input: CIHealingSessionInput): Promise<HealingSession> {
@@ -154,7 +154,7 @@ export class CIHealingManager {
       mergedUpdates.attemptCount = session.attemptCount + 1;
     }
 
-    if (isTerminalState(nextState)) {
+    if (isTerminalHealingState(nextState)) {
       mergedUpdates.endedAt = updates.endedAt ?? nowIso(this.now());
     }
 
@@ -248,7 +248,7 @@ export class CIHealingManager {
     let reason: string | null = null;
     let canRetry = true;
 
-    if (isTerminalState(session.state)) {
+    if (isTerminalHealingState(session.state)) {
       canRetry = false;
       reason = `session is ${session.state}`;
     } else if (session.state === "cooldown" && cooldownRemainingMs > 0) {

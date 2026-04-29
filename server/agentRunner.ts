@@ -213,12 +213,14 @@ export async function runCommand(
   options?: {
     cwd?: string;
     timeoutMs?: number;
+    killTimeoutMs?: number;
     env?: NodeJS.ProcessEnv;
     onStdoutChunk?: (chunk: string) => void;
     onStderrChunk?: (chunk: string) => void;
   },
 ): Promise<CommandResult> {
   const timeoutMs = options?.timeoutMs ?? 120000;
+  const killTimeoutMs = options?.killTimeoutMs ?? 5000;
 
   return new Promise((resolve) => {
     const child = spawn(command, args, {
@@ -230,10 +232,22 @@ export async function runCommand(
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let killTimer: NodeJS.Timeout | null = null;
+
+    const clearTimers = () => {
+      clearTimeout(timer);
+      if (killTimer) {
+        clearTimeout(killTimer);
+        killTimer = null;
+      }
+    };
 
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
+      killTimer = setTimeout(() => {
+        child.kill("SIGKILL");
+      }, killTimeoutMs);
     }, timeoutMs);
 
     child.stdout.on("data", (chunk: Buffer) => {
@@ -249,7 +263,7 @@ export async function runCommand(
     });
 
     child.on("close", (code, signal) => {
-      clearTimeout(timer);
+      clearTimers();
       const stderrParts = [stderr.trim()];
       if (timedOut) {
         stderrParts.push(`Command timed out after ${timeoutMs}ms`);
@@ -267,7 +281,7 @@ export async function runCommand(
     });
 
     child.on("error", (err) => {
-      clearTimeout(timer);
+      clearTimers();
       resolve({
         stdout,
         stderr: `${stderr}\n${err.message}`.trim(),
@@ -275,4 +289,16 @@ export async function runCommand(
       });
     });
   });
+}
+
+export function summarizeCommandResult(result: CommandResult, fallback: string): string {
+  const MAX_CHARS = 2_000;
+  const details = (result.stderr || result.stdout).trim();
+  const summary = details ? `${fallback}: ${details}` : fallback;
+
+  if (summary.length <= MAX_CHARS) {
+    return summary;
+  }
+
+  return `${summary.slice(0, MAX_CHARS - "... (truncated)".length)}... (truncated)`;
 }

@@ -122,6 +122,7 @@ export interface IStorage {
   }): Promise<BackgroundJob | undefined>;
   heartbeatBackgroundJob(id: string, leaseToken: string, heartbeatAt: string, leaseExpiresAt: string): Promise<BackgroundJob | undefined>;
   completeBackgroundJob(id: string, leaseToken: string, completedAt: string): Promise<BackgroundJob | undefined>;
+  retryBackgroundJob(id: string, leaseToken: string, error: string, availableAt: string, updatedAt: string): Promise<BackgroundJob | undefined>;
   failBackgroundJob(id: string, leaseToken: string, error: string, completedAt: string): Promise<BackgroundJob | undefined>;
   cancelBackgroundJob(id: string, leaseToken: string, error: string | null, completedAt: string): Promise<BackgroundJob | undefined>;
   requeueExpiredBackgroundJobs(now: string): Promise<number>;

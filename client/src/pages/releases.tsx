@@ -79,8 +79,9 @@ function CopyButton({ text }: { text: string }) {
 
   return (
     <button
+      type="button"
       onClick={handleCopy}
-      className="border border-border px-2 py-0.5 text-[11px] uppercase tracking-wider text-muted-foreground hover:border-foreground hover:text-foreground"
+      className="border border-border px-2 py-0.5 text-[11px] uppercase tracking-wider text-muted-foreground hover:border-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
     >
       {copied ? "copied" : "copy"}
     </button>
@@ -107,12 +108,16 @@ function ReleaseRunCard({
   const shouldShowEmptyDetails =
     !hasDetails
     && isTerminalStatus(run.status);
+  const detailsId = `release-run-${run.id}-details`;
 
   return (
     <div className="border border-border">
       <button
-        className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-muted/30"
+        type="button"
+        className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
         onClick={() => setExpanded((prev) => !prev)}
+        aria-expanded={expanded}
+        aria-controls={detailsId}
       >
         <div className="flex min-w-0 items-center gap-3">
           <StatusBadge status={run.status} />
@@ -131,15 +136,15 @@ function ReleaseRunCard({
         </div>
         <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
           <span>{formatDateTime(run.createdAt)}</span>
-          <span>{expanded ? "▲" : "▼"}</span>
+          <span>{expanded ? "Hide" : "Show"}</span>
         </div>
       </button>
 
       {expanded && (
-        <div className="border-t border-border px-4 pb-4 pt-3">
+        <div id={detailsId} className="border-t border-border px-4 pb-4 pt-3">
           <div className="mb-3 text-[12px] text-muted-foreground">
             Trigger PR:{" "}
-            <a href={run.triggerPrUrl} target="_blank" rel="noreferrer noopener" className="underline underline-offset-2">
+            <a href={run.triggerPrUrl} target="_blank" rel="noreferrer noopener" className="underline underline-offset-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background">
               #{run.triggerPrNumber} {run.triggerPrTitle}
             </a>
           </div>
@@ -173,7 +178,7 @@ function ReleaseRunCard({
                     <span className="truncate">
                       #{pr.number} {pr.title}
                     </span>
-                    <a href={pr.url} target="_blank" rel="noreferrer noopener" className="text-muted-foreground hover:text-foreground">
+                    <a href={pr.url} target="_blank" rel="noreferrer noopener" className="text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background">
                       open
                     </a>
                   </div>
@@ -206,16 +211,17 @@ function ReleaseRunCard({
                 href={run.githubReleaseUrl}
                 target="_blank"
                 rel="noreferrer noopener"
-                className="border border-border px-2 py-1 text-[11px] uppercase tracking-wider text-muted-foreground hover:text-foreground"
+                className="border border-border px-2 py-1 text-[11px] uppercase tracking-wider text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
               >
                 open release
               </a>
             )}
             {run.status === "error" && (
               <button
+                type="button"
                 onClick={() => onRetry(run.id)}
                 disabled={retryPending}
-                className="border border-border px-2 py-1 text-[11px] uppercase tracking-wider text-muted-foreground hover:text-foreground disabled:opacity-50"
+                className="border border-border px-2 py-1 text-[11px] uppercase tracking-wider text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-50"
               >
                 retry
               </button>
@@ -257,7 +263,7 @@ export default function Releases() {
   });
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div className="flex min-h-screen flex-col">
       <UpdateBanner />
       <header className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
         <div className="flex items-center gap-3">
@@ -273,13 +279,13 @@ export default function Releases() {
         <div className="flex items-center gap-3">
           <Link
             href="/settings"
-            className="text-[11px] text-muted-foreground hover:text-foreground focus:outline-none"
+            className="text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
           >
             settings
           </Link>
           <Link
             href="/"
-            className="text-[11px] text-muted-foreground hover:text-foreground focus:outline-none"
+            className="text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
           >
             ← back to dashboard
           </Link>
