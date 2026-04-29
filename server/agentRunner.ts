@@ -18,8 +18,6 @@ export type CommandResult = {
   timedOut?: boolean;
 };
 
-const COMMAND_RESULT_SUMMARY_MAX_CHARS = 2_000;
-
 const AGENTS: CodingAgent[] = ["codex", "claude"];
 
 export async function commandExists(command: string): Promise<boolean> {
@@ -294,12 +292,13 @@ export async function runCommand(
 }
 
 export function summarizeCommandResult(result: CommandResult, fallback: string): string {
+  const MAX_CHARS = 2_000;
   const details = (result.stderr || result.stdout).trim();
   const summary = details ? `${fallback}: ${details}` : fallback;
 
-  if (summary.length <= COMMAND_RESULT_SUMMARY_MAX_CHARS) {
+  if (summary.length <= MAX_CHARS) {
     return summary;
   }
 
-  return `${summary.slice(0, COMMAND_RESULT_SUMMARY_MAX_CHARS - "... (truncated)".length)}... (truncated)`;
+  return `${summary.slice(0, MAX_CHARS - "... (truncated)".length)}... (truncated)`;
 }

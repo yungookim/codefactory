@@ -1470,28 +1470,19 @@ export class SqliteStorage implements IStorage {
   }
 
   async getLogs(prId?: string): Promise<LogEntry[]> {
-    const rows = prId
-      ? this.all<LogRow>(`
-          SELECT id, pr_id, run_id, timestamp, level, phase, message, metadata_json
-          FROM (
-            SELECT id, pr_id, run_id, timestamp, level, phase, message, metadata_json
-            FROM logs
-            WHERE pr_id = ?
-            ORDER BY datetime(timestamp) DESC, rowid DESC
-            LIMIT 500
-          )
-          ORDER BY datetime(timestamp) ASC
-        `, prId)
-      : this.all<LogRow>(`
-          SELECT id, pr_id, run_id, timestamp, level, phase, message, metadata_json
-          FROM (
-            SELECT id, pr_id, run_id, timestamp, level, phase, message, metadata_json
-            FROM logs
-            ORDER BY datetime(timestamp) DESC, rowid DESC
-            LIMIT 500
-          )
-          ORDER BY datetime(timestamp) ASC
-        `);
+    const whereClause = prId ? "WHERE pr_id = ?" : "";
+    const sql = `
+      SELECT id, pr_id, run_id, timestamp, level, phase, message, metadata_json
+      FROM (
+        SELECT id, pr_id, run_id, timestamp, level, phase, message, metadata_json
+        FROM logs
+        ${whereClause}
+        ORDER BY datetime(timestamp) DESC, rowid DESC
+        LIMIT 500
+      )
+      ORDER BY datetime(timestamp) ASC
+    `;
+    const rows = prId ? this.all<LogRow>(sql, prId) : this.all<LogRow>(sql);
 
     return rows.map((row) => ({
       id: row.id,
