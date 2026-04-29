@@ -1172,8 +1172,8 @@ export default function Dashboard() {
       <OnboardingPanel />
 
       <div className="flex flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
-        <div className="flex max-h-[42vh] w-full shrink-0 flex-col border-b border-border lg:max-h-none lg:w-80 lg:border-b-0 lg:border-r">
-          <div className="flex border-b border-border">
+        <div className="flex max-h-[42vh] w-full shrink-0 flex-col overflow-y-auto border-b border-border lg:max-h-none lg:min-h-0 lg:w-80 lg:border-b-0 lg:border-r">
+          <div className="sticky top-0 z-10 flex shrink-0 border-b border-border bg-background">
             <button
               type="button"
               onClick={() => setViewMode("active")}
@@ -1386,7 +1386,7 @@ export default function Dashboard() {
               </div>
             </>
           )}
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1">
             {(isArchived ? isLoadingArchived : isLoading) ? (
               <div className="p-4 text-[12px] text-muted-foreground">Loading...</div>
             ) : displayedPRs.length === 0 ? (
