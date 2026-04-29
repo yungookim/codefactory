@@ -20,6 +20,7 @@ import { addPRSchema, askQuestionSchema } from "@shared/schema";
 import type { IStorage } from "./storage";
 import { getDefaultStorage } from "./storage";
 import { PRBabysitter } from "./babysitter";
+import { detectAgentUnavailability, type AgentUnavailabilityKind } from "./agentRunner";
 import { applyEvaluationDecision, applyFlagDecision } from "./feedbackLifecycle";
 import { applyManualFeedbackDecision } from "./manualFeedback";
 import { createBackgroundJobHandlers } from "./backgroundJobHandlers";
@@ -168,60 +169,84 @@ function readJobStringPayload(job: BackgroundJob, key: string): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
-type AgentAuthFailure = {
-  agentLabel: "Claude" | "Codex";
+type AgentLabel = "Claude" | "Codex";
+
+type AgentAvailabilityFailure = {
+  agentLabel: AgentLabel;
+  kind: AgentUnavailabilityKind;
   fixSteps: string[];
 };
 
-const AGENT_AUTH_FIX_STEPS: Record<AgentAuthFailure["agentLabel"], string[]> = {
-  Claude: [
-    "Run `claude auth login` on this machine.",
-    "Restart oh-my-pr if it was launched before you refreshed credentials.",
-    "Rerun the babysitter for this PR.",
-  ],
-  Codex: [
-    "Run `codex login` on this machine.",
-    "Restart oh-my-pr if it was launched before you refreshed credentials.",
-    "Rerun the babysitter for this PR.",
-  ],
+const AGENT_FIX_STEPS: Record<AgentLabel, Record<AgentUnavailabilityKind, string[]>> = {
+  Claude: {
+    auth: [
+      "Run `claude auth login` on this machine.",
+      "Restart oh-my-pr if it was launched before you refreshed credentials.",
+      "Rerun the babysitter for this PR.",
+    ],
+    cli_missing: [
+      "Install the Claude Code CLI on this machine.",
+      "Restart oh-my-pr after installing.",
+      "Rerun the babysitter for this PR.",
+    ],
+  },
+  Codex: {
+    auth: [
+      "Run `codex login` on this machine.",
+      "Restart oh-my-pr if it was launched before you refreshed credentials.",
+      "Rerun the babysitter for this PR.",
+    ],
+    cli_missing: [
+      "Install the Codex CLI on this machine.",
+      "Restart oh-my-pr after installing.",
+      "Rerun the babysitter for this PR.",
+    ],
+  },
 };
 
-function agentAuthFailure(agentLabel: AgentAuthFailure["agentLabel"]): AgentAuthFailure {
+function buildAgentAvailabilityFailure(
+  agentLabel: AgentLabel,
+  kind: AgentUnavailabilityKind,
+): AgentAvailabilityFailure {
   return {
     agentLabel,
-    fixSteps: AGENT_AUTH_FIX_STEPS[agentLabel],
+    kind,
+    fixSteps: AGENT_FIX_STEPS[agentLabel][kind],
   };
 }
 
-function classifyAgentAuthFailure(job: BackgroundJob): AgentAuthFailure | null {
+function detectAgentLabelFromError(error: string): AgentLabel | null {
+  const lower = error.toLowerCase();
+  if (lower.includes("claude evaluation failed") || lower.includes("claude apply failed")) {
+    return "Claude";
+  }
+  if (lower.includes("codex evaluation failed") || lower.includes("codex apply failed")) {
+    return "Codex";
+  }
+  return null;
+}
+
+function classifyAgentAvailabilityFailure(job: BackgroundJob): AgentAvailabilityFailure | null {
   if (job.kind !== "babysit_pr" || !job.lastError) {
     return null;
   }
 
-  const error = job.lastError.toLowerCase();
-  const isAuthFailure = error.includes("failed to authenticate")
-    || error.includes("authentication_error")
-    || error.includes("invalid authentication credentials")
-    || error.includes("api error: 401");
-  if (!isAuthFailure) {
+  const kind = detectAgentUnavailability(job.lastError);
+  if (!kind) {
     return null;
   }
 
-  if (error.includes("claude evaluation failed")) {
-    return agentAuthFailure("Claude");
-  }
-
-  if (error.includes("codex evaluation failed")) {
-    return agentAuthFailure("Codex");
+  const agentLabel = detectAgentLabelFromError(job.lastError);
+  if (agentLabel) {
+    return buildAgentAvailabilityFailure(agentLabel, kind);
   }
 
   const preferredAgent = readJobStringPayload(job, "preferredAgent");
-  if (error.includes("agent apply failed") && preferredAgent === "claude") {
-    return agentAuthFailure("Claude");
+  if (preferredAgent === "claude") {
+    return buildAgentAvailabilityFailure("Claude", kind);
   }
-
-  if (error.includes("agent apply failed") && preferredAgent === "codex") {
-    return agentAuthFailure("Codex");
+  if (preferredAgent === "codex") {
+    return buildAgentAvailabilityFailure("Codex", kind);
   }
 
   return null;
@@ -509,8 +534,8 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
   };
 
   const mapOperatorWarning = (job: BackgroundJob, context: ActivityDescriptionContext): OperatorWarning | null => {
-    const authFailure = classifyAgentAuthFailure(job);
-    if (!authFailure) {
+    const failure = classifyAgentAvailabilityFailure(job);
+    if (!failure) {
       return null;
     }
 
@@ -519,12 +544,17 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
       return null;
     }
 
+    const titleSuffix = failure.kind === "auth" ? "authentication failed" : "CLI not installed";
+    const reason = failure.kind === "auth"
+      ? "local agent credentials are invalid or expired"
+      : "the agent CLI is not installed on this machine";
+
     return {
       id: job.id,
       severity: "warning",
-      title: `${authFailure.agentLabel} authentication failed`,
-      message: `Babysitter could not run ${authFailure.agentLabel} for PR #${pr.number} in ${pr.repo} because local agent credentials are invalid or expired.`,
-      fixSteps: authFailure.fixSteps,
+      title: `${failure.agentLabel} ${titleSuffix}`,
+      message: `Babysitter could not run ${failure.agentLabel} for PR #${pr.number} in ${pr.repo} because ${reason}.`,
+      fixSteps: failure.fixSteps,
       targetId: job.targetId,
       targetUrl: pr.url,
       createdAt: job.createdAt,
@@ -621,7 +651,7 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
         storage.listBackgroundJobs({ kind: "babysit_pr", status: "failed" }),
       ]);
 
-      const failedWarningJobs = failedJobs.filter((job) => classifyAgentAuthFailure(job));
+      const failedWarningJobs = failedJobs.filter((job) => classifyAgentAvailabilityFailure(job));
       const descriptionContext = await buildActivityDescriptionContext([...leasedJobs, ...queuedJobs, ...failedWarningJobs]);
       const inProgress = leasedJobs.map((job) => mapActivityJob(job, descriptionContext));
       const queued = queuedJobs.map((job) => mapActivityJob(job, descriptionContext));

@@ -4,6 +4,7 @@ import type { IStorage } from "./storage";
 import {
   applyFixesWithAgent,
   evaluateFixNecessityWithAgent,
+  isAgentUnavailableError,
   resolveAgent,
   runCommand,
   type CodingAgent,
@@ -806,19 +807,9 @@ function getNextCodingAgent(agent: CodingAgent): CodingAgent {
   return agent === "claude" ? "codex" : "claude";
 }
 
-function isCodingAgentUnavailableError(error: unknown): boolean {
-  const message = summarizeUnknownError(error).toLowerCase();
-  return message.includes("failed to authenticate")
-    || message.includes("authentication_error")
-    || message.includes("invalid authentication credentials")
-    || message.includes("api error: 401")
-    || message.includes("cli is not installed")
-    || message.includes("enoent");
-}
-
 function formatConciseFailureReason(message: string): string {
   const detail = message
-    .replace(/^Agent apply failed \(\d+\):\s*/i, "")
+    .replace(/^(?:claude|codex|agent) apply failed \(\d+\):\s*/i, "")
     .replace(/^Agent failed to resolve merge conflicts \(\d+\):\s*/i, "")
     .replace(/^Error:\s*/i, "");
   const firstLine = detail
@@ -1836,7 +1827,7 @@ export class PRBabysitter {
           !config.fallbackToNextCodingAgent
           || forcedResolvedAgent
           || agentFallbackUsed
-          || !isCodingAgentUnavailableError(error)
+          || !isAgentUnavailableError(error)
         ) {
           return false;
         }
@@ -2043,7 +2034,7 @@ export class PRBabysitter {
           return result;
         }
 
-        const error = new Error(`Agent apply failed (${result.code}): ${result.stderr || result.stdout}`);
+        const error = new Error(`${agent} apply failed (${result.code}): ${result.stderr || result.stdout}`);
         if (!(await tryFallbackToNextAgent(error, phase))) {
           return result;
         }
@@ -2713,7 +2704,7 @@ export class PRBabysitter {
               // Update status replies on failure.
               const failureReason = formatConciseFailureReason(applyResult.stderr || applyResult.stdout);
               await Promise.all(effectiveCommentTasks.map((task) => updateItemStatus(task.id, STATUS_MESSAGES.agentFailed(failureReason))));
-              throw new Error(`Agent apply failed (${applyResult.code}): ${applyResult.stderr || applyResult.stdout}`);
+              throw new Error(`${agent} apply failed (${applyResult.code}): ${applyResult.stderr || applyResult.stdout}`);
             }
 
             // Update status replies: agent succeeded.

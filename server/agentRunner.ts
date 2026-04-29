@@ -20,6 +20,36 @@ export type CommandResult = {
 
 const AGENTS: CodingAgent[] = ["codex", "claude"];
 
+export type AgentUnavailabilityKind = "auth" | "cli_missing";
+
+const AGENT_AUTH_PATTERNS = [
+  "failed to authenticate",
+  "authentication_error",
+  "invalid authentication credentials",
+  "api error: 401",
+];
+
+const AGENT_CLI_MISSING_PATTERNS = [
+  "cli is not installed",
+  "enoent",
+];
+
+export function detectAgentUnavailability(message: string): AgentUnavailabilityKind | null {
+  const lower = message.toLowerCase();
+  if (AGENT_AUTH_PATTERNS.some((needle) => lower.includes(needle))) {
+    return "auth";
+  }
+  if (AGENT_CLI_MISSING_PATTERNS.some((needle) => lower.includes(needle))) {
+    return "cli_missing";
+  }
+  return null;
+}
+
+export function isAgentUnavailableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return detectAgentUnavailability(message) !== null;
+}
+
 export async function commandExists(command: string): Promise<boolean> {
   const result = await runCommand("which", [command], {
     timeoutMs: 4000,
