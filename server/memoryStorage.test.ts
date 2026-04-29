@@ -418,6 +418,7 @@ describe("MemStorage", () => {
     it("returns default config initially", async () => {
       const config = await storage.getConfig();
       assert.equal(config.codingAgent, DEFAULT_CONFIG.codingAgent);
+      assert.equal(config.fallbackToNextCodingAgent, DEFAULT_CONFIG.fallbackToNextCodingAgent);
       assert.equal(config.maxTurns, DEFAULT_CONFIG.maxTurns);
       assert.equal(config.autoCreateReleases, DEFAULT_CONFIG.autoCreateReleases);
       assert.equal(config.autoUpdateDocs, DEFAULT_CONFIG.autoUpdateDocs);
@@ -440,6 +441,7 @@ describe("MemStorage", () => {
       assert.equal(updated.maxTurns, 25);
       // Other fields preserved
       assert.equal(updated.codingAgent, "claude");
+      assert.equal(updated.fallbackToNextCodingAgent, false);
       assert.equal(updated.autoUpdateDocs, true);
       assert.equal(updated.includeRepositoryLinksInGitHubComments, true);
       assert.equal(updated.autoCreateReleases, true);

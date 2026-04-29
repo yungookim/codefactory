@@ -3733,6 +3733,199 @@ test("resumeInterruptedRuns enqueues babysit_pr jobs when a background scheduler
   assert.equal(jobs[0].payload.preferredAgent, "codex");
 });
 
+test("runQueuedBabysitPR rejects when evaluation auth fails after recording the run failure", async () => {
+  const storage = new MemStorage();
+  const existingItem = makeFeedbackItem();
+  const pr = await storage.addPR({
+    number: 106,
+    title: "Verbose PR",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "watching",
+    feedbackItems: [existingItem],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    makeWatcherGitHubService({
+      fetchFeedbackItemsForPR: async () => [existingItem],
+      fetchPullSummary: async () => makePullSummary(pr),
+      listFailingStatuses: async () => [],
+    }),
+    {
+      resolveAgent: async () => "claude",
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async () => {
+        throw new Error("claude evaluation failed (1): Failed to authenticate. API Error: 401 Invalid authentication credentials");
+      },
+      applyFixesWithAgent: async () => {
+        throw new Error("agent should not run fixes after auth failure");
+      },
+      runCommand: makeGitRunCommand(),
+    },
+  );
+
+  await assert.rejects(
+    () => babysitter.runQueuedBabysitPR(pr.id, "claude"),
+    /claude evaluation failed.*Invalid authentication credentials/,
+  );
+
+  const [run] = await storage.listAgentRuns({ prId: pr.id });
+  assert.equal(run?.status, "failed");
+  assert.match(run?.lastError ?? "", /Invalid authentication credentials/);
+
+  const updated = await storage.getPR(pr.id);
+  assert.equal(updated?.status, "error");
+});
+
+test("runQueuedBabysitPR falls back to the next coding agent when enabled", async () => {
+  const storage = new MemStorage();
+  await storage.updateConfig({
+    fallbackToNextCodingAgent: true,
+    autoUpdateDocs: false,
+  });
+  const existingItem = makeFeedbackItem();
+  const pr = await storage.addPR({
+    number: 106,
+    title: "Verbose PR",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "watching",
+    feedbackItems: [existingItem],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+  const evaluatedAgents: string[] = [];
+
+  const babysitter = new PRBabysitter(
+    storage,
+    makeWatcherGitHubService({
+      fetchFeedbackItemsForPR: async () => [existingItem],
+      fetchPullSummary: async () => makePullSummary(pr),
+      listFailingStatuses: async () => [],
+    }),
+    {
+      resolveAgent: async (agent) => agent,
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async ({ agent }) => {
+        evaluatedAgents.push(agent);
+        if (agent === "claude") {
+          throw new Error("claude evaluation failed (1): Failed to authenticate. API Error: 401 Invalid authentication credentials");
+        }
+        return { needsFix: false, reason: "No code change needed" };
+      },
+      applyFixesWithAgent: async () => {
+        throw new Error("agent should not run fixes after fallback rejects the item");
+      },
+      runCommand: makeGitRunCommand(),
+    },
+  );
+
+  await babysitter.runQueuedBabysitPR(pr.id, "claude");
+
+  assert.deepEqual(evaluatedAgents, ["claude", "codex"]);
+  const [run] = await storage.listAgentRuns({ prId: pr.id });
+  assert.equal(run?.status, "completed");
+  assert.equal(run?.resolvedAgent, "codex");
+
+  const updated = await storage.getPR(pr.id);
+  assert.equal(updated?.status, "watching");
+  assert.equal(updated?.feedbackItems[0]?.status, "rejected");
+
+  const logs = await storage.getLogs(pr.id);
+  assert.ok(logs.some((log) => log.level === "warn" && log.message.includes("Falling back from claude to codex")));
+});
+
+test("runQueuedBabysitPR falls back during agent apply when enabled", async () => {
+  const storage = new MemStorage();
+  await storage.updateConfig({
+    fallbackToNextCodingAgent: true,
+    autoUpdateDocs: false,
+  });
+  const pr = await storage.addPR({
+    number: 106,
+    title: "Verbose PR",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+  const appliedAgents: string[] = [];
+  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "codefactory-home-"));
+  process.env.CODEFACTORY_HOME = worktreeRoot;
+
+  try {
+    const babysitter = new PRBabysitter(
+      storage,
+      makeWatcherGitHubService({
+        fetchPullSummary: async () => makePullSummary(pr),
+        listFailingStatuses: async () => [{
+          context: "build",
+          description: "TypeScript compilation failed",
+          targetUrl: "https://github.com/octo/example/actions/runs/1",
+        }],
+      }),
+      {
+        resolveAgent: async (agent) => agent,
+        ciPollIntervalMs: 0,
+        evaluateFixNecessityWithAgent: async () => ({
+          needsFix: true,
+          reason: "Build failure needs a code change",
+        }),
+        applyFixesWithAgent: async ({ agent }) => {
+          appliedAgents.push(agent);
+          if (agent === "claude") {
+            return {
+              code: 1,
+              stdout: "",
+              stderr: "Failed to authenticate. API Error: 401 Invalid authentication credentials",
+            };
+          }
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        runCommand: makeGitRunCommand({
+          localHeadSha: "def456",
+          remoteHeadSha: "def456",
+        }),
+      },
+    );
+
+    await babysitter.runQueuedBabysitPR(pr.id, "claude");
+  } finally {
+    delete process.env.CODEFACTORY_HOME;
+  }
+
+  assert.deepEqual(appliedAgents, ["claude", "codex"]);
+  const [run] = await storage.listAgentRuns({ prId: pr.id });
+  assert.equal(run?.status, "completed");
+  assert.equal(run?.resolvedAgent, "codex");
+
+  const logs = await storage.getLogs(pr.id);
+  assert.ok(logs.some((log) => log.level === "warn" && log.message.includes("Falling back from claude to codex")));
+});
+
 test("babysitPR resolves lingering review threads without reposting an existing audit trail", async () => {
   const storage = new MemStorage();
   await storage.updateConfig({ autoUpdateDocs: false });

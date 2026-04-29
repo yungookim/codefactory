@@ -7,6 +7,7 @@ import {
   applyFixesWithAgent,
   checkAgentHealth,
   evaluateFixNecessityWithAgent,
+  isAgentUnavailableError,
   resolveAgent,
   runCommand,
   type AgentHealthResult,
@@ -833,9 +834,13 @@ function summarizeUnknownError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function getNextCodingAgent(agent: CodingAgent): CodingAgent {
+  return agent === "claude" ? "codex" : "claude";
+}
+
 function formatConciseFailureReason(message: string): string {
   const detail = message
-    .replace(/^Agent apply failed \(\d+\):\s*/i, "")
+    .replace(/^(?:claude|codex|agent) apply failed \(\d+\):\s*/i, "")
     .replace(/^Agent failed to resolve merge conflicts \(\d+\):\s*/i, "")
     .replace(/^Error:\s*/i, "");
   const firstLine = detail
@@ -1037,6 +1042,7 @@ export class PRBabysitter {
     if (!interruptedRun) {
       await this.babysitPR(prId, preferredAgent, {
         allowDuringDrain: true,
+        rethrowOnFailure: true,
       });
       return;
     }
@@ -1057,6 +1063,7 @@ export class PRBabysitter {
       });
       await this.babysitPR(prId, preferredAgent, {
         allowDuringDrain: true,
+        rethrowOnFailure: true,
       });
       return;
     }
@@ -1068,6 +1075,7 @@ export class PRBabysitter {
       forceResolvedAgent: interruptedRun.resolvedAgent,
       replayInitialHeadSha: interruptedRun.initialHeadSha,
       allowDuringDrain: true,
+      rethrowOnFailure: true,
     });
   }
 
@@ -1718,6 +1726,7 @@ export class PRBabysitter {
       forceResolvedAgent?: CodingAgent | null;
       replayInitialHeadSha?: string | null;
       allowDuringDrain?: boolean;
+      rethrowOnFailure?: boolean;
     },
   ): Promise<void> {
     const runtimeState = await this.storage.getRuntimeState();
@@ -2006,7 +2015,9 @@ export class PRBabysitter {
         logStart: true,
         phase: "sync",
       });
-      const agent = forcedResolvedAgent || (await this.runtime.resolveAgent(preferredAgent));
+      let agent = forcedResolvedAgent || (await this.runtime.resolveAgent(preferredAgent, {
+        allowFallback: config.fallbackToNextCodingAgent,
+      }));
       if (agent !== selectedAgent) {
         await this.ensureAgentHealthy(agent, [pr.id]);
       }
@@ -2022,6 +2033,88 @@ export class PRBabysitter {
       await queueLog(pr.id, "info", `Resolved coding agent to ${agent}`, {
         phase: "run",
       });
+
+      let agentFallbackUsed = false;
+      if (!forcedResolvedAgent && config.fallbackToNextCodingAgent && agent !== preferredAgent) {
+        agentFallbackUsed = true;
+        const reason = `Configured coding agent ${preferredAgent} CLI is not installed`;
+        await queueLog(pr.id, "warn", `Falling back from ${preferredAgent} to ${agent} because ${preferredAgent} is not working: ${reason}`, {
+          phase: "run",
+          metadata: {
+            failedAgent: preferredAgent,
+            fallbackAgent: agent,
+          },
+        });
+        await updateRunRecord({
+          metadata: {
+            ...(runRecord.metadata ?? {}),
+            fallbackFromAgent: preferredAgent,
+            fallbackReason: reason,
+          },
+        });
+      }
+      const tryFallbackToNextAgent = async (error: unknown, phase: string): Promise<boolean> => {
+        if (
+          !config.fallbackToNextCodingAgent
+          || forcedResolvedAgent
+          || agentFallbackUsed
+          || !isAgentUnavailableError(error)
+        ) {
+          return false;
+        }
+
+        const failedAgent = agent;
+        const fallbackAgent = getNextCodingAgent(failedAgent);
+        let resolvedFallback: CodingAgent;
+        try {
+          resolvedFallback = await this.runtime.resolveAgent(fallbackAgent, { allowFallback: false });
+        } catch {
+          return false;
+        }
+
+        agentFallbackUsed = true;
+        agent = resolvedFallback;
+        const reason = summarizeUnknownError(error);
+        await queueLog(pr.id, "warn", `Falling back from ${failedAgent} to ${agent} because ${failedAgent} is not working: ${reason}`, {
+          phase,
+          metadata: {
+            failedAgent,
+            fallbackAgent: agent,
+          },
+        });
+        await updateRunRecord({
+          resolvedAgent: agent,
+          metadata: {
+            ...(runRecord.metadata ?? {}),
+            fallbackFromAgent: failedAgent,
+            fallbackReason: reason,
+          },
+        });
+        return true;
+      };
+
+      const evaluateWithCurrentAgent = async (params: {
+        cwd: string;
+        prompt: string;
+        phase: string;
+      }) => {
+        try {
+          return await this.runtime.evaluateFixNecessityWithAgent({
+            agent,
+            cwd: params.cwd,
+            prompt: params.prompt,
+          });
+        } catch (error) {
+          if (await tryFallbackToNextAgent(error, params.phase)) {
+            return this.runtime.evaluateFixNecessityWithAgent({
+              agent,
+              cwd: params.cwd,
+              prompt: params.prompt,
+            });
+          }
+          throw error;
+        }
+      };
 
       const octokit = await this.github.buildOctokit(config);
       const parsedPr: ParsedPRUrl = {
@@ -2166,6 +2259,39 @@ export class PRBabysitter {
         }
       };
 
+      const applyWithCurrentAgent = async (
+        params: Omit<Parameters<typeof applyFixesWithAgent>[0], "agent"> & {
+          phase: string;
+          onFallback?: (fallbackAgent: CodingAgent) => Promise<void>;
+        },
+      ) => {
+        const { phase, onFallback, ...agentParams } = params;
+        const result = await this.runtime.applyFixesWithAgent({
+          agent,
+          ...agentParams,
+        });
+        if (result.code === 0) {
+          return result;
+        }
+
+        const error = new Error(`${agent} apply failed (${result.code}): ${result.stderr || result.stdout}`);
+        if (!(await tryFallbackToNextAgent(error, phase))) {
+          return result;
+        }
+
+        await onFallback?.(agent);
+        await queueLog(pr.id, "info", `Launching ${agent} after fallback`, {
+          phase,
+          metadata: { agent, prompt: params.prompt },
+        });
+        await postAgentCommandComment(agent, params.prompt);
+
+        return this.runtime.applyFixesWithAgent({
+          agent,
+          ...agentParams,
+        });
+      };
+
       const pendingComments = pr.feedbackItems.filter((item) => item.status === "pending");
       await queueLog(pr.id, "info", `Evaluating ${pendingComments.length} pending feedback item(s)`, {
         phase: "evaluate.comments",
@@ -2215,10 +2341,10 @@ export class PRBabysitter {
           metadata: { feedbackId: item.id, agent, prompt: evalPrompt },
         });
 
-        const evaluation = await this.runtime.evaluateFixNecessityWithAgent({
-          agent,
+        const evaluation = await evaluateWithCurrentAgent({
           cwd: process.cwd(),
           prompt: evalPrompt,
+          phase: "evaluate.comments",
         });
 
         const updated = applyEvaluationDecision(item, evaluation.needsFix, evaluation.reason);
@@ -2294,10 +2420,10 @@ export class PRBabysitter {
             metadata: { context: status.context, agent, prompt: statusEvalPrompt },
           });
 
-          const evaluation = await this.runtime.evaluateFixNecessityWithAgent({
-            agent,
+          const evaluation = await evaluateWithCurrentAgent({
             cwd: process.cwd(),
             prompt: statusEvalPrompt,
+            phase: "evaluate.status",
           });
 
           if (evaluation.needsFix) {
@@ -2609,10 +2735,10 @@ export class PRBabysitter {
                 },
               });
 
-              const docsEvaluation = await this.runtime.evaluateFixNecessityWithAgent({
-                agent,
+              const docsEvaluation = await evaluateWithCurrentAgent({
                 cwd: worktreePath,
                 prompt: docsPrompt,
+                phase: "evaluate.docs",
               });
 
               const docsAssessment = {
@@ -2740,13 +2866,13 @@ export class PRBabysitter {
 
               await postAgentCommandComment(agent, conflictPrompt);
 
-              const conflictResult = await this.runtime.applyFixesWithAgent({
-                agent,
+              const conflictResult = await applyWithCurrentAgent({
                 cwd: worktreePath,
                 prompt: conflictPrompt,
                 env: conflictAgentEnv,
                 onStdoutChunk: conflictStdout.onChunk,
                 onStderrChunk: conflictStderr.onChunk,
+                phase: "conflict.agent",
               });
               await conflictStdout.flush();
               await conflictStderr.flush();
@@ -2849,13 +2975,17 @@ export class PRBabysitter {
             const agentRunningStatus = STATUS_MESSAGES.agentRunning(agent);
             await Promise.all(effectiveCommentTasks.map((task) => updateItemStatus(task.id, agentRunningStatus)));
 
-            const applyResult = await this.runtime.applyFixesWithAgent({
-              agent,
+            const applyResult = await applyWithCurrentAgent({
               cwd: worktreePath,
               prompt: fixPrompt,
               env: agentEnv,
               onStdoutChunk: agentStdout.onChunk,
               onStderrChunk: agentStderr.onChunk,
+              phase: "agent",
+              onFallback: async (fallbackAgent) => {
+                const fallbackStatus = STATUS_MESSAGES.agentRunning(fallbackAgent);
+                await Promise.all(effectiveCommentTasks.map((task) => updateItemStatus(task.id, fallbackStatus)));
+              },
             });
             await agentStdout.flush();
             await agentStderr.flush();
@@ -2864,7 +2994,7 @@ export class PRBabysitter {
               // Update status replies on failure.
               const failureReason = formatConciseFailureReason(applyResult.stderr || applyResult.stdout);
               await Promise.all(effectiveCommentTasks.map((task) => updateItemStatus(task.id, STATUS_MESSAGES.agentFailed(failureReason))));
-              throw new Error(`Agent apply failed (${applyResult.code}): ${failureReason}`);
+              throw new Error(`${agent} apply failed (${applyResult.code}): ${failureReason}`);
             }
 
             // Update status replies: agent succeeded.
@@ -3470,6 +3600,9 @@ export class PRBabysitter {
         }
       }
       console.error("Babysitter failure", error);
+      if (options?.rethrowOnFailure) {
+        throw error;
+      }
     } finally {
       await logQueue;
       this.inProgress.delete(prId);

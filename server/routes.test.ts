@@ -442,6 +442,73 @@ test("GET /api/activities batches PR activity metadata", async () => {
   }
 });
 
+test("GET /api/activities warns when a babysitter job fails from agent authentication", async () => {
+  const harness = await createHarness();
+  const pr = await seedPR(harness.storage, {
+    title: "fix auth warning",
+    repo: "acme/widgets",
+    number: 77,
+    url: "https://github.com/acme/widgets/pull/77",
+  });
+
+  try {
+    const job = await harness.storage.enqueueBackgroundJob({
+      kind: "babysit_pr",
+      targetId: pr.id,
+      dedupeKey: `babysit_pr:${pr.id}`,
+      payload: { preferredAgent: "claude" },
+      availableAt: "2026-04-26T10:00:00.000Z",
+    });
+    await harness.storage.claimNextBackgroundJob({
+      workerId: "worker-1",
+      leaseToken: "lease-1",
+      leaseExpiresAt: "2026-04-26T10:10:00.000Z",
+      now: "2026-04-26T10:01:00.000Z",
+    });
+    await harness.storage.failBackgroundJob(
+      job.id,
+      "lease-1",
+      "claude evaluation failed (1): Failed to authenticate. API Error: 401 {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"Invalid authentication credentials\"}}",
+      "2026-04-26T10:02:00.000Z",
+    );
+    await harness.storage.updatePR(pr.id, {
+      status: "error",
+      lastChecked: "2026-04-26T10:02:00.000Z",
+    });
+
+    const response = await fetch(`${harness.baseUrl}/api/activities`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as {
+      warnings?: Array<{
+        id: string;
+        severity: string;
+        title: string;
+        message: string;
+        fixSteps: string[];
+        targetId: string;
+        targetUrl: string | null;
+      }>;
+    };
+
+    assert.ok(Array.isArray(body.warnings));
+    assert.equal(body.warnings.length, 1);
+    assert.equal(body.warnings[0]?.id, job.id);
+    assert.equal(body.warnings[0]?.severity, "warning");
+    assert.equal(body.warnings[0]?.title, "Claude authentication failed");
+    assert.match(body.warnings[0]?.message ?? "", /PR #77/);
+    assert.match(body.warnings[0]?.message ?? "", /acme\/widgets/);
+    assert.deepEqual(body.warnings[0]?.fixSteps, [
+      "Run `claude auth login` on this machine.",
+      "Restart oh-my-pr if it was launched before you refreshed credentials.",
+      "Rerun the babysitter for this PR.",
+    ]);
+    assert.equal(body.warnings[0]?.targetId, pr.id);
+    assert.equal(body.warnings[0]?.targetUrl, pr.url);
+  } finally {
+    await harness.close();
+  }
+});
+
 test("POST /api/repos/release queues a manual release run for the requested repo", async () => {
   const storage = new MemStorage();
   const harness = await createHarness(storage, {

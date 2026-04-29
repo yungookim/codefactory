@@ -6,7 +6,7 @@ import { Activity as ActivityIcon } from "lucide-react";
 import { queryClient, apiRequest, fetchJson } from "@/lib/queryClient";
 import { getRepoHref } from "@/lib/repoHref";
 import { getRepoAddControlsOpen } from "@/lib/repoAddControls";
-import type { ActivityItem, ActivitySnapshot, Config, FeedbackItem, HealingSession, LogEntry, PR, PRQuestion, ReleaseRun, WatchedRepo } from "@shared/schema";
+import type { ActivityItem, ActivitySnapshot, Config, FeedbackItem, HealingSession, LogEntry, OperatorWarning, PR, PRQuestion, ReleaseRun, WatchedRepo } from "@shared/schema";
 import { OnboardingPanel } from "@/components/OnboardingPanel";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import {
@@ -74,6 +74,7 @@ const EMPTY_ACTIVITY_SNAPSHOT: ActivitySnapshot = {
   failed: [],
   inProgress: [],
   queued: [],
+  warnings: [],
   generatedAt: "",
 };
 const MAX_VISIBLE_LOGS = 200;
@@ -295,6 +296,47 @@ function ActivityMenu({ activities }: { activities: ActivitySnapshot }) {
         />
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+function OperatorWarningsBanner({ warnings }: { warnings: OperatorWarning[] }) {
+  if (warnings.length === 0) {
+    return null;
+  }
+
+  return (
+    <div
+      className="shrink-0 border-b border-yellow-600/50 bg-yellow-500/10 px-4 py-3"
+      data-testid="operator-warnings-banner"
+    >
+      <div className="space-y-3">
+        {warnings.map((warning) => (
+          <div key={warning.id} data-testid={`operator-warning-${warning.id}`}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-[12px] font-medium uppercase tracking-wider text-yellow-600">
+                {warning.title}
+              </div>
+              {warning.targetUrl && (
+                <a
+                  href={warning.targetUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="border border-yellow-600/60 px-2 py-0.5 text-[10px] uppercase tracking-wider text-yellow-600 transition-colors hover:bg-yellow-600 hover:text-background"
+                >
+                  Open PR
+                </a>
+              )}
+            </div>
+            <div className="mt-1 text-[12px] text-foreground/80">{warning.message}</div>
+            <ol className="mt-2 list-decimal space-y-1 pl-4 text-[11px] text-muted-foreground">
+              {warning.fixSteps.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1170,6 +1212,7 @@ export default function Dashboard() {
       </header>
 
       <OnboardingPanel />
+      <OperatorWarningsBanner warnings={activities.warnings} />
 
       <div className="flex flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
         <div className="flex max-h-[42vh] w-full shrink-0 flex-col overflow-y-auto border-b border-border lg:max-h-none lg:min-h-0 lg:w-80 lg:border-b-0 lg:border-r">

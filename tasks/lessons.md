@@ -1,5 +1,21 @@
 # Lessons Learned
 
+## 2026-04-28 - Make agent recovery opt-in and settings-visible
+- Pattern: A request to surface coding-agent auth failures expanded into fallback behavior, and the user had to specify that fallback should be configurable, settings-visible, and disabled by default.
+- Rule: When adding automatic recovery behavior that can switch execution tools or change operator intent, make it opt-in unless the user explicitly asks for always-on automation.
+- Prevention checklist:
+  - Thread new recovery toggles through defaults, persistence, settings UI, and any config APIs that expose the same setting family.
+  - Add enabled and disabled regression coverage so the default path preserves existing behavior.
+  - Keep fallback logs explicit about which tool failed, which tool took over, and why.
+
+## 2026-04-28 - Surface async automation auth failures with repair steps
+- Pattern: A babysitter agent-auth failure was only visible in server logs/background failure text, leaving the dashboard without a clear warning or recovery path.
+- Rule: When background automation can fail from missing or expired local credentials, expose a durable user-facing warning that names the failing tool and gives concrete fix commands.
+- Prevention checklist:
+  - Check whether async job failures are visible after the triggering request has already succeeded.
+  - Keep failed-job warnings tied to active error state so stale failures disappear after a successful rerun.
+  - Include exact local repair steps for agent and GitHub auth failures instead of only surfacing raw stack traces.
+
 ## 2026-04-28 - Mark log-analysis fixes with a future evaluation baseline
 - Pattern: After implementing fixes from a log-analysis report, the user had to ask me to record the run so the next log review can tell whether the fixes actually worked.
 - Rule: When closing work driven by log analysis, add a tracked post-fix run marker that records the branch, PR, commit, verification evidence, evaluation boundary, and expected future log signals.

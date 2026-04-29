@@ -91,6 +91,26 @@ export default function Settings() {
                   <option value="claude">claude</option>
                 </select>
               </div>
+              <label className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm">Fallback to next coding agent</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    If the configured agent cannot start or authenticate, retry the babysitter run with the other local agent.
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={config?.fallbackToNextCodingAgent ?? false}
+                  onChange={(e) =>
+                    updateConfigMutation.mutate({
+                      fallbackToNextCodingAgent: e.target.checked,
+                    })
+                  }
+                  disabled={updateConfigMutation.isPending}
+                  className="mt-1 h-4 w-4 accent-foreground"
+                  data-testid="checkbox-fallback-to-next-coding-agent"
+                />
+              </label>
             </div>
           </section>
 

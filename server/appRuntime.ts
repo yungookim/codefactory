@@ -7,6 +7,7 @@ import type {
   DeploymentHealingSession,
   HealingSession,
   LogEntry,
+  OperatorWarning,
   PR,
   PRQuestion,
   ReleaseRun,
@@ -19,6 +20,7 @@ import { addPRSchema, askQuestionSchema } from "@shared/schema";
 import type { IStorage } from "./storage";
 import { getDefaultStorage } from "./storage";
 import { PRBabysitter } from "./babysitter";
+import { detectAgentUnavailability, type AgentUnavailabilityKind } from "./agentRunner";
 import { applyEvaluationDecision, applyFlagDecision } from "./feedbackLifecycle";
 import { applyManualFeedbackDecision } from "./manualFeedback";
 import { createBackgroundJobHandlers } from "./backgroundJobHandlers";
@@ -165,6 +167,89 @@ type ActivityDescriptionContext = {
 function readJobStringPayload(job: BackgroundJob, key: string): string | null {
   const value = job.payload[key];
   return typeof value === "string" && value.trim() ? value : null;
+}
+
+type AgentLabel = "Claude" | "Codex";
+
+type AgentAvailabilityFailure = {
+  agentLabel: AgentLabel;
+  kind: AgentUnavailabilityKind;
+  fixSteps: string[];
+};
+
+const AGENT_FIX_STEPS: Record<AgentLabel, Record<AgentUnavailabilityKind, string[]>> = {
+  Claude: {
+    auth: [
+      "Run `claude auth login` on this machine.",
+      "Restart oh-my-pr if it was launched before you refreshed credentials.",
+      "Rerun the babysitter for this PR.",
+    ],
+    cli_missing: [
+      "Install the Claude Code CLI on this machine.",
+      "Restart oh-my-pr after installing.",
+      "Rerun the babysitter for this PR.",
+    ],
+  },
+  Codex: {
+    auth: [
+      "Run `codex login` on this machine.",
+      "Restart oh-my-pr if it was launched before you refreshed credentials.",
+      "Rerun the babysitter for this PR.",
+    ],
+    cli_missing: [
+      "Install the Codex CLI on this machine.",
+      "Restart oh-my-pr after installing.",
+      "Rerun the babysitter for this PR.",
+    ],
+  },
+};
+
+function buildAgentAvailabilityFailure(
+  agentLabel: AgentLabel,
+  kind: AgentUnavailabilityKind,
+): AgentAvailabilityFailure {
+  return {
+    agentLabel,
+    kind,
+    fixSteps: AGENT_FIX_STEPS[agentLabel][kind],
+  };
+}
+
+function detectAgentLabelFromError(error: string): AgentLabel | null {
+  const lower = error.toLowerCase();
+  if (lower.includes("claude evaluation failed") || lower.includes("claude apply failed")) {
+    return "Claude";
+  }
+  if (lower.includes("codex evaluation failed") || lower.includes("codex apply failed")) {
+    return "Codex";
+  }
+  return null;
+}
+
+function classifyAgentAvailabilityFailure(job: BackgroundJob): AgentAvailabilityFailure | null {
+  if (job.kind !== "babysit_pr" || !job.lastError) {
+    return null;
+  }
+
+  const kind = detectAgentUnavailability(job.lastError);
+  if (!kind) {
+    return null;
+  }
+
+  const agentLabel = detectAgentLabelFromError(job.lastError);
+  if (agentLabel) {
+    return buildAgentAvailabilityFailure(agentLabel, kind);
+  }
+
+  const preferredAgent = readJobStringPayload(job, "preferredAgent");
+  if (preferredAgent === "claude") {
+    return buildAgentAvailabilityFailure("Claude", kind);
+  }
+  if (preferredAgent === "codex") {
+    return buildAgentAvailabilityFailure("Codex", kind);
+  }
+
+  return null;
 }
 
 export function mapMergedPullsToReleaseSummaries(pulls: MergedPRSummary[]): ReleaseAgentPullSummary[] {
@@ -335,10 +420,6 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     const deploymentHealingTargets = new Set<string>();
 
     for (const job of jobs) {
-      if (readActivityPayload(job.payload)) {
-        continue;
-      }
-
       if (job.kind === "babysit_pr") {
         prIds.add(job.targetId);
       } else if (job.kind === "answer_pr_question") {
@@ -473,6 +554,35 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     };
   };
 
+  const mapOperatorWarning = (job: BackgroundJob, context: ActivityDescriptionContext): OperatorWarning | null => {
+    const failure = classifyAgentAvailabilityFailure(job);
+    if (!failure) {
+      return null;
+    }
+
+    const pr = context.prsById.get(job.targetId);
+    if (!pr || pr.status !== "error") {
+      return null;
+    }
+
+    const titleSuffix = failure.kind === "auth" ? "authentication failed" : "CLI not installed";
+    const reason = failure.kind === "auth"
+      ? "local agent credentials are invalid or expired"
+      : "the agent CLI is not installed on this machine";
+
+    return {
+      id: job.id,
+      severity: "warning",
+      title: `${failure.agentLabel} ${titleSuffix}`,
+      message: `Babysitter could not run ${failure.agentLabel} for PR #${pr.number} in ${pr.repo} because ${reason}.`,
+      fixSteps: failure.fixSteps,
+      targetId: job.targetId,
+      targetUrl: pr.url,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+    };
+  };
+
   const waitForBackgroundIdle = async (timeoutMs: number): Promise<boolean> => {
     const [dispatcherIdle, babysitterIdle, releaseIdle] = await Promise.all([
       backgroundJobDispatcher.waitForIdle(timeoutMs),
@@ -562,15 +672,22 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
         storage.listBackgroundJobs({ status: "queued" }),
       ]);
 
+      const failedWarningJobs = failedJobs.filter((job) => classifyAgentAvailabilityFailure(job));
       const descriptionContext = await buildActivityDescriptionContext([...failedJobs, ...leasedJobs, ...queuedJobs]);
       const failed = failedJobs.map((job) => mapActivityJob(job, descriptionContext));
       const inProgress = leasedJobs.map((job) => mapActivityJob(job, descriptionContext));
       const queued = queuedJobs.map((job) => mapActivityJob(job, descriptionContext));
+      const warnings = failedWarningJobs
+        .map((job) => mapOperatorWarning(job, descriptionContext))
+        .filter((warning): warning is OperatorWarning => Boolean(warning))
+        .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+        .slice(0, 5);
 
       return {
         failed,
         inProgress,
         queued,
+        warnings,
         generatedAt: new Date().toISOString(),
       };
     },

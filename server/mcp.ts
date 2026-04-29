@@ -310,7 +310,7 @@ const TOOLS: Tool[] = [
     description:
       "Partially update oh-my-pr configuration. All fields are optional; only provided " +
       "fields are changed. Available fields: githubTokens, githubToken (legacy), codingAgent, maxTurns, " +
-      "batchWindowMs, pollIntervalMs, maxChangesPerRun, autoResolveMergeConflicts, autoUpdateDocs, " +
+      "fallbackToNextCodingAgent, batchWindowMs, pollIntervalMs, maxChangesPerRun, autoResolveMergeConflicts, autoUpdateDocs, " +
       "includeRepositoryLinksInGitHubComments, " +
       "watchedRepos, trustedReviewers, ignoredBots.",
     inputSchema: {
@@ -319,6 +319,7 @@ const TOOLS: Tool[] = [
         githubTokens: { type: "array", items: { type: "string" } },
         githubToken: { type: "string" },
         codingAgent: { type: "string", enum: ["claude", "codex"] },
+        fallbackToNextCodingAgent: { type: "boolean" },
         maxTurns: { type: "number" },
         batchWindowMs: { type: "number" },
         pollIntervalMs: { type: "number" },

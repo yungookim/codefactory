@@ -186,10 +186,24 @@ export const activityItemSchema = z.object({
 });
 export type ActivityItem = z.infer<typeof activityItemSchema>;
 
+export const operatorWarningSchema = z.object({
+  id: z.string(),
+  severity: z.enum(["warning"]),
+  title: z.string(),
+  message: z.string(),
+  fixSteps: z.array(z.string()),
+  targetId: z.string(),
+  targetUrl: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type OperatorWarning = z.infer<typeof operatorWarningSchema>;
+
 export const activitySnapshotSchema = z.object({
   failed: z.array(activityItemSchema),
   inProgress: z.array(activityItemSchema),
   queued: z.array(activityItemSchema),
+  warnings: z.array(operatorWarningSchema),
   generatedAt: z.string(),
 });
 export type ActivitySnapshot = z.infer<typeof activitySnapshotSchema>;
@@ -426,6 +440,7 @@ export const configSchema = z.object({
   githubTokens: z.array(z.string()),
   githubToken: z.string().optional(),
   codingAgent: z.enum(["codex", "claude"]),
+  fallbackToNextCodingAgent: z.boolean(),
   maxTurns: z.number(),
   batchWindowMs: z.number(),
   pollIntervalMs: z.number(),
