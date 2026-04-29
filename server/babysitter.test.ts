@@ -456,7 +456,7 @@ test("syncAndBabysitTrackedRepos supersedes active healing sessions when archivi
   assert.ok(updatedSession?.endedAt);
 });
 
-test("syncAndBabysitTrackedRepos enqueues social changelog generation as a background job", async () => {
+test("syncAndBabysitTrackedRepos does not enqueue social changelog generation", async () => {
   const storage = new MemStorage();
   const backgroundJobQueue = new BackgroundJobQueue(storage);
 
@@ -480,16 +480,7 @@ test("syncAndBabysitTrackedRepos enqueues social changelog generation as a backg
 
   const babysitter = new PRBabysitter(
     storage,
-    makeWatcherGitHubService({
-      listMergedPullsToday: async () => Array.from({ length: 5 }, (_, index) => ({
-        number: index + 1,
-        title: `Merged PR ${index + 1}`,
-        url: `https://github.com/octo/example/pull/${index + 1}`,
-        author: "octocat",
-        repo: "octo/example",
-        mergedAt: `2026-03-28T1${index}:00:00.000Z`,
-      })),
-    }),
+    makeWatcherGitHubService(),
     {
       resolveAgent: async () => "codex",
       ciPollIntervalMs: 0,
@@ -504,19 +495,12 @@ test("syncAndBabysitTrackedRepos enqueues social changelog generation as a backg
   await babysitter.syncAndBabysitTrackedRepos();
 
   const changelogs = await storage.getSocialChangelogs();
-  assert.equal(changelogs.length, 1);
-  assert.equal(changelogs[0].triggerCount, 5);
-  assert.equal(changelogs[0].status, "generating");
+  assert.equal(changelogs.length, 0);
 
   const jobs = await storage.listBackgroundJobs({
     kind: "generate_social_changelog",
-    targetId: changelogs[0].id,
   });
-  assert.equal(jobs.length, 1);
-  assert.equal(jobs[0].status, "queued");
-  assert.equal(jobs[0].payload.activityLabel, "Generating social changelog");
-  assert.equal(jobs[0].payload.activityDetail, `${changelogs[0].date} - 5 merged PRs`);
-  assert.equal(jobs[0].payload.activityTargetUrl, null);
+  assert.equal(jobs.length, 0);
 });
 
 test("syncAndBabysitTrackedRepos enqueues babysit_pr jobs when a background scheduler is provided", async () => {

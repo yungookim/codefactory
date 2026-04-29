@@ -64,8 +64,8 @@ structured tool calls without writing a single line of HTTP client code.
 
 Most long-running runtime actions are **durable and queue-backed**. Repository
 sync, initial and manual babysit/apply runs, feedback retries, PR question
-answering, release processing, merge-triggered deployment healing, and social
-changelog generation are first persisted in SQLite and then claimed by a
+answering, release processing, and merge-triggered deployment healing are first
+persisted in SQLite and then claimed by a
 dispatcher with leases and heartbeats. Queued work survives process restarts;
 on startup, expired leases are re-queued, and interrupted babysitter runs are
 resumed from stored run context when possible.
@@ -706,11 +706,8 @@ APIs may still enqueue work that remains pending until drain mode is disabled.
 
 ### Social changelogs
 
-Social changelog generation is automatic and durable. When a merge-count
-milestone is reached, oh-my-pr creates a changelog row with
-`status: "generating"` and then fills in `content` from a queued background
-job. If the app restarts before completion, the queued job is reclaimed from
-SQLite.
+Social media changelog generation has been removed. These endpoints remain
+read-only compatibility surfaces for historical changelog rows.
 
 #### `GET /api/changelogs`
 
