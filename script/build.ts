@@ -84,7 +84,7 @@ async function buildServerEntry(
     banner:
       format === "esm"
         ? {
-            js: "import { createRequire as __esbuildCreateRequire } from 'module'; const require = __esbuildCreateRequire(import.meta.url);",
+            js: "import { createRequire as __esbuildCreateRequire } from 'node:module'; const require = __esbuildCreateRequire(import.meta.url);\n",
           }
         : undefined,
   });
