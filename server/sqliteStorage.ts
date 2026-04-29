@@ -1473,16 +1473,24 @@ export class SqliteStorage implements IStorage {
     const rows = prId
       ? this.all<LogRow>(`
           SELECT id, pr_id, run_id, timestamp, level, phase, message, metadata_json
-          FROM logs
-          WHERE pr_id = ?
+          FROM (
+            SELECT id, pr_id, run_id, timestamp, level, phase, message, metadata_json
+            FROM logs
+            WHERE pr_id = ?
+            ORDER BY datetime(timestamp) DESC, rowid DESC
+            LIMIT 500
+          )
           ORDER BY datetime(timestamp) ASC
-          LIMIT 500
         `, prId)
       : this.all<LogRow>(`
           SELECT id, pr_id, run_id, timestamp, level, phase, message, metadata_json
-          FROM logs
+          FROM (
+            SELECT id, pr_id, run_id, timestamp, level, phase, message, metadata_json
+            FROM logs
+            ORDER BY datetime(timestamp) DESC, rowid DESC
+            LIMIT 500
+          )
           ORDER BY datetime(timestamp) ASC
-          LIMIT 500
         `);
 
     return rows.map((row) => ({
@@ -2212,6 +2220,62 @@ export class SqliteStorage implements IStorage {
 
   async failBackgroundJob(id: string, leaseToken: string, error: string, completedAt: string): Promise<BackgroundJob | undefined> {
     return this.finalizeBackgroundJob(id, leaseToken, "failed", error, completedAt);
+  }
+
+  async retryBackgroundJob(
+    id: string,
+    leaseToken: string,
+    error: string,
+    availableAt: string,
+    updatedAt: string,
+  ): Promise<BackgroundJob | undefined> {
+    return this.withWriteTransaction(() => {
+      const current = this.get<BackgroundJobRow>(`
+        SELECT id, kind, target_id, dedupe_key, status, priority, available_at,
+               lease_owner, lease_token, lease_expires_at, heartbeat_at, attempt_count,
+               last_error, payload_json, created_at, updated_at, completed_at
+        FROM background_jobs
+        WHERE id = ? AND status = 'leased' AND lease_token = ?
+      `, id, leaseToken);
+
+      if (!current) {
+        return undefined;
+      }
+
+      const updated = applyBackgroundJobUpdate(this.parseBackgroundJobRow(current), {
+        status: "queued",
+        availableAt,
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        heartbeatAt: null,
+        lastError: error,
+        completedAt: null,
+        updatedAt,
+      });
+
+      this.run(`
+        UPDATE background_jobs
+        SET status = 'queued',
+            available_at = ?,
+            lease_owner = NULL,
+            lease_token = NULL,
+            lease_expires_at = NULL,
+            heartbeat_at = NULL,
+            last_error = ?,
+            completed_at = NULL,
+            updated_at = ?
+        WHERE id = ? AND status = 'leased' AND lease_token = ?
+      `,
+        updated.availableAt,
+        updated.lastError,
+        updated.updatedAt,
+        id,
+        leaseToken,
+      );
+
+      return updated;
+    });
   }
 
   async cancelBackgroundJob(

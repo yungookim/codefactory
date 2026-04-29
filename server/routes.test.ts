@@ -272,7 +272,7 @@ test("POST /api/repos/sync enqueues a durable sync_watched_repos job", async () 
   }
 });
 
-test("GET /api/activities lists in-progress and queued jobs", async () => {
+test("GET /api/activities lists failed, in-progress, and queued jobs", async () => {
   const harness = await createHarness();
   const pr = await seedPR(harness.storage, {
     title: "fix activity menu",
@@ -303,9 +303,40 @@ test("GET /api/activities lists in-progress and queued jobs", async () => {
       availableAt: "2026-04-26T10:02:00.000Z",
     });
 
+    const failedJob = await harness.storage.enqueueBackgroundJob({
+      kind: "answer_pr_question",
+      targetId: "question-1",
+      dedupeKey: "answer_pr_question:question-1",
+      payload: { prId: pr.id },
+      availableAt: "2026-04-26T10:03:00.000Z",
+    });
+    const claimedFailed = await harness.storage.claimNextBackgroundJob({
+      workerId: "worker-2",
+      leaseToken: "lease-2",
+      leaseExpiresAt: "2026-04-26T10:10:00.000Z",
+      now: "2026-04-26T10:03:30.000Z",
+      kinds: ["answer_pr_question"],
+    });
+    assert.equal(claimedFailed?.id, failedJob.id);
+    await harness.storage.failBackgroundJob(
+      failedJob.id,
+      "lease-2",
+      "question agent timed out",
+      "2026-04-26T10:04:00.000Z",
+    );
+
     const response = await fetch(`${harness.baseUrl}/api/activities`);
     assert.equal(response.status, 200);
     const body = await response.json() as {
+      failed: Array<{
+        id: string;
+        kind: string;
+        status: string;
+        label: string;
+        detail: string | null;
+        targetId: string;
+        lastError: string | null;
+      }>;
       inProgress: Array<{
         id: string;
         kind: string;
@@ -324,6 +355,15 @@ test("GET /api/activities lists in-progress and queued jobs", async () => {
         targetId: string;
       }>;
     };
+
+    assert.equal(body.failed.length, 1);
+    assert.equal(body.failed[0]?.id, failedJob.id);
+    assert.equal(body.failed[0]?.kind, "answer_pr_question");
+    assert.equal(body.failed[0]?.status, "failed");
+    assert.equal(body.failed[0]?.label, "Answering question for PR #77");
+    assert.equal(body.failed[0]?.detail, "acme/widgets - fix activity menu");
+    assert.equal(body.failed[0]?.targetId, "question-1");
+    assert.equal(body.failed[0]?.lastError, "question agent timed out");
 
     assert.equal(body.inProgress.length, 1);
     assert.equal(body.inProgress[0]?.id, runningJob.id);

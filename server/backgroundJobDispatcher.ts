@@ -23,6 +23,8 @@ export class BackgroundJobDispatcher {
   private readonly pollIntervalMs: number;
   private readonly leaseMs: number;
   private readonly heartbeatIntervalMs: number;
+  private readonly maxAttempts: number;
+  private readonly retryBackoffMs: number;
   private readonly now: () => Date;
   private readonly onError: (error: unknown) => void;
   private readonly activeJobs = new Map<string, Promise<void>>();
@@ -39,6 +41,8 @@ export class BackgroundJobDispatcher {
     pollIntervalMs?: number;
     leaseMs?: number;
     heartbeatIntervalMs?: number;
+    maxAttempts?: number;
+    retryBackoffMs?: number;
     now?: () => Date;
     onError?: (error: unknown) => void;
   }) {
@@ -50,6 +54,8 @@ export class BackgroundJobDispatcher {
     this.pollIntervalMs = params.pollIntervalMs ?? 1_000;
     this.leaseMs = params.leaseMs ?? 30_000;
     this.heartbeatIntervalMs = params.heartbeatIntervalMs ?? 10_000;
+    this.maxAttempts = Math.max(1, params.maxAttempts ?? 3);
+    this.retryBackoffMs = Math.max(0, params.retryBackoffMs ?? 30_000);
     this.now = params.now ?? (() => new Date());
     this.onError = params.onError ?? ((error) => {
       console.error("Background job dispatcher error", error);
@@ -198,12 +204,24 @@ export class BackgroundJobDispatcher {
               now: this.now(),
             });
           } else {
-            await this.queue.fail({
-              jobId: job.id,
-              leaseToken,
-              error: summarizeError(error),
-              now: this.now(),
-            });
+            const errorSummary = summarizeError(error);
+            const now = this.now();
+            if (job.attemptCount < this.maxAttempts) {
+              await this.queue.retry({
+                jobId: job.id,
+                leaseToken,
+                error: errorSummary,
+                now,
+                availableAt: new Date(now.getTime() + this.retryBackoffMs),
+              });
+            } else {
+              await this.queue.fail({
+                jobId: job.id,
+                leaseToken,
+                error: errorSummary,
+                now,
+              });
+            }
           }
         } catch (finalizeError) {
           this.onError(finalizeError);

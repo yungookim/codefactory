@@ -1,5 +1,5 @@
 import type { CodingAgent, CommandResult } from "./agentRunner";
-import { applyFixesWithAgent, runCommand } from "./agentRunner";
+import { applyFixesWithAgent, runCommand, summarizeCommandResult } from "./agentRunner";
 import { ensureRepoCache } from "./repoWorkspace";
 import type { DeploymentPlatform } from "@shared/schema";
 
@@ -133,6 +133,16 @@ export async function runDeploymentHealingRepair(
       prompt,
       env: input.env,
     });
+
+    if (agentResult.code !== 0) {
+      return {
+        accepted: false,
+        rejectionReason: summarizeCommandResult(agentResult, `agent failed (${agentResult.code})`),
+        summary: extractDeploymentHealingSummary(agentResult.stdout),
+        fixBranch,
+        agentResult,
+      };
+    }
 
     const logResult = await deps.runCommand(
       "git",

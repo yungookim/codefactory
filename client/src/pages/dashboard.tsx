@@ -71,6 +71,7 @@ const WATCH_SCOPE_OPTIONS = [
 ] as const;
 
 const EMPTY_ACTIVITY_SNAPSHOT: ActivitySnapshot = {
+  failed: [],
   inProgress: [],
   queued: [],
   generatedAt: "",
@@ -179,20 +180,29 @@ function WatchScopeControl({
 }
 
 function ActivityRow({ activity }: { activity: ActivityItem }) {
-  const timeLabel = activity.status === "in_progress"
+  const timeLabel = activity.status === "failed"
+    ? formatClock(activity.updatedAt)
+    : activity.status === "in_progress"
     ? formatClock(activity.startedAt) ?? formatClock(activity.updatedAt)
     : formatClock(activity.availableAt) ?? formatClock(activity.queuedAt);
   const content = (
     <div className="flex min-w-0 items-start gap-2 px-2 py-1.5 text-left">
       <span
         className={`mt-1.5 h-1.5 w-1.5 shrink-0 ${
-          activity.status === "in_progress" ? "animate-pulse bg-foreground" : "bg-muted-foreground"
+          activity.status === "failed"
+            ? "bg-destructive"
+            : activity.status === "in_progress"
+              ? "animate-pulse bg-foreground"
+              : "bg-muted-foreground"
         }`}
       />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[12px] leading-4 text-foreground">{activity.label}</span>
         {activity.detail && (
           <span className="block truncate text-[11px] leading-4 text-muted-foreground">{activity.detail}</span>
+        )}
+        {activity.status === "failed" && activity.lastError && (
+          <span className="block truncate text-[11px] leading-4 text-destructive">{activity.lastError}</span>
         )}
       </span>
       {timeLabel && (
@@ -243,9 +253,10 @@ function ActivitySection({
 }
 
 function ActivityMenu({ activities }: { activities: ActivitySnapshot }) {
+  const failedCount = activities.failed.length;
   const inProgressCount = activities.inProgress.length;
   const queuedCount = activities.queued.length;
-  const totalCount = inProgressCount + queuedCount;
+  const totalCount = failedCount + inProgressCount + queuedCount;
 
   return (
     <DropdownMenu>
@@ -262,9 +273,15 @@ function ActivityMenu({ activities }: { activities: ActivitySnapshot }) {
         <div className="border-b border-border px-2 py-2">
           <div className="text-[12px] font-medium">Activities</div>
           <div className="text-[11px] text-muted-foreground">
-            {inProgressCount} in progress / {queuedCount} queued
+            {failedCount} failed / {inProgressCount} in progress / {queuedCount} queued
           </div>
         </div>
+        <ActivitySection
+          title="Failed"
+          items={activities.failed}
+          emptyLabel="No failed activities."
+        />
+        <div className="border-t border-border" />
         <ActivitySection
           title="In progress"
           items={activities.inProgress}

@@ -1,5 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { MemStorage } from "./memoryStorage";
 import { answerPRQuestion } from "./prQuestionAgent";
 import type { PRQuestion } from "@shared/schema";
@@ -24,6 +27,35 @@ async function seedPR(storage: MemStorage): Promise<string> {
     lastChecked: null,
   });
   return pr.id;
+}
+
+async function withFakeAgent(
+  output: { stdout?: string; stderr?: string; code?: number },
+  run: () => Promise<void>,
+): Promise<void> {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "fake-agent-bin-"));
+  const fakeClaudePath = path.join(tempRoot, "claude");
+  const originalPath = process.env.PATH;
+
+  try {
+    await writeFile(
+      fakeClaudePath,
+      [
+        "#!/usr/bin/env node",
+        `process.stdout.write(${JSON.stringify(output.stdout ?? "")});`,
+        `process.stderr.write(${JSON.stringify(output.stderr ?? "")});`,
+        `process.exit(${output.code ?? 0});`,
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(fakeClaudePath, 0o755);
+    process.env.PATH = [tempRoot, originalPath].filter(Boolean).join(path.delimiter);
+    await run();
+  } finally {
+    process.env.PATH = originalPath;
+    await rm(tempRoot, { recursive: true, force: true });
+  }
 }
 
 describe("answerPRQuestion", () => {
@@ -217,5 +249,27 @@ describe("answerPRQuestion", () => {
     assert.ok(updated);
     assert.equal(updated.status, "error");
     assert.equal(updated.error, "string error without Error wrapper");
+  });
+
+  it("sets status to 'error' when the agent returns an empty successful answer", async () => {
+    await withFakeAgent({ stdout: "   \n", code: 0 }, async () => {
+      const storage = new MemStorage();
+      const prId = await seedPR(storage);
+      const q = await storage.addQuestion(prId, "What changed?");
+
+      await answerPRQuestion({
+        storage,
+        prId,
+        questionId: q.id,
+        question: q.question,
+        preferredAgent: "claude",
+      });
+
+      const updated = (await storage.getQuestions(prId)).find((x) => x.id === q.id);
+      assert.ok(updated);
+      assert.equal(updated.status, "error");
+      assert.match(updated.error ?? "", /empty response/i);
+      assert.equal(updated.answer, null);
+    });
   });
 });
