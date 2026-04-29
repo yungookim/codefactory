@@ -359,6 +359,26 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
       releaseManager,
       deploymentHealingManager,
     }),
+    onReclaimedJobs: (jobs) => {
+      for (const job of jobs) {
+        if (job.kind !== "babysit_pr") {
+          continue;
+        }
+
+        void storage.addLog(job.targetId, "warn", `Reclaimed expired background job ${job.id} for PR ${job.targetId}`, {
+          phase: "background.job",
+          metadata: {
+            jobId: job.id,
+            kind: job.kind,
+            leaseOwner: job.leaseOwner,
+            leaseExpiresAt: job.leaseExpiresAt,
+            attemptCount: job.attemptCount,
+          },
+        }).catch((error) => {
+          console.error("Failed to log reclaimed background job", error);
+        });
+      }
+    },
   });
 
   let watcherTimer: NodeJS.Timeout | null = null;

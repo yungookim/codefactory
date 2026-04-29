@@ -15,6 +15,8 @@ test("buildDeploymentHealingPrompt includes platform and log", () => {
   assert.ok(prompt.includes("Cannot find module"), "should include log");
   assert.ok(prompt.includes("deploy-fix/"), "should mention branch naming");
   assert.ok(prompt.includes("DEPLOYMENT_FIX_SUMMARY:"), "should include summary marker");
+  assert.doesNotMatch(prompt, /Commit your fix/i);
+  assert.match(prompt, /Do not run git commit or git push/);
 });
 
 test("extractDeploymentHealingSummary finds marker", () => {

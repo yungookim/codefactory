@@ -53,6 +53,8 @@ test("buildCIHealingRepairPrompt bounds failures and evidence", () => {
   });
 
   assert.match(prompt, /Repository: acme\/widgets/);
+  assert.doesNotMatch(prompt, /Commit and push/i);
+  assert.match(prompt, /Do not run git commit or git push/);
   assert.match(prompt, /Fingerprint: github\.check_run:typescript:build/);
   assert.match(prompt, /Fingerprint: github\.check_run:lint:eslint/);
   assert.doesNotMatch(prompt, /Fingerprint: github\.check_run:tests:unit/);
@@ -86,6 +88,8 @@ test("extractCIHealingSummary falls back to the last non-empty line", () => {
 test("runCIHealingRepairAttempt captures verification metadata when the push lands", async () => {
   const callLog: Array<{ command: string; args: string[] }> = [];
   let cleanupCalled = false;
+  let committed = false;
+  let pushed = false;
   const result = await runCIHealingRepairAttempt({
     prNumber: 42,
     repoFullName: "acme/widgets",
@@ -114,11 +118,12 @@ test("runCIHealingRepairAttempt captures verification metadata when the push lan
       },
       applyFixesWithAgent: async ({ prompt }) => {
         assert.match(prompt, /CI_HEALING_SUMMARY:/);
+        assert.doesNotMatch(prompt, /Commit and push/i);
         return {
           code: 0,
           stdout: [
             "agent output",
-            "CI_HEALING_SUMMARY: fixed the compiler and pushed the change",
+            "CI_HEALING_SUMMARY: fixed the compiler error",
           ].join("\n"),
           stderr: "",
         };
@@ -132,11 +137,25 @@ test("runCIHealingRepairAttempt captures verification metadata when the push lan
 
         const signature = args.join(" ");
         if (signature.includes("-C /tmp/worktree rev-parse HEAD")) {
-          return { code: 0, stdout: "local-new-sha\n", stderr: "" };
+          return { code: 0, stdout: `${committed ? "local-new-sha" : "old-sha"}\n`, stderr: "" };
         }
 
         if (signature.includes("-C /tmp/worktree status --porcelain")) {
+          return { code: 0, stdout: committed ? "" : " M src/index.ts\n", stderr: "" };
+        }
+
+        if (signature.includes("-C /tmp/worktree add -A")) {
           return { code: 0, stdout: "", stderr: "" };
+        }
+
+        if (signature.includes("-C /tmp/worktree commit -m Apply CI healing fixes for PR #42")) {
+          committed = true;
+          return { code: 0, stdout: "committed\n", stderr: "" };
+        }
+
+        if (signature.includes("-C /tmp/worktree push origin HEAD:feature/heal-ci")) {
+          pushed = true;
+          return { code: 0, stdout: "pushed\n", stderr: "" };
         }
 
         if (signature.includes("-C /tmp/repo-cache fetch origin feature/heal-ci")) {
@@ -144,7 +163,7 @@ test("runCIHealingRepairAttempt captures verification metadata when the push lan
         }
 
         if (signature.includes("-C /tmp/repo-cache rev-parse FETCH_HEAD")) {
-          return { code: 0, stdout: "remote-new-sha\n", stderr: "" };
+          return { code: 0, stdout: `${pushed ? "local-new-sha" : "old-sha"}\n`, stderr: "" };
         }
 
         return { code: 0, stdout: "", stderr: "" };
@@ -154,22 +173,26 @@ test("runCIHealingRepairAttempt captures verification metadata when the push lan
 
   assert.equal(result.accepted, true);
   assert.equal(result.rejectionReason, null);
-  assert.equal(result.summary, "fixed the compiler and pushed the change");
+  assert.equal(result.summary, "fixed the compiler error");
   assert.equal(result.verification.inputHeadSha, "old-sha");
   assert.equal(result.verification.localHeadSha, "local-new-sha");
-  assert.equal(result.verification.remoteHeadSha, "remote-new-sha");
+  assert.equal(result.verification.remoteHeadSha, "local-new-sha");
   assert.equal(result.verification.localCommitCreated, true);
   assert.equal(result.verification.worktreeDirty, false);
   assert.equal(result.verification.branchMoved, true);
   assert.equal(result.verification.pushedNewSha, true);
   assert.equal(result.targetFingerprints.length, 1);
   assert.equal(result.promptDigest.length, 64);
+  assert.ok(callLog.some((entry) => entry.args.join(" ").includes("add -A")));
+  assert.ok(callLog.some((entry) => entry.args.join(" ").includes("commit -m Apply CI healing fixes for PR #42")));
+  assert.ok(callLog.some((entry) => entry.args.join(" ").includes("push origin HEAD:feature/heal-ci")));
   assert.ok(callLog.some((entry) => entry.args.join(" ").includes("fetch origin feature/heal-ci")));
   assert.equal(cleanupCalled, true);
 });
 
 test("runCIHealingRepairAttempt rejects when the remote SHA does not move", async () => {
   let cleanupCalled = false;
+  let committed = false;
   const result = await runCIHealingRepairAttempt({
     prNumber: 42,
     repoFullName: "acme/widgets",
@@ -208,7 +231,16 @@ test("runCIHealingRepairAttempt rejects when the remote SHA does not move", asyn
 
         const signature = args.join(" ");
         if (signature.includes("-C /tmp/worktree rev-parse HEAD")) {
-          return { code: 0, stdout: "local-new-sha\n", stderr: "" };
+          return { code: 0, stdout: `${committed ? "local-new-sha" : "old-sha"}\n`, stderr: "" };
+        }
+
+        if (signature.includes("-C /tmp/worktree status --porcelain")) {
+          return { code: 0, stdout: committed ? "" : " M src/index.ts\n", stderr: "" };
+        }
+
+        if (signature.includes("-C /tmp/worktree commit -m Apply CI healing fixes for PR #42")) {
+          committed = true;
+          return { code: 0, stdout: "committed\n", stderr: "" };
         }
 
         if (signature.includes("-C /tmp/repo-cache fetch origin feature/heal-ci")) {

@@ -146,6 +146,21 @@ export class BackgroundJobQueue {
     return this.storage.requeueExpiredBackgroundJobs(this.resolveNow(now));
   }
 
+  async requeueExpiredWithDetails(now?: QueueDateInput): Promise<BackgroundJob[]> {
+    const current = this.resolveNow(now);
+    const expired = (await this.storage.listBackgroundJobs({ status: "leased" })).filter((job) =>
+      job.leaseExpiresAt !== null
+      && new Date(job.leaseExpiresAt).getTime() <= new Date(current).getTime(),
+    );
+
+    if (expired.length === 0) {
+      return [];
+    }
+
+    await this.storage.requeueExpiredBackgroundJobs(current);
+    return expired;
+  }
+
   private resolveNow(value?: QueueDateInput): string {
     return toIsoString(value ?? this.now());
   }

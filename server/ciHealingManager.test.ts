@@ -137,6 +137,41 @@ test("CIHealingManager enforces legal transitions", async () => {
   assert.ok(healed.endedAt);
 });
 
+test("CIHealingManager can verify an awaiting repair session that becomes healthy before repair starts", async () => {
+  const storage = new MemStorage();
+  await storage.updateConfig(makeConfig());
+  const pr = await storage.addPR(makePR());
+  const manager = new CIHealingManager(storage);
+  const session = await storage.createHealingSession({
+    prId: pr.id,
+    repo: pr.repo,
+    prNumber: pr.number,
+    initialHeadSha: "sha-a",
+    currentHeadSha: "sha-a",
+    state: "awaiting_repair_slot",
+    endedAt: null,
+    blockedReason: null,
+    escalationReason: null,
+    latestFingerprint: "github-check-run:build:build",
+    attemptCount: 0,
+    lastImprovementScore: null,
+  });
+
+  const verifying = await manager.markVerifying(session.id, {
+    currentHeadSha: "sha-a",
+  });
+  assert.equal(verifying.state, "verifying");
+
+  const healed = await manager.markHealed(session.id, {
+    currentHeadSha: "sha-a",
+    latestFingerprint: null,
+    lastImprovementScore: 0,
+  });
+  assert.equal(healed.state, "healed");
+  assert.equal(healed.latestFingerprint, null);
+  assert.ok(healed.endedAt);
+});
+
 test("CIHealingManager reports retry budgets and cooldowns", async () => {
   let current = new Date("2026-04-01T10:00:00.000Z");
   const storage = new MemStorage();
