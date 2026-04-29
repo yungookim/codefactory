@@ -141,7 +141,7 @@ function ChangelogCard({ changelog }: { changelog: SocialChangelog }) {
       {changelog.status === "generating" && (
         <div className="border-t border-border px-4 py-2.5">
           <span className="text-[11px] text-muted-foreground">
-            Generating social media post with AI agent…
+            Generation was removed before this row completed.
           </span>
         </div>
       )}
@@ -191,7 +191,7 @@ export default function Changelogs() {
           <div className="mb-5">
             <h1 className="text-base font-medium">Social Media Changelogs</h1>
             <p className="mt-1 text-[12px] text-muted-foreground">
-              Generated automatically every 5 PRs merged to main. Copy and paste into Twitter/X or LinkedIn.
+              Historical generated posts from earlier versions.
             </p>
           </div>
 
@@ -200,7 +200,7 @@ export default function Changelogs() {
             <div className="border border-border px-4 py-8 text-center">
               <p className="text-sm text-muted-foreground">No changelogs yet.</p>
               <p className="mt-1 text-[12px] text-muted-foreground">
-                A post will be generated automatically after every 5 PRs are merged to main.
+                Social media changelog generation has been removed.
               </p>
             </div>
           )}

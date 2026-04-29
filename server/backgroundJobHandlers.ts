@@ -8,7 +8,6 @@ import { runDeploymentHealingRepair } from "./deploymentHealingAgent";
 import { buildGitHubCloneUrl, buildOctokit, parseRepoSlug, resolveGitHubAuthToken } from "./github";
 import { answerPRQuestion } from "./prQuestionAgent";
 import type { ReleaseManager } from "./releaseManager";
-import { generateSocialChangelog } from "./socialChangelogAgent";
 import type { IStorage } from "./storage";
 
 type BackgroundJobHandlerDeps = {
@@ -42,7 +41,6 @@ export function createBackgroundJobHandlers(params: {
   releaseManager?: Pick<ReleaseManager, "processReleaseRun">;
   deploymentHealingManager?: DeploymentHealingManager;
   questionAnswerer?: typeof answerPRQuestion;
-  socialChangelogGenerator?: typeof generateSocialChangelog;
   deps?: BackgroundJobHandlerDeps;
 }): BackgroundJobHandlers {
   const storage = params.storage;
@@ -50,7 +48,6 @@ export function createBackgroundJobHandlers(params: {
   const releaseManager = params.releaseManager;
   const deploymentHealingManager = params.deploymentHealingManager;
   const questionAnswerer = params.questionAnswerer ?? answerPRQuestion;
-  const socialChangelogGenerator = params.socialChangelogGenerator ?? generateSocialChangelog;
   const buildOctokitFn = params.deps?.buildOctokitFn ?? buildOctokit;
   const createAdapterFn = params.deps?.createAdapterFn ?? createAdapter;
   const resolveGitHubAuthTokenFn = params.deps?.resolveGitHubAuthTokenFn ?? resolveGitHubAuthToken;
@@ -107,18 +104,16 @@ export function createBackgroundJobHandlers(params: {
         throw new CancelBackgroundJobError(`Social changelog ${job.targetId} no longer exists`);
       }
 
-      if (changelog.status === "done" || changelog.status === "error") {
-        return;
+      const message = "Social changelog generation has been removed";
+      if (changelog.status === "generating") {
+        await storage.updateSocialChangelog(changelog.id, {
+          status: "error",
+          error: message,
+          completedAt: new Date().toISOString(),
+        });
       }
 
-      const config = await storage.getConfig();
-      await socialChangelogGenerator({
-        storage,
-        changelogId: changelog.id,
-        prSummaries: changelog.prSummaries,
-        date: changelog.date,
-        preferredAgent: config.codingAgent,
-      });
+      throw new CancelBackgroundJobError(message);
     },
 
     process_release_run: releaseManager

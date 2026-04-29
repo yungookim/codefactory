@@ -1940,23 +1940,3 @@ export async function listUnreleasedMergedPulls(
     sinceMergeCommitSha: boundaryMergeCommitSha,
   });
 }
-
-/**
- * Returns pull requests that were merged to the given base branch today (UTC).
- * Used to determine whether the social changelog trigger threshold has been reached.
- */
-export async function listMergedPullsToday(
-  octokit: Octokit,
-  repo: ParsedRepoSlug,
-  baseRef?: string,
-): Promise<MergedPRSummary[]> {
-  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-  const pulls = await listMergedPullsSince(
-    octokit,
-    repo,
-    baseRef
-      ? { baseRef }
-      : undefined,
-  );
-  return pulls.filter((pull) => pull.mergedAt.startsWith(today));
-}
