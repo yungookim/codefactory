@@ -1,5 +1,13 @@
 # Lessons Learned
 
+## 2026-04-30 - Clear or distinguish stale local-tool warnings after detection fixes
+- Pattern: I fixed Codex CLI discovery but treated the visible "CLI not installed" banner as if it only represented current detection state; the user still saw a persisted babysitter warning from a failed PR job.
+- Rule: When fixing local-tool availability warnings, verify both the live detection path and any persisted failed-job/operator-warning state that can keep rendering the old diagnosis.
+- Prevention checklist:
+  - Inspect the warning source row/job and timestamp before concluding a detection fix did or did not work.
+  - Add coverage or runtime behavior that clears or supersedes stale agent-availability warnings after a successful rerun or healthy agent check.
+  - Make warning copy expose enough state to distinguish current health failures from historical job failures.
+
 ## 2026-04-28 - Make agent recovery opt-in and settings-visible
 - Pattern: A request to surface coding-agent auth failures expanded into fallback behavior, and the user had to specify that fallback should be configurable, settings-visible, and disabled by default.
 - Rule: When adding automatic recovery behavior that can switch execution tools or change operator intent, make it opt-in unless the user explicitly asks for always-on automation.

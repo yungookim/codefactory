@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -79,9 +79,11 @@ test("evaluateFixNecessityWithAgent throws a clear error when codex writes no ou
 test("resolveAgent does not fall back when fallback is disabled", async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "fake-agent-bin-"));
   const originalPath = process.env.PATH;
+  const originalHome = process.env.HOME;
 
   try {
     process.env.PATH = tempRoot;
+    process.env.HOME = tempRoot;
 
     await assert.rejects(
       () => resolveAgent("claude"),
@@ -89,6 +91,11 @@ test("resolveAgent does not fall back when fallback is disabled", async () => {
     );
   } finally {
     process.env.PATH = originalPath;
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
@@ -104,6 +111,7 @@ test("resolveAgent uses the next coding agent when fallback is enabled", async (
     process.platform === "win32" ? "which.cmd" : "which",
   );
   const originalPath = process.env.PATH;
+  const originalHome = process.env.HOME;
 
   try {
     await copyFile(process.execPath, fakeCodexPath);
@@ -115,10 +123,16 @@ test("resolveAgent uses the next coding agent when fallback is enabled", async (
     );
     await chmod(fakeWhichPath, 0o755);
     process.env.PATH = tempRoot;
+    process.env.HOME = tempRoot;
 
     assert.equal(await resolveAgent("claude", { allowFallback: true }), "codex");
   } finally {
     process.env.PATH = originalPath;
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
@@ -131,6 +145,7 @@ test("resolveAgent finds an agent available from the login shell when app PATH i
   );
   const fakeShellPath = path.join(tempRoot, "fake-shell");
   const originalPath = process.env.PATH;
+  const originalHome = process.env.HOME;
   const originalShell = process.env.SHELL;
 
   try {
@@ -143,18 +158,68 @@ test("resolveAgent finds an agent available from the login shell when app PATH i
     );
     await chmod(fakeShellPath, 0o755);
     process.env.PATH = "/usr/bin:/bin";
+    process.env.HOME = tempRoot;
     process.env.SHELL = fakeShellPath;
 
     assert.equal(await resolveAgent("codex"), "codex");
     assert.equal(await resolveCommandPath("codex"), fakeCodexPath);
   } finally {
     process.env.PATH = originalPath;
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
     if (originalShell === undefined) {
       delete process.env.SHELL;
     } else {
       process.env.SHELL = originalShell;
     }
     await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("resolveAgent finds an agent installed under nvm when app PATH is narrow", async () => {
+  const tempHome = await mkdtemp(path.join(os.tmpdir(), "fake-nvm-home-"));
+  const fakeBinDir = path.join(tempHome, ".nvm", "versions", "node", "v24.12.0", "bin");
+  const fakeCodexPath = path.join(
+    fakeBinDir,
+    process.platform === "win32" ? "codex.exe" : "codex",
+  );
+  const originalPath = process.env.PATH;
+  const originalHome = process.env.HOME;
+  const originalUserProfile = process.env.USERPROFILE;
+  const originalShell = process.env.SHELL;
+
+  try {
+    await mkdir(fakeBinDir, { recursive: true });
+    await copyFile(process.execPath, fakeCodexPath);
+    await chmod(fakeCodexPath, 0o755);
+    process.env.PATH = "/usr/bin:/bin";
+    process.env.HOME = tempHome;
+    process.env.USERPROFILE = tempHome;
+    process.env.SHELL = path.join(tempHome, "missing-shell");
+
+    assert.equal(await resolveAgent("codex"), "codex");
+    assert.equal(await resolveCommandPath("codex"), fakeCodexPath);
+  } finally {
+    process.env.PATH = originalPath;
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (originalUserProfile === undefined) {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = originalUserProfile;
+    }
+    if (originalShell === undefined) {
+      delete process.env.SHELL;
+    } else {
+      process.env.SHELL = originalShell;
+    }
+    await rm(tempHome, { recursive: true, force: true });
   }
 });
 

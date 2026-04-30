@@ -666,13 +666,27 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     getRuntimeSnapshot,
 
     async listActivities() {
-      const [failedJobs, leasedJobs, queuedJobs] = await Promise.all([
+      const [failedJobs, leasedJobs, queuedJobs, babysitJobs] = await Promise.all([
         storage.listBackgroundJobs({ status: "failed" }),
         storage.listBackgroundJobs({ status: "leased" }),
         storage.listBackgroundJobs({ status: "queued" }),
+        storage.listBackgroundJobs({ kind: "babysit_pr" }),
       ]);
 
-      const failedWarningJobs = failedJobs.filter((job) => classifyAgentAvailabilityFailure(job));
+      const latestBabysitJobIds = new Set(
+        Array.from(
+          babysitJobs.reduce((latestByTargetId, job) => {
+            const current = latestByTargetId.get(job.targetId);
+            if (!current || Date.parse(job.updatedAt) >= Date.parse(current.updatedAt)) {
+              latestByTargetId.set(job.targetId, job);
+            }
+            return latestByTargetId;
+          }, new Map<string, BackgroundJob>()).values(),
+        ).map((job) => job.id),
+      );
+      const failedWarningJobs = failedJobs.filter((job) =>
+        latestBabysitJobIds.has(job.id) && classifyAgentAvailabilityFailure(job)
+      );
       const descriptionContext = await buildActivityDescriptionContext([...failedJobs, ...leasedJobs, ...queuedJobs]);
       const failed = failedJobs.map((job) => mapActivityJob(job, descriptionContext));
       const inProgress = leasedJobs.map((job) => mapActivityJob(job, descriptionContext));

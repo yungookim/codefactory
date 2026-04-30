@@ -1,5 +1,6 @@
-import { mkdtemp, readFile, rm } from "fs/promises";
-import { tmpdir } from "os";
+import { constants } from "fs";
+import { access, mkdtemp, readFile, readdir, rm } from "fs/promises";
+import { homedir, tmpdir } from "os";
 import path from "path";
 import { spawn } from "child_process";
 
@@ -70,6 +71,11 @@ export async function resolveCommandPath(command: string): Promise<string | null
   const pathFromCurrentEnv = firstOutputLine(result.stdout);
   if (result.code === 0 && pathFromCurrentEnv) {
     return pathFromCurrentEnv;
+  }
+
+  const pathFromKnownInstall = await findKnownInstallPath(command);
+  if (pathFromKnownInstall) {
+    return pathFromKnownInstall;
   }
 
   const shell = process.env.SHELL || "/bin/zsh";
@@ -325,6 +331,50 @@ function firstOutputLine(output: string): string | null {
     .map((candidate) => candidate.trim())
     .find(Boolean);
   return line ?? null;
+}
+
+async function findKnownInstallPath(command: string): Promise<string | null> {
+  const candidates = await buildKnownInstallCandidates(command);
+  for (const candidate of candidates) {
+    try {
+      await access(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Try the next conventional local-tool location.
+    }
+  }
+  return null;
+}
+
+async function buildKnownInstallCandidates(command: string): Promise<string[]> {
+  const home = process.env.HOME || process.env.USERPROFILE || homedir();
+  const dirs = [
+    path.join(home, ".local", "bin"),
+    path.join(home, "bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+  ];
+
+  dirs.push(...await listNvmBinDirs(home));
+
+  const executable = process.platform === "win32" ? `${command}.exe` : command;
+  return Array.from(new Set(dirs.map((dir) => path.join(dir, executable))));
+}
+
+async function listNvmBinDirs(home: string): Promise<string[]> {
+  const nvmNodeRoot = path.join(home, ".nvm", "versions", "node");
+  try {
+    const entries = await readdir(nvmNodeRoot, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(nvmNodeRoot, entry.name, "bin"))
+      .sort()
+      .reverse();
+  } catch {
+    return [];
+  }
 }
 
 function summarizeHealthFailure(result: CommandResult): string {

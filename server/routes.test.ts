@@ -509,6 +509,61 @@ test("GET /api/activities warns when a babysitter job fails from agent authentic
   }
 });
 
+test("GET /api/activities suppresses stale agent warnings after a newer babysitter rerun", async () => {
+  const harness = await createHarness();
+  const pr = await seedPR(harness.storage, {
+    title: "fix stale warning",
+    repo: "acme/widgets",
+    number: 77,
+    url: "https://github.com/acme/widgets/pull/77",
+  });
+
+  try {
+    const failedJob = await harness.storage.enqueueBackgroundJob({
+      kind: "babysit_pr",
+      targetId: pr.id,
+      dedupeKey: `babysit_pr:${pr.id}`,
+      payload: { preferredAgent: "codex" },
+      availableAt: "2026-04-26T10:00:00.000Z",
+    });
+    await harness.storage.claimNextBackgroundJob({
+      workerId: "worker-1",
+      leaseToken: "lease-1",
+      leaseExpiresAt: "2026-04-26T10:10:00.000Z",
+      now: "2026-04-26T10:01:00.000Z",
+    });
+    await harness.storage.failBackgroundJob(
+      failedJob.id,
+      "lease-1",
+      "Configured coding agent codex CLI is not installed",
+      "2026-04-26T10:02:00.000Z",
+    );
+    await harness.storage.updatePR(pr.id, {
+      status: "error",
+      lastChecked: "2026-04-26T10:02:00.000Z",
+    });
+    await harness.storage.enqueueBackgroundJob({
+      kind: "babysit_pr",
+      targetId: pr.id,
+      dedupeKey: `babysit_pr:${pr.id}`,
+      payload: { preferredAgent: "codex" },
+      availableAt: "2026-04-26T10:03:00.000Z",
+    });
+
+    const response = await fetch(`${harness.baseUrl}/api/activities`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as {
+      warnings?: unknown[];
+      queued?: Array<{ targetId: string }>;
+    };
+
+    assert.deepEqual(body.warnings, []);
+    assert.ok(body.queued?.some((job) => job.targetId === pr.id));
+  } finally {
+    await harness.close();
+  }
+});
+
 test("POST /api/repos/release queues a manual release run for the requested repo", async () => {
   const storage = new MemStorage();
   const harness = await createHarness(storage, {
