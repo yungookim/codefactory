@@ -104,6 +104,10 @@ export function createBackgroundJobHandlers(params: {
         throw new CancelBackgroundJobError(`Social changelog ${job.targetId} no longer exists`);
       }
 
+      if (changelog.status === "done" || changelog.status === "error") {
+        return;
+      }
+
       const message = "Social changelog generation has been removed";
       if (changelog.status === "generating") {
         await storage.updateSocialChangelog(changelog.id, {

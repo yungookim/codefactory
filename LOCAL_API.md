@@ -316,8 +316,9 @@ Provide `repo` plus one or both of `ownPrsOnly` and `autoCreateReleases`.
 #### `POST /api/repos/sync`
 
 Queue an immediate durable watcher pass across all watched repos. The queued
-sync job performs GitHub reconciliation and then enqueues follow-up babysit,
-release, and changelog work as needed. Returns `409` when drain mode is active.
+sync job performs GitHub reconciliation and then enqueues follow-up babysit and
+release work as needed. It does not enqueue social changelog generation.
+Returns `409` when drain mode is active.
 
 **Response** `200`
 ```json

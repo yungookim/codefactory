@@ -219,6 +219,49 @@ test("generate_social_changelog handler cancels now-removed generation jobs", as
   assert.ok(updated?.completedAt);
 });
 
+test("generate_social_changelog handler no-ops for terminal changelogs", async () => {
+  const storage = new MemStorage();
+  const done = await storage.createSocialChangelog({
+    date: "2026-04-01",
+    triggerCount: 2,
+    prSummaries: [],
+    content: "Already generated",
+    status: "done",
+    error: null,
+    completedAt: "2026-04-01T12:00:00.000Z",
+  });
+  const errored = await storage.createSocialChangelog({
+    date: "2026-04-02",
+    triggerCount: 3,
+    prSummaries: [],
+    content: null,
+    status: "error",
+    error: "Previous failure",
+    completedAt: "2026-04-02T12:00:00.000Z",
+  });
+  const queue = new BackgroundJobQueue(storage);
+  const doneJob = await queue.enqueue(
+    "generate_social_changelog",
+    done.id,
+    `generate_social_changelog:${done.id}`,
+    {},
+  );
+  const errorJob = await queue.enqueue(
+    "generate_social_changelog",
+    errored.id,
+    `generate_social_changelog:${errored.id}`,
+    {},
+  );
+
+  const handlers = createBackgroundJobHandlers({ storage });
+
+  await handlers.generate_social_changelog!(doneJob);
+  await handlers.generate_social_changelog!(errorJob);
+
+  assert.deepEqual(await storage.getSocialChangelog(done.id), done);
+  assert.deepEqual(await storage.getSocialChangelog(errored.id), errored);
+});
+
 test("generate_social_changelog handler cancels jobs whose row is missing", async () => {
   const storage = new MemStorage();
   const handlers = createBackgroundJobHandlers({ storage });
