@@ -3,7 +3,7 @@ import { chmod, copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { evaluateFixNecessityWithAgent, resolveAgent, runCommand } from "./agentRunner";
+import { evaluateFixNecessityWithAgent, resolveAgent, resolveCommandPath, runCommand } from "./agentRunner";
 
 test("runCommand reports a timeout even when the child exits 0 after SIGTERM", async () => {
   const result = await runCommand(
@@ -119,6 +119,41 @@ test("resolveAgent uses the next coding agent when fallback is enabled", async (
     assert.equal(await resolveAgent("claude", { allowFallback: true }), "codex");
   } finally {
     process.env.PATH = originalPath;
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("resolveAgent finds an agent available from the login shell when app PATH is narrow", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "fake-login-shell-agent-"));
+  const fakeCodexPath = path.join(
+    tempRoot,
+    process.platform === "win32" ? "codex.exe" : "codex",
+  );
+  const fakeShellPath = path.join(tempRoot, "fake-shell");
+  const originalPath = process.env.PATH;
+  const originalShell = process.env.SHELL;
+
+  try {
+    await copyFile(process.execPath, fakeCodexPath);
+    await chmod(fakeCodexPath, 0o755);
+    await writeFile(
+      fakeShellPath,
+      `#!/bin/sh\nif [ "$1" = "-lc" ] && [ "$2" = "command -v codex" ]; then echo "${fakeCodexPath}"; exit 0; fi\nexit 1\n`,
+      "utf8",
+    );
+    await chmod(fakeShellPath, 0o755);
+    process.env.PATH = "/usr/bin:/bin";
+    process.env.SHELL = fakeShellPath;
+
+    assert.equal(await resolveAgent("codex"), "codex");
+    assert.equal(await resolveCommandPath("codex"), fakeCodexPath);
+  } finally {
+    process.env.PATH = originalPath;
+    if (originalShell === undefined) {
+      delete process.env.SHELL;
+    } else {
+      process.env.SHELL = originalShell;
+    }
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
