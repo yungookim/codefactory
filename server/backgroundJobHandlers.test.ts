@@ -186,16 +186,16 @@ test("answer_pr_question handler cancels jobs whose question row is missing", as
   );
 });
 
-test("generate_social_changelog handler no-ops for terminal rows", async () => {
+test("generate_social_changelog handler cancels now-removed generation jobs", async () => {
   const storage = new MemStorage();
   const changelog = await storage.createSocialChangelog({
     date: "2026-04-02",
     triggerCount: 5,
     prSummaries: [],
-    content: "done",
-    status: "done",
+    content: null,
+    status: "generating",
     error: null,
-    completedAt: "2026-04-02T12:00:00.000Z",
+    completedAt: null,
   });
   const queue = new BackgroundJobQueue(storage);
   const job = await queue.enqueue(
@@ -204,18 +204,62 @@ test("generate_social_changelog handler no-ops for terminal rows", async () => {
     `generate_social_changelog:${changelog.id}`,
     {},
   );
-  let called = false;
 
-  const handlers = createBackgroundJobHandlers({
-    storage,
-    socialChangelogGenerator: async () => {
-      called = true;
-    },
+  const handlers = createBackgroundJobHandlers({ storage });
+
+  await assert.rejects(
+    handlers.generate_social_changelog!(job),
+    (error: unknown) => error instanceof CancelBackgroundJobError
+      && error.message.includes("generation has been removed"),
+  );
+
+  const updated = await storage.getSocialChangelog(changelog.id);
+  assert.equal(updated?.status, "error");
+  assert.equal(updated?.error, "Social changelog generation has been removed");
+  assert.ok(updated?.completedAt);
+});
+
+test("generate_social_changelog handler no-ops for terminal changelogs", async () => {
+  const storage = new MemStorage();
+  const done = await storage.createSocialChangelog({
+    date: "2026-04-01",
+    triggerCount: 2,
+    prSummaries: [],
+    content: "Already generated",
+    status: "done",
+    error: null,
+    completedAt: "2026-04-01T12:00:00.000Z",
   });
+  const errored = await storage.createSocialChangelog({
+    date: "2026-04-02",
+    triggerCount: 3,
+    prSummaries: [],
+    content: null,
+    status: "error",
+    error: "Previous failure",
+    completedAt: "2026-04-02T12:00:00.000Z",
+  });
+  const queue = new BackgroundJobQueue(storage);
+  const doneJob = await queue.enqueue(
+    "generate_social_changelog",
+    done.id,
+    `generate_social_changelog:${done.id}`,
+    {},
+  );
+  const errorJob = await queue.enqueue(
+    "generate_social_changelog",
+    errored.id,
+    `generate_social_changelog:${errored.id}`,
+    {},
+  );
 
-  await handlers.generate_social_changelog!(job);
+  const handlers = createBackgroundJobHandlers({ storage });
 
-  assert.equal(called, false);
+  await handlers.generate_social_changelog!(doneJob);
+  await handlers.generate_social_changelog!(errorJob);
+
+  assert.deepEqual(await storage.getSocialChangelog(done.id), done);
+  assert.deepEqual(await storage.getSocialChangelog(errored.id), errored);
 });
 
 test("generate_social_changelog handler cancels jobs whose row is missing", async () => {
@@ -234,53 +278,6 @@ test("generate_social_changelog handler cancels jobs whose row is missing", asyn
     (error: unknown) => error instanceof CancelBackgroundJobError
       && error.message.includes("missing-changelog"),
   );
-});
-
-test("generate_social_changelog handler delegates for non-terminal rows", async () => {
-  const storage = new MemStorage();
-  const changelog = await storage.createSocialChangelog({
-    date: "2026-04-02",
-    triggerCount: 5,
-    prSummaries: [{
-      number: 42,
-      title: "feat: add widget",
-      url: "https://github.com/acme/widgets/pull/42",
-      author: "alice",
-      repo: "acme/widgets",
-    }],
-    content: null,
-    status: "generating",
-    error: null,
-    completedAt: null,
-  });
-  const queue = new BackgroundJobQueue(storage);
-  const job = await queue.enqueue(
-    "generate_social_changelog",
-    changelog.id,
-    `generate_social_changelog:${changelog.id}`,
-    {},
-  );
-  const calls: Array<{ changelogId: string; date: string; preferredAgent: string }> = [];
-
-  const handlers = createBackgroundJobHandlers({
-    storage,
-    socialChangelogGenerator: async (params) => {
-      calls.push({
-        changelogId: params.changelogId,
-        date: params.date,
-        preferredAgent: params.preferredAgent,
-      });
-    },
-  });
-
-  await handlers.generate_social_changelog!(job);
-
-  assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0], {
-    changelogId: changelog.id,
-    date: "2026-04-02",
-    preferredAgent: "claude",
-  });
 });
 
 test("heal_deployment handler is registered when deploymentHealingManager is provided", () => {

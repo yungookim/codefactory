@@ -22,7 +22,6 @@ test("live app branding uses oh-my-pr instead of Code Factory", async () => {
     "docs/public/_site/configuration.html",
     "server/localOnly.ts",
     "server/sqliteStorage.ts",
-    "server/socialChangelogAgent.ts",
     "server/prQuestionAgent.ts",
     "server/mcp.ts",
   ];

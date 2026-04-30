@@ -149,7 +149,7 @@ function fallbackJobLabel(job: BackgroundJob): string {
     case "answer_pr_question":
       return "Answering PR question";
     case "generate_social_changelog":
-      return "Generating social changelog";
+      return "Social changelog generation removed";
     case "heal_deployment":
       return "Healing deployment";
   }
@@ -510,7 +510,7 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
       const changelog = context.socialChangelogsById.get(job.targetId);
       if (changelog) {
         return {
-          label: "Generating social changelog",
+          label: "Social changelog generation removed",
           detail: `${changelog.date} - ${changelog.triggerCount} merged PRs`,
           targetUrl: null,
         };
