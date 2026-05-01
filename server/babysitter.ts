@@ -628,7 +628,7 @@ function findStatusReplyRefForFeedback(item: FeedbackItem, feedbackItems: Feedba
     if (candidate.type === "general_comment") {
       return {
         commentDatabaseId,
-        replyKind: "general_comment",
+        replyKind: item.replyKind,
         body: candidate.body,
       };
     }

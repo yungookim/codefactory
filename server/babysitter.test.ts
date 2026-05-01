@@ -1996,6 +1996,12 @@ test("runQueuedBabysitPR recovers an existing status reply after restart", async
   const storage = new MemStorage();
   await storage.updateConfig({ autoUpdateDocs: false });
   const existingItem = makeFeedbackItem({
+    replyKind: "review",
+    threadId: null,
+    threadResolved: null,
+    type: "review",
+    file: null,
+    line: null,
     decision: "accept",
     status: "in_progress",
     statusReason: "Agent was running before restart",
@@ -2007,7 +2013,12 @@ test("runQueuedBabysitPR recovers an existing status reply after restart", async
     sourceId: "77",
     sourceNodeId: "PRRC_kwDO_status",
     sourceUrl: "https://github.com/octo/example/pull/42#discussion_r77",
-    threadId: existingItem.threadId,
+    replyKind: "general_comment",
+    threadId: null,
+    threadResolved: null,
+    type: "general_comment",
+    file: null,
+    line: null,
     auditToken: "codefactory-feedback:gh-review-comment-77",
     createdAt: "2026-03-15T10:02:00.000Z",
     decision: "reject",
@@ -2097,6 +2108,7 @@ test("runQueuedBabysitPR recovers an existing status reply after restart", async
         },
         updateStatusReply: async (_octokit, _parsed, ref, body) => {
           assert.equal(ref.commentDatabaseId, 77);
+          assert.equal(ref.replyKind, existingItem.replyKind);
           ref.body = body;
           updatedStatusBodies.push(body);
         },
