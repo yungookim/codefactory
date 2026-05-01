@@ -478,7 +478,7 @@ describe("MemStorage", () => {
       const repos = await storage.listRepoSettings();
       assert.deepEqual(repos, [{
         repo: "acme/widgets",
-        autoCreateReleases: true,
+        autoCreateReleases: false,
         ownPrsOnly: true,
       }]);
     });

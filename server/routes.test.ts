@@ -754,7 +754,7 @@ test("GET/PATCH /api/repos/settings exposes repo-level settings", async () => {
     }>;
     assert.deepEqual(initial, [{
       repo: "acme/widgets",
-      autoCreateReleases: true,
+      autoCreateReleases: false,
       ownPrsOnly: true,
     }]);
 

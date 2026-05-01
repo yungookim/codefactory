@@ -236,7 +236,7 @@ export class MemStorage implements IStorage {
 
     const existing = this.repoSettings.get(repo) ?? {
       repo,
-      autoCreateReleases: true,
+      autoCreateReleases: false,
       ownPrsOnly: true,
     };
     const next = applyWatchedRepoUpdate(existing, updates);
@@ -252,7 +252,7 @@ export class MemStorage implements IStorage {
       if (!this.repoSettings.has(repo)) {
         this.repoSettings.set(repo, {
           repo,
-          autoCreateReleases: true,
+          autoCreateReleases: false,
           ownPrsOnly: true,
         });
       }

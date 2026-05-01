@@ -984,7 +984,7 @@ export class SqliteStorage implements IStorage {
         this.run(
           "INSERT INTO watched_repos (repo, auto_create_releases, own_prs_only) VALUES (?, ?, ?)",
           repo,
-          settings?.auto_create_releases ?? 1,
+          settings?.auto_create_releases ?? 0,
           settings?.own_prs_only ?? 1,
         );
       }
@@ -1601,7 +1601,7 @@ export class SqliteStorage implements IStorage {
   ): Promise<WatchedRepo> {
     const existing = (await this.getRepoSettings(repo)) ?? {
       repo,
-      autoCreateReleases: true,
+      autoCreateReleases: false,
       ownPrsOnly: true,
     };
     const next = applyWatchedRepoUpdate(existing, updates);
