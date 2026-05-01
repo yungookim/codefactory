@@ -1318,6 +1318,7 @@ test("babysitPR uses a CODEFACTORY_HOME worktree, passes GitHub context, and ver
   assert.ok(logs.some((log) => log.phase === "run" && log.message.includes("Babysitter run complete")));
   assert.doesNotMatch(receivedPrompt, /commit and push/i);
   assert.doesNotMatch(receivedPrompt, /git push/i);
+  assert.match(receivedPrompt, /If dependencies are missing, install them/i);
   assert.match(receivedPrompt, /GitHub follow-up replies and review-thread resolution will be handled by the babysitter/i);
   assert.match(receivedPrompt, /auditToken=codefactory-feedback:gh-review-comment-1/);
   assert.match(receivedPrompt, /FEEDBACK_SUMMARY_START/);
@@ -1474,7 +1475,7 @@ test("babysitPR stages, commits, and pushes agent file edits from the app runtim
   const updated = await storage.getPR(pr.id);
   assert.equal(updated?.status, "watching");
   assert.ok(gitCommands.includes("add -A"));
-  assert.ok(gitCommands.some((command) => command.startsWith("commit -m")));
+  assert.ok(gitCommands.includes("commit --no-verify -m Apply babysitter fixes for PR #42"));
   assert.ok(gitCommands.includes("push origin HEAD:feature/verbose"));
   assert.equal(remoteHeadSha, "appcommit1");
 
@@ -1591,6 +1592,7 @@ test("babysitPR installs locked Node dependencies before remediation when cache 
     remoteHeadSha: "def456",
   });
   const installCommands: string[] = [];
+  const ignoreChecks: string[] = [];
   const runCommand = async (command: string, args: string[], options?: { cwd?: string }) => {
     if (command === "npm") {
       installCommands.push([command, ...args].join(" "));
@@ -1598,6 +1600,13 @@ test("babysitPR installs locked Node dependencies before remediation when cache 
         await mkdir(path.join(options.cwd, "node_modules"), { recursive: true });
       }
       return { code: 0, stdout: "installed\n", stderr: "" };
+    }
+    if (command === "git" && args[0] === "check-ignore") {
+      const checkedPath = args.at(-1) ?? "";
+      ignoreChecks.push(checkedPath);
+      return checkedPath === "node_modules/"
+        ? { code: 0, stdout: ".gitignore:1:node_modules/\tnode_modules/\n", stderr: "" }
+        : { code: 1, stdout: "", stderr: "" };
     }
 
     const result = await gitRun(command, args);
@@ -1645,6 +1654,7 @@ test("babysitPR installs locked Node dependencies before remediation when cache 
 
   const updated = await storage.getPR(pr.id);
   assert.equal(updated?.status, "watching");
+  assert.deepEqual(ignoreChecks, ["node_modules/"]);
   assert.deepEqual(installCommands, ["npm ci"]);
 
   delete process.env.CODEFACTORY_HOME;

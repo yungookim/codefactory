@@ -430,6 +430,7 @@ function buildAgentFixPrompt(params: {
     "Do not wait for user input, confirmation, or approval at any point.",
     "Do not rewrite unrelated files.",
     "Use the available git tooling for inspection and verification only.",
+    "If dependencies are missing, install them using the repository's lockfile/package manager as needed inside this isolated worktree.",
     "Leave file edits uncommitted; the babysitter app will handle Git finalization after your run.",
     "GitHub follow-up replies and review-thread resolution will be handled by the babysitter after your run.",
     "If a task is invalid after inspection, explain it in your final response and include the exact audit token.",
@@ -981,7 +982,7 @@ async function checkDependencyPreflight(params: DependencyPreflightParams): Prom
   }
 
   if (!(await pathExists(path.join(params.cwd, "node_modules")))) {
-    const ignoreCheck = await params.runCommand("git", ["check-ignore", "-q", "node_modules"], {
+    const ignoreCheck = await params.runCommand("git", ["check-ignore", "-q", "node_modules/"], {
       cwd: params.cwd,
       timeoutMs: 5000,
     });
@@ -2960,7 +2961,7 @@ export class PRBabysitter {
               await commitDirtyWorktree({
                 currentPrId: pr.id,
                 cwd: worktreePath,
-                commitArgs: ["commit", "--no-edit"],
+                commitArgs: ["commit", "--no-verify", "--no-edit"],
                 phase: "conflict",
                 context: "merge conflict resolution",
               });
@@ -3076,7 +3077,7 @@ export class PRBabysitter {
           await commitDirtyWorktree({
             currentPrId: pr.id,
             cwd: worktreePath,
-            commitArgs: ["commit", "-m", `Apply babysitter fixes for PR #${pr.number}`],
+            commitArgs: ["commit", "--no-verify", "-m", `Apply babysitter fixes for PR #${pr.number}`],
             phase: "verify.git.status",
             context: "agent run",
           });

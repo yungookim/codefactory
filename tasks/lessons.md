@@ -1,5 +1,14 @@
 # Lessons Learned
 
+## 2026-05-01 - Keep babysitter orchestration thin and delegate repo repair
+- Pattern: Babysitter failures around dependency preflight, merge conflicts, and repository git hooks exposed too much repo-specific behavior inside the app, causing repeated app-side failures instead of letting the selected coding agent repair the checked-out PR environment.
+- Rule: In `oh-my-pr`, keep the app responsible for deterministic orchestration boundaries only: queueing, leases, workspace isolation, credentials, logging, and final git/GitHub state transitions. Delegate repository-specific setup and repair decisions to the underlying coding agent wherever a human developer would normally inspect and fix the repo.
+- Prevention checklist:
+  - Before adding new babysitter preflight logic, ask whether the condition is a safety boundary or a repo-specific repair task the agent should own.
+  - Keep app-side checks narrow and deterministic; avoid encoding package-manager, hook, framework, or merge-resolution policy unless needed to protect user data or credentials.
+  - When agents handle repo repair, give them an isolated worktree, clear constraints, and explicit success criteria, then let app-owned finalization verify the resulting git state.
+  - Treat repeated deterministic babysitter failures as orchestration design bugs, not as reasons to add another hardcoded special case.
+
 ## 2026-04-30 - Keep speculative automation acknowledgements local
 - Pattern: The babysitter posted "Accepted" progress replies on GitHub for every accepted review comment, which surprised teammates because triage acknowledgements looked like public conversation from the user before a fix existed.
 - Rule: In `oh-my-pr`, only post GitHub replies when there is a concrete command, result, audit trail, or thread-resolution outcome to expose; keep speculative triage/progress acknowledgements in local logs unless the user explicitly opts into public progress chatter in Settings.
