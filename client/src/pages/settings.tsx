@@ -5,6 +5,10 @@ import type { Config, RuntimeState } from "@shared/schema";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { toast } from "@/hooks/use-toast";
 import { Link } from "wouter";
+import {
+  getDrainActionLabel,
+  getDrainStatusView,
+} from "@/lib/runtimeDisplay";
 
 export default function Settings() {
   const { data: config } = useQuery<Config>({
@@ -31,10 +35,11 @@ export default function Settings() {
     updateGithubTokens(githubTokens.filter((_, i) => i !== index));
   };
 
-  const { data: runtimeState } = useQuery<RuntimeState>({
+  const { data: runtimeState, isError: runtimeStateIsError } = useQuery<RuntimeState>({
     queryKey: ["/api/runtime"],
     refetchInterval: 5000,
   });
+  const drainStatusView = getDrainStatusView(runtimeState, runtimeStateIsError);
 
   const drainMutation = useMutation({
     mutationFn: async (input: { enabled: boolean; reason?: string }) => {
@@ -320,15 +325,7 @@ export default function Settings() {
                     aria-live="polite"
                     data-testid="text-drain-status"
                   >
-                    {runtimeState ? (
-                      runtimeState.drainMode ? (
-                        <span className="text-destructive">paused</span>
-                      ) : (
-                        <span className="text-muted-foreground">active</span>
-                      )
-                    ) : (
-                      <span className="text-muted-foreground">loading...</span>
-                    )}
+                    <span className={drainStatusView.className}>{drainStatusView.label}</span>
                   </div>
                 </div>
                 <button
@@ -344,7 +341,7 @@ export default function Settings() {
                   data-testid="button-toggle-drain"
                   className="shrink-0 border border-border px-2 py-1 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-50"
                 >
-                  {runtimeState?.drainMode ? "resume" : "pause"}
+                  {getDrainActionLabel(runtimeState)}
                 </button>
               </div>
               {runtimeState?.drainMode && (runtimeState.drainReason || runtimeState.drainRequestedAt) ? (
