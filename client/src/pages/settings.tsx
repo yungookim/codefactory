@@ -409,6 +409,27 @@ export default function Settings() {
                 />
               </div>
 
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm">GitHub progress replies</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Post public Accepted/running/completed status replies while the babysitter works on review comments.
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  aria-label="GitHub progress replies"
+                  checked={config?.postGitHubProgressReplies ?? false}
+                  onChange={(e) =>
+                    updateConfigMutation.mutate({
+                      postGitHubProgressReplies: e.target.checked,
+                    })
+                  }
+                  disabled={updateConfigMutation.isPending}
+                  className="h-4 w-4 accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                />
+              </div>
+
               <div>
                 <div className="text-sm">Trusted reviewers</div>
                 <div className="text-[11px] text-muted-foreground">
