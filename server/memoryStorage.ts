@@ -236,7 +236,7 @@ export class MemStorage implements IStorage {
 
     const existing = this.repoSettings.get(repo) ?? {
       repo,
-      autoCreateReleases: true,
+      autoCreateReleases: false,
       ownPrsOnly: true,
     };
     const next = applyWatchedRepoUpdate(existing, updates);
@@ -252,7 +252,7 @@ export class MemStorage implements IStorage {
       if (!this.repoSettings.has(repo)) {
         this.repoSettings.set(repo, {
           repo,
-          autoCreateReleases: true,
+          autoCreateReleases: false,
           ownPrsOnly: true,
         });
       }
@@ -633,6 +633,14 @@ export class MemStorage implements IStorage {
     }
 
     return expired.length;
+  }
+
+  async clearFailedBackgroundJobs(): Promise<number> {
+    const failed = Array.from(this.backgroundJobs.values()).filter((job) => job.status === "failed");
+    for (const job of failed) {
+      this.backgroundJobs.delete(job.id);
+    }
+    return failed.length;
   }
 
   async getReleaseRun(id: string): Promise<ReleaseRun | undefined> {

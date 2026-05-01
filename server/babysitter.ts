@@ -10,6 +10,7 @@ import {
   isAgentUnavailableError,
   resolveAgent,
   runCommand,
+  summarizeCommandResult,
   type AgentHealthResult,
   type CodingAgent,
 } from "./agentRunner";
@@ -43,7 +44,10 @@ import { CIHealingManager, isTerminalHealingState } from "./ciHealingManager";
 import { classifyCIFailures, type ClassifiedCIFailure } from "./ciFailureClassifier";
 import { isFailingCheckSnapshot } from "./ciCheckIngestor";
 import { runCIHealingRepairAttempt } from "./ciHealingAgent";
+import { childLogger } from "./logger";
 import { getCodeFactoryPaths } from "./paths";
+
+const log = childLogger("babysitter");
 import { ensureRepoCache, preparePrWorktree, removePrWorktree } from "./repoWorkspace";
 import { buildBackgroundJobDedupeKey, type ScheduleBackgroundJob } from "./backgroundJobQueue";
 import { buildActivityPayload } from "./activityPayload";
@@ -104,6 +108,7 @@ type DependencyPreflightParams = {
   pr: PR;
   pullSummary: GitHubPullSummary;
   requiresVerification: boolean;
+  runCommand: typeof runCommand;
 };
 
 type DependencyPreflightResult =
@@ -428,6 +433,7 @@ function buildAgentFixPrompt(params: {
     "Do not wait for user input, confirmation, or approval at any point.",
     "Do not rewrite unrelated files.",
     "Use the available git tooling for inspection and verification only.",
+    "If dependencies are missing, install them using the repository's lockfile/package manager as needed inside this isolated worktree.",
     "Leave file edits uncommitted; the babysitter app will handle Git finalization after your run.",
     "GitHub follow-up replies and review-thread resolution will be handled by the babysitter after your run.",
     "If a task is invalid after inspection, explain it in your final response and include the exact audit token.",
@@ -556,6 +562,78 @@ function hasAuditTrail(
 
     return true;
   });
+}
+
+function looksLikeStatusReply(body: string): boolean {
+  return body.includes("**Accepted**")
+    || body.includes("**Agent running**")
+    || body.includes("**Agent failed**")
+    || body.includes("**Agent completed**")
+    || body.includes("**Resolved**");
+}
+
+function readStatusReplyRefs(metadata: AgentRun["metadata"]): Record<string, StatusReplyRef> {
+  const raw = metadata?.statusReplyRefs;
+  if (!raw || typeof raw !== "object") {
+    return {};
+  }
+
+  const refs: Record<string, StatusReplyRef> = {};
+  for (const [feedbackId, value] of Object.entries(raw)) {
+    if (!value || typeof value !== "object") {
+      continue;
+    }
+
+    const candidate = value as Partial<StatusReplyRef>;
+    if (
+      typeof candidate.commentDatabaseId === "number"
+      && (candidate.replyKind === "review_thread" || candidate.replyKind === "review" || candidate.replyKind === "general_comment")
+      && typeof candidate.body === "string"
+    ) {
+      refs[feedbackId] = {
+        commentDatabaseId: candidate.commentDatabaseId,
+        replyKind: candidate.replyKind,
+        body: candidate.body,
+      };
+    }
+  }
+
+  return refs;
+}
+
+function findStatusReplyRefForFeedback(item: FeedbackItem, feedbackItems: FeedbackItem[]): StatusReplyRef | null {
+  for (const candidate of feedbackItems) {
+    if (candidate.id === item.id || !looksLikeStatusReply(candidate.body)) {
+      continue;
+    }
+
+    const commentDatabaseId = Number(candidate.sourceId);
+    if (!Number.isFinite(commentDatabaseId)) {
+      continue;
+    }
+
+    if (item.replyKind === "review_thread") {
+      if (candidate.type !== "review_comment" || !item.threadId || candidate.threadId !== item.threadId) {
+        continue;
+      }
+
+      return {
+        commentDatabaseId,
+        replyKind: "review_thread",
+        body: candidate.body,
+      };
+    }
+
+    if (candidate.type === "general_comment") {
+      return {
+        commentDatabaseId,
+        replyKind: item.replyKind,
+        body: candidate.body,
+      };
+    }
+  }
+
+  return null;
 }
 
 function collectAuditTrailErrors(params: {
@@ -895,22 +973,44 @@ async function checkDependencyPreflight(params: DependencyPreflightParams): Prom
     return { ok: true };
   }
 
-  const hasLockfile = await Promise.all([
-    pathExists(path.join(params.cwd, "package-lock.json")),
-    pathExists(path.join(params.cwd, "npm-shrinkwrap.json")),
-    pathExists(path.join(params.cwd, "pnpm-lock.yaml")),
-    pathExists(path.join(params.cwd, "yarn.lock")),
-  ]).then((results) => results.some(Boolean));
+  const lockfiles = {
+    packageLock: await pathExists(path.join(params.cwd, "package-lock.json")),
+    npmShrinkwrap: await pathExists(path.join(params.cwd, "npm-shrinkwrap.json")),
+    pnpmLock: await pathExists(path.join(params.cwd, "pnpm-lock.yaml")),
+    yarnLock: await pathExists(path.join(params.cwd, "yarn.lock")),
+  };
 
-  if (!hasLockfile) {
+  if (!lockfiles.packageLock && !lockfiles.npmShrinkwrap && !lockfiles.pnpmLock && !lockfiles.yarnLock) {
     return { ok: true };
   }
 
   if (!(await pathExists(path.join(params.cwd, "node_modules")))) {
-    return {
-      ok: false,
-      reason: "Node dependency cache is missing in the PR worktree; install dependencies before starting remediation",
-    };
+    const ignoreCheck = await params.runCommand("git", ["check-ignore", "-q", "node_modules/"], {
+      cwd: params.cwd,
+      timeoutMs: 5000,
+    });
+    if (ignoreCheck.code !== 0) {
+      return {
+        ok: false,
+        reason: "Node dependency cache is missing, but node_modules is not ignored by git; refusing to install dependencies automatically",
+      };
+    }
+
+    const installCommand = lockfiles.pnpmLock
+      ? { command: "pnpm", args: ["install", "--frozen-lockfile"] }
+      : lockfiles.yarnLock
+        ? { command: "yarn", args: ["install", "--frozen-lockfile"] }
+        : { command: "npm", args: ["ci"] };
+    const result = await params.runCommand(installCommand.command, installCommand.args, {
+      cwd: params.cwd,
+      timeoutMs: 300000,
+    });
+    if (result.code !== 0) {
+      return {
+        ok: false,
+        reason: summarizeCommandResult(result, `Dependency install failed while running ${installCommand.command} ${installCommand.args.join(" ")}`),
+      };
+    }
   }
 
   return { ok: true };
@@ -975,11 +1075,29 @@ export class PRBabysitter {
       drainReason: message,
     });
 
-    await Promise.all(prIds.map((prId) =>
-      this.storage.addLog(prId, "error", `Automation paused: ${message}`, {
+    await Promise.all(prIds.map(async (prId) => {
+      const pr = await this.storage.getPR(prId);
+      if (pr) {
+        const updatedItems = pr.feedbackItems.map((item) =>
+          item.decision === "accept" && (item.status === "queued" || item.status === "in_progress")
+            ? markFailed(item, message)
+            : item,
+        );
+        if (updatedItems.some((item, index) => item !== pr.feedbackItems[index])) {
+          const counters = countDecisions(updatedItems);
+          await this.storage.updatePR(pr.id, {
+            feedbackItems: updatedItems,
+            accepted: counters.accepted,
+            rejected: counters.rejected,
+            flagged: counters.flagged,
+          });
+        }
+      }
+
+      await this.storage.addLog(prId, "error", `Automation paused: ${message}`, {
         phase: "agent.health",
-      }),
-    ));
+      });
+    }));
   }
 
   private async ensureAgentHealthy(agent: CodingAgent, prIds: string[]): Promise<void> {
@@ -1317,7 +1435,10 @@ export class PRBabysitter {
       if (!authenticatedLoginPromise) {
         authenticatedLoginPromise = (this.github.getAuthenticatedLogin?.(octokit) ?? Promise.resolve(null))
           .catch((error) => {
-            console.error("Failed to determine authenticated GitHub login for watcher filtering", error);
+            log.warn(
+              { err: error instanceof Error ? error.message : String(error) },
+              "Failed to determine authenticated GitHub login for watcher filtering",
+            );
             return null;
           });
       }
@@ -1336,7 +1457,10 @@ export class PRBabysitter {
       try {
         openPulls = await this.github.listOpenPullsForRepo(octokit, repo);
       } catch (error) {
-        console.error(`Failed to list open PRs for ${repoSlug}`, error);
+        log.warn(
+          { err: error instanceof Error ? error.message : String(error), repo: repoSlug },
+          "Failed to list open PRs",
+        );
         continue;
       }
 
@@ -1379,7 +1503,7 @@ export class PRBabysitter {
             phase: "watcher",
           });
 
-          const repoAutoCreateReleases = repoSettingsByRepo.get(repoSlug)?.autoCreateReleases ?? true;
+          const repoAutoCreateReleases = repoSettingsByRepo.get(repoSlug)?.autoCreateReleases ?? false;
           if (closeState?.merged && this.releaseManager && config.autoCreateReleases) {
             if (!repoAutoCreateReleases) {
               await this.storage.addLog(pr.id, "info", `PR #${pr.number} was merged, but auto-release is disabled for ${repoSlug}`, {
@@ -1687,7 +1811,10 @@ export class PRBabysitter {
 	          });
 	        })
 	        .catch((logError) => {
-	          console.error("Babysitter log write failed", logError);
+	          log.warn(
+	            { err: logError instanceof Error ? logError.message : String(logError) },
+	            "Babysitter log write failed",
+	          );
 	        });
 
       return logQueue;
@@ -2112,14 +2239,69 @@ export class PRBabysitter {
       const includeRepositoryLinksInGitHubComments = config.includeRepositoryLinksInGitHubComments;
       const postGitHubProgressReplies = config.postGitHubProgressReplies;
       // Track status reply comments so we can update them with progress.
-      const statusReplies = new Map<string, StatusReplyRef>();
+      const statusReplies = new Map<string, StatusReplyRef>(
+        Object.entries(readStatusReplyRefs(runRecord.metadata)),
+      );
+      const persistStatusReplyRef = async (feedbackId: string, ref: StatusReplyRef) => {
+        const statusReplyRefs = {
+          ...readStatusReplyRefs(runRecord.metadata),
+          [feedbackId]: ref,
+        };
+        await updateRunRecord({
+          metadata: {
+            ...(runRecord.metadata ?? {}),
+            statusReplyRefs,
+          },
+        });
+      };
+      const recoverStatusReplyRef = async (feedbackId: string): Promise<StatusReplyRef | null> => {
+        const existing = statusReplies.get(feedbackId);
+        if (existing) {
+          return existing;
+        }
+
+        const item = pr.feedbackItems.find((candidate) => candidate.id === feedbackId);
+        if (!item) {
+          return null;
+        }
+
+        const recovered = findStatusReplyRefForFeedback(item, pr.feedbackItems);
+        if (!recovered) {
+          return null;
+        }
+
+        statusReplies.set(feedbackId, recovered);
+        await persistStatusReplyRef(feedbackId, recovered);
+        return recovered;
+      };
       const updateItemStatus = async (feedbackId: string, line: string) => {
-        const ref = statusReplies.get(feedbackId);
+        const ref = await recoverStatusReplyRef(feedbackId);
         if (!ref) return;
         try {
           const newBody = appendStatusLine(ref.body, line);
           await this.github.updateStatusReply(octokit, parsedPr, ref, newBody);
+          await persistStatusReplyRef(feedbackId, ref);
         } catch (error) {
+          const item = pr.feedbackItems.find((candidate) => candidate.id === feedbackId);
+          const recovered = item ? findStatusReplyRefForFeedback(item, pr.feedbackItems) : null;
+          if (recovered && recovered.commentDatabaseId !== ref.commentDatabaseId) {
+            try {
+              const newBody = appendStatusLine(recovered.body, line);
+              await this.github.updateStatusReply(octokit, parsedPr, recovered, newBody);
+              statusReplies.set(feedbackId, recovered);
+              await persistStatusReplyRef(feedbackId, recovered);
+              return;
+            } catch (retryError) {
+              await logBestEffortFailure(
+                pr.id,
+                "github.status",
+                `Failed to update recovered status reply for ${feedbackId}: ${summarizeUnknownError(retryError)}`,
+                { feedbackId },
+              );
+              return;
+            }
+          }
+
           await logBestEffortFailure(
             pr.id,
             "github.status",
@@ -2264,6 +2446,7 @@ export class PRBabysitter {
               );
               if (ref) {
                 statusReplies.set(item.id, ref);
+                await persistStatusReplyRef(item.id, ref);
               }
             } catch (error) {
               await logBestEffortFailure(
@@ -2531,6 +2714,7 @@ export class PRBabysitter {
             pr,
             pullSummary,
             requiresVerification: hasCommentOrStatusAgentWork || hasConflicts || docsAssessmentNeeded || hasDocsTask,
+            runCommand: this.runtime.runCommand,
           });
           if (!dependencyPreflight.ok) {
             await queueLog(pr.id, "error", `Dependency preflight failed: ${dependencyPreflight.reason}`, {
@@ -2789,7 +2973,7 @@ export class PRBabysitter {
               await commitDirtyWorktree({
                 currentPrId: pr.id,
                 cwd: worktreePath,
-                commitArgs: ["commit", "--no-edit"],
+                commitArgs: ["commit", "--no-verify", "--no-edit"],
                 phase: "conflict",
                 context: "merge conflict resolution",
               });
@@ -2905,7 +3089,7 @@ export class PRBabysitter {
           await commitDirtyWorktree({
             currentPrId: pr.id,
             cwd: worktreePath,
-            commitArgs: ["commit", "-m", `Apply babysitter fixes for PR #${pr.number}`],
+            commitArgs: ["commit", "--no-verify", "-m", `Apply babysitter fixes for PR #${pr.number}`],
             phase: "verify.git.status",
             context: "agent run",
           });
@@ -3483,7 +3667,11 @@ export class PRBabysitter {
           });
         }
       }
-      console.error("Babysitter failure", error);
+      const failureMsg = error instanceof Error ? error.message : String(error);
+      log.warn({ err: failureMsg, prId }, "Babysitter failure");
+      if (error instanceof Error && error.stack) {
+        log.debug({ stack: error.stack, prId }, "Babysitter failure stack");
+      }
       if (options?.rethrowOnFailure) {
         throw error;
       }

@@ -501,7 +501,7 @@ export class SqliteStorage implements IStorage {
         poll_interval_ms INTEGER NOT NULL,
         max_changes_per_run INTEGER NOT NULL,
         auto_resolve_merge_conflicts INTEGER NOT NULL DEFAULT 1,
-        auto_create_releases INTEGER NOT NULL DEFAULT 1,
+        auto_create_releases INTEGER NOT NULL DEFAULT 0,
         auto_update_docs INTEGER NOT NULL DEFAULT 1,
         include_repository_links_in_github_comments INTEGER NOT NULL DEFAULT 1,
         post_github_progress_replies INTEGER NOT NULL DEFAULT 0,
@@ -516,7 +516,7 @@ export class SqliteStorage implements IStorage {
 
       CREATE TABLE IF NOT EXISTS watched_repos (
         repo TEXT PRIMARY KEY,
-        auto_create_releases INTEGER NOT NULL DEFAULT 1,
+        auto_create_releases INTEGER NOT NULL DEFAULT 0,
         own_prs_only INTEGER NOT NULL DEFAULT 1
       );
 
@@ -793,7 +793,7 @@ export class SqliteStorage implements IStorage {
     this.ensureColumn("config", "github_tokens_json", "TEXT NOT NULL DEFAULT '[]'");
     this.ensureColumn("config", "fallback_to_next_coding_agent", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("config", "auto_resolve_merge_conflicts", "INTEGER NOT NULL DEFAULT 1");
-    this.ensureColumn("config", "auto_create_releases", "INTEGER NOT NULL DEFAULT 1");
+    this.ensureColumn("config", "auto_create_releases", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("config", "auto_update_docs", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("config", "include_repository_links_in_github_comments", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("config", "post_github_progress_replies", "INTEGER NOT NULL DEFAULT 0");
@@ -806,7 +806,7 @@ export class SqliteStorage implements IStorage {
     this.ensureColumn("config", "deployment_check_delay_ms", "INTEGER NOT NULL DEFAULT 60000");
     this.ensureColumn("config", "deployment_check_timeout_ms", "INTEGER NOT NULL DEFAULT 600000");
     this.ensureColumn("config", "deployment_check_poll_interval_ms", "INTEGER NOT NULL DEFAULT 15000");
-    this.ensureColumn("watched_repos", "auto_create_releases", "INTEGER NOT NULL DEFAULT 1");
+    this.ensureColumn("watched_repos", "auto_create_releases", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("watched_repos", "own_prs_only", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("release_runs", "source", "TEXT NOT NULL DEFAULT 'automatic'");
     this.ensureColumn("prs", "watch_enabled", "INTEGER NOT NULL DEFAULT 1");
@@ -862,7 +862,7 @@ export class SqliteStorage implements IStorage {
       pollIntervalMs: row.poll_interval_ms,
       maxChangesPerRun: row.max_changes_per_run,
       autoResolveMergeConflicts: Boolean(row.auto_resolve_merge_conflicts),
-      autoCreateReleases: Boolean(row.auto_create_releases ?? 1),
+      autoCreateReleases: Boolean(row.auto_create_releases ?? Number(DEFAULT_CONFIG.autoCreateReleases)),
       autoUpdateDocs: Boolean(row.auto_update_docs ?? 1),
       includeRepositoryLinksInGitHubComments: Boolean(
         row.include_repository_links_in_github_comments ?? Number(DEFAULT_CONFIG.includeRepositoryLinksInGitHubComments),
@@ -984,7 +984,7 @@ export class SqliteStorage implements IStorage {
         this.run(
           "INSERT INTO watched_repos (repo, auto_create_releases, own_prs_only) VALUES (?, ?, ?)",
           repo,
-          settings?.auto_create_releases ?? 1,
+          settings?.auto_create_releases ?? 0,
           settings?.own_prs_only ?? 1,
         );
       }
@@ -1601,7 +1601,7 @@ export class SqliteStorage implements IStorage {
   ): Promise<WatchedRepo> {
     const existing = (await this.getRepoSettings(repo)) ?? {
       repo,
-      autoCreateReleases: true,
+      autoCreateReleases: false,
       ownPrsOnly: true,
     };
     const next = applyWatchedRepoUpdate(existing, updates);
@@ -2310,6 +2310,14 @@ export class SqliteStorage implements IStorage {
       WHERE status = 'leased' AND lease_expires_at IS NOT NULL AND datetime(lease_expires_at) <= datetime(?)
     `, now, now);
 
+    return Number(result.changes);
+  }
+
+  async clearFailedBackgroundJobs(): Promise<number> {
+    const result = this.run(`
+      DELETE FROM background_jobs
+      WHERE status = 'failed'
+    `);
     return Number(result.changes);
   }
 

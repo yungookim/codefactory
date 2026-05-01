@@ -345,6 +345,35 @@ test("SqliteStorage returns defaults when singleton rows are missing", async () 
   }
 });
 
+test("SqliteStorage schema defaults automatic release creation off", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codefactory-storage-"));
+  const storage = new SqliteStorage(root);
+  const db = createRawDatabase(root);
+
+  try {
+    const configColumns = db.prepare("PRAGMA table_info(config)").all() as Array<{
+      name: string;
+      dflt_value: string | null;
+    }>;
+    const watchedRepoColumns = db.prepare("PRAGMA table_info(watched_repos)").all() as Array<{
+      name: string;
+      dflt_value: string | null;
+    }>;
+
+    assert.equal(
+      configColumns.find((column) => column.name === "auto_create_releases")?.dflt_value,
+      "0",
+    );
+    assert.equal(
+      watchedRepoColumns.find((column) => column.name === "auto_create_releases")?.dflt_value,
+      "0",
+    );
+  } finally {
+    db.close();
+    storage.close();
+  }
+});
+
 test("SqliteStorage migrates legacy github_token into ordered githubTokens", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codefactory-storage-"));
   const storage = new SqliteStorage(root);
@@ -618,6 +647,10 @@ test("SqliteStorage persists background jobs and requeues expired leases", async
       const failedJobs = await second.listBackgroundJobs({ status: "failed" });
       assert.equal(failedJobs.length, 1);
       assert.equal(failedJobs[0]?.id, highPriority.id);
+
+      const cleared = await second.clearFailedBackgroundJobs();
+      assert.equal(cleared, 1);
+      assert.equal((await second.listBackgroundJobs({ status: "failed" })).length, 0);
 
       const queuedJobs = await second.listBackgroundJobs({ status: "queued" });
       assert.equal(queuedJobs.length, 1);

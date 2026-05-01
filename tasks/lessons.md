@@ -1,5 +1,14 @@
 # Lessons Learned
 
+## 2026-05-01 - Keep babysitter orchestration thin and delegate repo repair
+- Pattern: Babysitter failures around dependency preflight, merge conflicts, and repository git hooks exposed too much repo-specific behavior inside the app, causing repeated app-side failures instead of letting the selected coding agent repair the checked-out PR environment.
+- Rule: In `oh-my-pr`, keep the app responsible for deterministic orchestration boundaries only: queueing, leases, workspace isolation, credentials, logging, and final git/GitHub state transitions. Delegate repository-specific setup and repair decisions to the underlying coding agent wherever a human developer would normally inspect and fix the repo.
+- Prevention checklist:
+  - Before adding new babysitter preflight logic, ask whether the condition is a safety boundary or a repo-specific repair task the agent should own.
+  - Keep app-side checks narrow and deterministic; avoid encoding package-manager, hook, framework, or merge-resolution policy unless needed to protect user data or credentials.
+  - When agents handle repo repair, give them an isolated worktree, clear constraints, and explicit success criteria, then let app-owned finalization verify the resulting git state.
+  - Treat repeated deterministic babysitter failures as orchestration design bugs, not as reasons to add another hardcoded special case.
+
 ## 2026-05-01 - Include PATH repair steps for local CLI warnings
 - Pattern: The Codex CLI was installed under an nvm-managed Node bin directory, but oh-my-pr still showed a generic "CLI not installed" warning because the app runtime could not discover it on PATH; the same repair guidance also needed to apply to Claude CLI warnings.
 - Rule: When surfacing local CLI missing warnings for any coding agent, include concrete PATH diagnostics and login-shell repair steps, not only install/restart instructions.

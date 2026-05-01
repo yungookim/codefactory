@@ -13,6 +13,9 @@ oh-my-pr is configured through environment variables and the dashboard settings 
 | `CODEFACTORY_PORT` | `5001` | Legacy port the MCP server connects to when `OH_MY_PR_PORT` is not set |
 | `DATABASE_URL` | (SQLite) | PostgreSQL connection string (optional) |
 | `GITHUB_TOKEN` | — | Fallback GitHub token when no dashboard token is configured; `gh auth` is used after that |
+| `LOG_LEVEL` | `debug` in development, `info` in production | Server log level: `trace`, `debug`, `info`, `warn`, `error`, or `fatal` |
+| `OH_MY_PR_LOG_FILE` | `~/.oh-my-pr/log/server.log` | Override the structured server log file path |
+| `OH_MY_PR_NO_LOG_FILE` | — | Set to `1` to disable structured server log file output |
 
 `CODEFACTORY_PORT` is still accepted by the MCP server as a legacy fallback, but new MCP configurations should use `OH_MY_PR_PORT`.
 
@@ -38,6 +41,19 @@ oh-my-pr writes daily activity logs to:
 
 These logs mirror the dashboard activity feed and are useful for debugging or auditing agent behavior.
 
+The server also writes structured runtime logs to `~/.oh-my-pr/log/server.log` by default. Use `LOG_LEVEL`, `OH_MY_PR_LOG_FILE`, or `OH_MY_PR_NO_LOG_FILE=1` to tune file output.
+
+CLI flags can override the same logging settings for a single run:
+
+```
+oh-my-pr --quiet
+oh-my-pr --verbose
+oh-my-pr --log-level warn
+oh-my-pr --log-level=trace
+oh-my-pr --log-file /tmp/oh-my-pr.log
+oh-my-pr --no-log-file
+```
+
 ## Dashboard Settings
 
 The settings page in the dashboard provides a UI for:
@@ -45,6 +61,7 @@ The settings page in the dashboard provides a UI for:
 - **GitHub token management** — Add, remove, and reorder saved tokens before falling back to `GITHUB_TOKEN` or `gh auth`.
 - **Agent selection** — Choose whether autonomous runs use Claude Code or OpenAI Codex.
 - **Babysitter tuning** — Control polling, batching, merge-conflict handling, release automation, and automatic docs assessment.
+- **Runtime drain mode** — Pause new automation runs from Settings while allowing in-flight runs to finish.
 - **Ignored bots** — Add or remove bot logins whose comments and reviews should be ignored.
 - **PR comment branding** — Toggle whether agent-authored GitHub PR comments link back to oh-my-pr and include the `Posted by oh-my-pr` footer.
 - **GitHub progress replies** — Toggle whether the babysitter posts public Accepted/running/completed status replies while working through review comments.
@@ -60,9 +77,9 @@ Watched repositories also have repo-level settings exposed in the dashboard's re
 |---------|---------|-------------|
 | `ownPrsOnly` | `true` | Auto-discover only PRs authored by the authenticated GitHub user for that repo. This appears in the dashboard as **My PRs only**. |
 | `ownPrsOnly` | `false` | Auto-discover all open PRs in that repo. This appears in the dashboard as **My PRs + teammates**. |
-| `autoCreateReleases` | `true` | Keep release automation enabled for the repo when the rest of the release prerequisites are met. |
+| `autoCreateReleases` | `false` | Keep automatic release publishing opt-in for the repo. Enable it when merged PRs should publish GitHub releases automatically after the rest of the release prerequisites are met. |
 
-New watched repos default to **My PRs only**. If you want team-wide tracking for a repository, switch it to **My PRs + teammates** in the dashboard or patch `ownPrsOnly: false` through `/api/repos/settings`.
+New watched repos default to **My PRs only** with automatic release publishing disabled. If you want team-wide tracking for a repository, switch it to **My PRs + teammates** in the dashboard or patch `ownPrsOnly: false` through `/api/repos/settings`.
 
 PRs added directly by URL stay tracked regardless of a repo's `ownPrsOnly` setting.
 

@@ -3,7 +3,20 @@ import type { CheckSnapshot, Config, FeedbackItem } from "@shared/schema";
 import { z } from "zod";
 import { runCommand } from "./agentRunner";
 import { normalizeCheckSnapshotsFromRef } from "./ciCheckIngestor";
+import { childLogger } from "./logger";
 import { renderGitHubMarkdown } from "./markdown";
+
+const octokitLog = childLogger("octokit");
+
+const octokitLogger = {
+  debug: (msg: string, ...args: unknown[]) => octokitLog.debug({ args }, msg),
+  info: (msg: string, ...args: unknown[]) => octokitLog.info({ args }, msg),
+  warn: (msg: string, ...args: unknown[]) => {
+    if (typeof msg === "string" && /is deprecated/i.test(msg)) return;
+    octokitLog.warn({ args }, msg);
+  },
+  error: (msg: string, ...args: unknown[]) => octokitLog.error({ args }, msg),
+};
 
 export type ParsedPRUrl = {
   owner: string;
@@ -697,6 +710,7 @@ export async function buildOctokit(
   const configuredToken = resolveConfiguredGitHubToken(config);
   const buildClient = (authToken?: string) => new Octokit({
     auth: authToken,
+    log: octokitLogger,
     request: {
       ...(deps.requestFetch ? { fetch: deps.requestFetch } : {}),
       headers: {

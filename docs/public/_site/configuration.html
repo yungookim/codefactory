@@ -204,6 +204,21 @@
 <td>—</td>
 <td>Fallback GitHub token when no dashboard token is configured; <code>gh auth</code> is used after that</td>
 </tr>
+<tr>
+<td><code>LOG_LEVEL</code></td>
+<td><code>debug</code> in development, <code>info</code> in production</td>
+<td>Server log level: <code>trace</code>, <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code>, or <code>fatal</code></td>
+</tr>
+<tr>
+<td><code>OH_MY_PR_LOG_FILE</code></td>
+<td><code>~/.oh-my-pr/log/server.log</code></td>
+<td>Override the structured server log file path</td>
+</tr>
+<tr>
+<td><code>OH_MY_PR_NO_LOG_FILE</code></td>
+<td>—</td>
+<td>Set to <code>1</code> to disable structured server log file output</td>
+</tr>
 </tbody></table>
 <p><code>CODEFACTORY_PORT</code> is still accepted by the MCP server as a legacy fallback, but new MCP configurations should use <code>OH_MY_PR_PORT</code>.</p>
 <h2>Storage</h2>
@@ -217,12 +232,22 @@
 <pre><code>~/.oh-my-pr/log/
 </code></pre>
 <p>These logs mirror the dashboard activity feed and are useful for debugging or auditing agent behavior.</p>
+<p>The server also writes structured runtime logs to <code>~/.oh-my-pr/log/server.log</code> by default. Use <code>LOG_LEVEL</code>, <code>OH_MY_PR_LOG_FILE</code>, or <code>OH_MY_PR_NO_LOG_FILE=1</code> to tune file output.</p>
+<p>CLI flags can override the same logging settings for a single run:</p>
+<pre><code>oh-my-pr --quiet
+oh-my-pr --verbose
+oh-my-pr --log-level warn
+oh-my-pr --log-level=trace
+oh-my-pr --log-file /tmp/oh-my-pr.log
+oh-my-pr --no-log-file
+</code></pre>
 <h2>Dashboard Settings</h2>
 <p>The settings page in the dashboard provides a UI for:</p>
 <ul>
 <li><strong>GitHub token management</strong> — Add, remove, and reorder saved tokens before falling back to <code>GITHUB_TOKEN</code> or <code>gh auth</code>.</li>
 <li><strong>Agent selection</strong> — Choose whether autonomous runs use Claude Code or OpenAI Codex.</li>
 <li><strong>Babysitter tuning</strong> — Control polling, batching, merge-conflict handling, release automation, and automatic docs assessment.</li>
+<li><strong>Runtime drain mode</strong> — Pause new automation runs from Settings while allowing in-flight runs to finish.</li>
 <li><strong>Ignored bots</strong> — Add or remove bot logins whose comments and reviews should be ignored.</li>
 <li><strong>PR comment branding</strong> — Toggle whether agent-authored GitHub PR comments link back to oh-my-pr and include the <code>Posted by oh-my-pr</code> footer.</li>
 <li><strong>GitHub progress replies</strong> — Toggle whether the babysitter posts public Accepted/running/completed status replies while working through review comments.</li>
@@ -252,11 +277,11 @@
 </tr>
 <tr>
 <td><code>autoCreateReleases</code></td>
-<td><code>true</code></td>
-<td>Keep release automation enabled for the repo when the rest of the release prerequisites are met.</td>
+<td><code>false</code></td>
+<td>Keep automatic release publishing opt-in for the repo. Enable it when merged PRs should publish GitHub releases automatically after the rest of the release prerequisites are met.</td>
 </tr>
 </tbody></table>
-<p>New watched repos default to <strong>My PRs only</strong>. If you want team-wide tracking for a repository, switch it to <strong>My PRs + teammates</strong> in the dashboard or patch <code>ownPrsOnly: false</code> through <code>/api/repos/settings</code>.</p>
+<p>New watched repos default to <strong>My PRs only</strong> with automatic release publishing disabled. If you want team-wide tracking for a repository, switch it to <strong>My PRs + teammates</strong> in the dashboard or patch <code>ownPrsOnly: false</code> through <code>/api/repos/settings</code>.</p>
 <p>PRs added directly by URL stay tracked regardless of a repo&#39;s <code>ownPrsOnly</code> setting.</p>
 <h2>Manual Repository Releases</h2>
 <p>Each watched repository row in the dashboard includes a <strong>Release</strong> button. Pressing it queues a manual release run for the latest unreleased merged PR in that repository, using the same release evaluation, version bump, notes, and GitHub publishing flow as automatic release creation.</p>

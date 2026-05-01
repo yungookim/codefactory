@@ -2,7 +2,7 @@
 "use strict";
 
 const pkg = require("../package.json");
-const { formatCliHelp, parseCliArgs } = require("../dist/cli.cjs");
+const { applyLogEnv, formatCliHelp, parseCliArgs } = require("../dist/cli.cjs");
 const parsed = parseCliArgs(process.argv.slice(2));
 
 if (parsed.mode === "version") {
@@ -15,10 +15,11 @@ if (parsed.mode === "help") {
     console.error(parsed.error);
   }
   console.log(formatCliHelp(pkg.version));
-  process.exit(0);
+  process.exit(parsed.error ? 1 : 0);
 }
 
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
+applyLogEnv(parsed.log);
 if (parsed.mode === "mcp") {
   require("../dist/mcp.cjs");
 } else if (parsed.mode === "web") {

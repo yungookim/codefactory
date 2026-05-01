@@ -446,7 +446,7 @@ describe("MemStorage", () => {
       assert.equal(updated.autoUpdateDocs, true);
       assert.equal(updated.includeRepositoryLinksInGitHubComments, true);
       assert.equal(updated.postGitHubProgressReplies, false);
-      assert.equal(updated.autoCreateReleases, true);
+      assert.equal(updated.autoCreateReleases, DEFAULT_CONFIG.autoCreateReleases);
       assert.equal(updated.autoHealCI, false);
       assert.equal(updated.maxHealingAttemptsPerSession, 3);
     });
@@ -478,7 +478,7 @@ describe("MemStorage", () => {
       const repos = await storage.listRepoSettings();
       assert.deepEqual(repos, [{
         repo: "acme/widgets",
-        autoCreateReleases: true,
+        autoCreateReleases: false,
         ownPrsOnly: true,
       }]);
     });
@@ -592,6 +592,10 @@ describe("MemStorage", () => {
       const failedJobs = await storage.listBackgroundJobs({ status: "failed" });
       assert.equal(failedJobs.length, 1);
       assert.equal(failedJobs[0]?.id, highPriority.id);
+
+      const cleared = await storage.clearFailedBackgroundJobs();
+      assert.equal(cleared, 1);
+      assert.equal((await storage.listBackgroundJobs({ status: "failed" })).length, 0);
 
       const queuedJobs = await storage.listBackgroundJobs({ status: "queued" });
       assert.equal(queuedJobs.length, 1);

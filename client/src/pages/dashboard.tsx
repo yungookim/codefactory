@@ -253,7 +253,15 @@ function ActivitySection({
   );
 }
 
-function ActivityMenu({ activities }: { activities: ActivitySnapshot }) {
+function ActivityMenu({
+  activities,
+  onClearFailed,
+  isClearingFailed,
+}: {
+  activities: ActivitySnapshot;
+  onClearFailed: () => void;
+  isClearingFailed: boolean;
+}) {
   const failedCount = activities.failed.length;
   const inProgressCount = activities.inProgress.length;
   const queuedCount = activities.queued.length;
@@ -272,7 +280,20 @@ function ActivityMenu({ activities }: { activities: ActivitySnapshot }) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-80 p-0">
         <div className="border-b border-border px-2 py-2">
-          <div className="text-[12px] font-medium">Activities</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[12px] font-medium">Activities</div>
+            {failedCount > 0 && (
+              <button
+                type="button"
+                onClick={onClearFailed}
+                disabled={isClearingFailed}
+                className="border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                data-testid="clear-failed-activities"
+              >
+                {isClearingFailed ? "clearing" : "clear failed"}
+              </button>
+            )}
+          </div>
           <div className="text-[11px] text-muted-foreground">
             {failedCount} failed / {inProgressCount} in progress / {queuedCount} queued
           </div>
@@ -1091,6 +1112,20 @@ export default function Dashboard() {
     },
   });
 
+  const clearFailedActivitiesMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("DELETE", "/api/activities/failed");
+      return res.json() as Promise<{ cleared: number }>;
+    },
+    onSuccess: ({ cleared }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/activities"] });
+      toast({ description: cleared === 1 ? "Cleared 1 failed activity." : `Cleared ${cleared} failed activities.` });
+    },
+    onError: (error) => {
+      showMutationError("Could not clear failed activities", error);
+    },
+  });
+
   const manualReleaseMutation = useMutation({
     mutationFn: async (repo: string) => {
       const res = await apiRequest("POST", "/api/repos/release", { repo });
@@ -1207,7 +1242,11 @@ export default function Dashboard() {
           >
             settings
           </Link>
-          <ActivityMenu activities={activities} />
+          <ActivityMenu
+            activities={activities}
+            onClearFailed={() => clearFailedActivitiesMutation.mutate()}
+            isClearingFailed={clearFailedActivitiesMutation.isPending}
+          />
         </div>
       </header>
 

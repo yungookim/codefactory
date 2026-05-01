@@ -6,6 +6,7 @@ import type { ReleaseAgentPullSummary, ReleaseEvaluationDecision } from "./relea
 import { BackgroundJobQueue, buildBackgroundJobDedupeKey } from "./backgroundJobQueue";
 import { MemStorage } from "./memoryStorage";
 import { ReleaseManager, type ReleaseGitHubService } from "./releaseManager";
+import { _resetRingBufferForTests, readRingBuffer } from "./logger";
 
 function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
@@ -445,29 +446,23 @@ test("ReleaseManager logs release job scheduling failures", async () => {
     },
   });
 
-  const originalConsoleError = console.error;
-  const logged: unknown[][] = [];
-  console.error = (...args: unknown[]) => {
-    logged.push(args);
-  };
+  _resetRingBufferForTests();
 
-  try {
-    const created = await manager.enqueueMergedPullReleaseEvaluation({
-      repo: "yungookim/oh-my-pr",
-      baseBranch: "main",
-      triggerPrNumber: 75,
-      triggerPrTitle: "Queue failure logging",
-      triggerPrUrl: "https://github.com/yungookim/oh-my-pr/pull/75",
-      triggerMergeSha: "queue-failure-sha",
-      triggerMergedAt: "2026-03-28T19:00:00.000Z",
-    });
+  const created = await manager.enqueueMergedPullReleaseEvaluation({
+    repo: "yungookim/oh-my-pr",
+    baseBranch: "main",
+    triggerPrNumber: 75,
+    triggerPrTitle: "Queue failure logging",
+    triggerPrUrl: "https://github.com/yungookim/oh-my-pr/pull/75",
+    triggerMergeSha: "queue-failure-sha",
+    triggerMergedAt: "2026-03-28T19:00:00.000Z",
+  });
 
-    await new Promise<void>((resolve) => setImmediate(resolve));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await new Promise<void>((resolve) => setTimeout(resolve, 30));
 
-    assert.equal(logged.length, 1);
-    assert.equal(logged[0][0], `Failed to schedule release run ${created.id}:`);
-    assert.equal(logged[0][1], schedulingError);
-  } finally {
-    console.error = originalConsoleError;
-  }
+  const ring = readRingBuffer().join("\n");
+  assert.match(ring, /Failed to schedule release run/);
+  assert.match(ring, new RegExp(created.id));
+  assert.match(ring, /queue unavailable/);
 });

@@ -23,6 +23,9 @@ import { PRBabysitter } from "./babysitter";
 import { detectAgentUnavailability, type AgentUnavailabilityKind } from "./agentRunner";
 import { applyEvaluationDecision, applyFlagDecision } from "./feedbackLifecycle";
 import { applyManualFeedbackDecision } from "./manualFeedback";
+import { childLogger } from "./logger";
+
+const log = childLogger("runtime");
 import { createBackgroundJobHandlers } from "./backgroundJobHandlers";
 import { BackgroundJobDispatcher } from "./backgroundJobDispatcher";
 import { BackgroundJobQueue, buildBackgroundJobDedupeKey } from "./backgroundJobQueue";
@@ -89,6 +92,7 @@ export type AppRuntime = {
   getRuntimeSnapshot(): Promise<RuntimeSnapshot>;
   setDrainMode(input: DrainModeParams): Promise<RuntimeSnapshot & { drained?: boolean }>;
   listActivities(): Promise<ActivitySnapshot>;
+  clearFailedActivities(): Promise<{ cleared: number }>;
   listRepos(): Promise<string[]>;
   listRepoSettings(): Promise<WatchedRepo[]>;
   addRepo(repoInput: string): Promise<{ repo: string }>;
@@ -378,7 +382,10 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
             attemptCount: job.attemptCount,
           },
         }).catch((error) => {
-          console.error("Failed to log reclaimed background job", error);
+          log.warn(
+            { err: error instanceof Error ? error.message : String(error) },
+            "Failed to log reclaimed background job",
+          );
         });
       }
     },
@@ -395,7 +402,10 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
       );
     },
     (error) => {
-      console.error("Repository babysitter watcher failed", error);
+      log.warn(
+        { err: error instanceof Error ? error.message : String(error) },
+        "Repository babysitter watcher failed",
+      );
     },
   );
   const runWatcher = watcherScheduler.run;
@@ -557,6 +567,19 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     };
   };
 
+  const isFailedActivityForArchivedPR = (job: BackgroundJob, context: ActivityDescriptionContext): boolean => {
+    if (job.kind === "babysit_pr") {
+      return context.prsById.get(job.targetId)?.status === "archived";
+    }
+
+    if (job.kind === "answer_pr_question") {
+      const prId = readJobStringPayload(job, "prId");
+      return prId ? context.prsById.get(prId)?.status === "archived" : false;
+    }
+
+    return false;
+  };
+
   const mapOperatorWarning = (job: BackgroundJob, context: ActivityDescriptionContext): OperatorWarning | null => {
     const failure = classifyAgentAvailabilityFailure(job);
     if (!failure) {
@@ -675,9 +698,10 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
         storage.listBackgroundJobs({ status: "queued" }),
       ]);
 
-      const failedWarningJobs = failedJobs.filter((job) => classifyAgentAvailabilityFailure(job));
       const descriptionContext = await buildActivityDescriptionContext([...failedJobs, ...leasedJobs, ...queuedJobs]);
-      const failed = failedJobs.map((job) => mapActivityJob(job, descriptionContext));
+      const visibleFailedJobs = failedJobs.filter((job) => !isFailedActivityForArchivedPR(job, descriptionContext));
+      const failedWarningJobs = visibleFailedJobs.filter((job) => classifyAgentAvailabilityFailure(job));
+      const failed = visibleFailedJobs.map((job) => mapActivityJob(job, descriptionContext));
       const inProgress = leasedJobs.map((job) => mapActivityJob(job, descriptionContext));
       const queued = queuedJobs.map((job) => mapActivityJob(job, descriptionContext));
       const warnings = failedWarningJobs
@@ -693,6 +717,14 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
         warnings,
         generatedAt: new Date().toISOString(),
       };
+    },
+
+    async clearFailedActivities() {
+      const cleared = await storage.clearFailedBackgroundJobs();
+      if (cleared > 0) {
+        notifyChange();
+      }
+      return { cleared };
     },
 
     async setDrainMode(input) {
@@ -742,7 +774,7 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
         if (!byRepo.has(pr.repo)) {
           byRepo.set(pr.repo, {
             repo: pr.repo,
-            autoCreateReleases: true,
+            autoCreateReleases: false,
             ownPrsOnly: true,
           });
         }

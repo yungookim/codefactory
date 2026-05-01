@@ -117,6 +117,14 @@ export async function registerRoutes(
     res.json(await runtime.listActivities());
   });
 
+  app.delete("/api/activities/failed", async (_req, res) => {
+    try {
+      res.json(await runtime.clearFailedActivities());
+    } catch (error: unknown) {
+      sendAppAwareError(res, error);
+    }
+  });
+
   app.post("/api/runtime/drain", async (req, res) => {
     try {
       const payload = z.object({
