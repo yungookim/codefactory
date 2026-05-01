@@ -1,5 +1,13 @@
 # Lessons Learned
 
+## 2026-04-30 - Keep speculative automation acknowledgements local
+- Pattern: The babysitter posted "Accepted" progress replies on GitHub for every accepted review comment, which surprised teammates because triage acknowledgements looked like public conversation from the user before a fix existed.
+- Rule: In `oh-my-pr`, only post GitHub replies when there is a concrete command, result, audit trail, or thread-resolution outcome to expose; keep speculative triage/progress acknowledgements in local logs unless the user explicitly opts into public progress chatter in Settings.
+- Prevention checklist:
+  - Before adding or preserving automated GitHub comments, classify whether the comment is an audit/result or only a status acknowledgement.
+  - Prefer local logs and dashboard state for noisy intermediate automation progress.
+  - Regression-test both default-off and opt-in enabled behavior for any outward-facing automation comment setting.
+
 ## 2026-04-28 - Make agent recovery opt-in and settings-visible
 - Pattern: A request to surface coding-agent auth failures expanded into fallback behavior, and the user had to specify that fallback should be configurable, settings-visible, and disabled by default.
 - Rule: When adding automatic recovery behavior that can switch execution tools or change operator intent, make it opt-in unless the user explicitly asks for always-on automation.

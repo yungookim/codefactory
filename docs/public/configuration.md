@@ -46,7 +46,9 @@ The settings page in the dashboard provides a UI for:
 - **Agent selection** — Choose whether autonomous runs use Claude Code or OpenAI Codex.
 - **Babysitter tuning** — Control polling, batching, merge-conflict handling, release automation, and automatic docs assessment.
 - **Runtime drain mode** — Pause new automation runs from Settings while allowing in-flight runs to finish.
+- **Ignored bots** — Add or remove bot logins whose comments and reviews should be ignored.
 - **PR comment branding** — Toggle whether agent-authored GitHub PR comments link back to oh-my-pr and include the `Posted by oh-my-pr` footer.
+- **GitHub progress replies** — Toggle whether the babysitter posts public Accepted/running/completed status replies while working through review comments.
 - **CI healing** — Enable autonomous CI repair and tune retry/session limits.
 - **Deployment healing** — Not yet exposed in the dashboard; use `PATCH /api/config` for the deployment-healing keys listed below.
 - **Theme** — Toggle between light and dark mode.
@@ -92,8 +94,9 @@ Agent-authored GitHub PR comments posted by the babysitter — follow-up replies
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `Repository links in PR comments` | `true` | When enabled, babysitter comments render the app name as a Markdown link to the oh-my-pr repo and append the `Posted by oh-my-pr` footer. When disabled, comments reference `oh-my-pr` as plain text and omit the footer. |
+| `GitHub progress replies` | `false` | When enabled, the babysitter posts public status replies on accepted review feedback as it moves from queued to running, completed, and resolved. When disabled, it still posts the final follow-up reply without intermediate public progress updates. |
 
-This toggle is available in the dashboard settings page and as `includeRepositoryLinksInGitHubComments` (boolean) in `GET /api/config`, `PATCH /api/config`, and the MCP `update_config` tool. Turning it off is useful for private forks or environments where operators do not want outgoing PR comments to link to the upstream oh-my-pr repository.
+These toggles are available in the dashboard settings page and as `includeRepositoryLinksInGitHubComments` plus `postGitHubProgressReplies` (booleans) in `GET /api/config`, `PATCH /api/config`, and the MCP `update_config` tool. Turning repository links off is useful for private forks or environments where operators do not want outgoing PR comments to link to the upstream oh-my-pr repository.
 
 ## CI Healing Settings
 

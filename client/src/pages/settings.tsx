@@ -488,6 +488,27 @@ export default function Settings() {
                 />
               </div>
 
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm">GitHub progress replies</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Post public Accepted/running/completed status replies while the babysitter works on review comments.
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  aria-label="GitHub progress replies"
+                  checked={config?.postGitHubProgressReplies ?? false}
+                  onChange={(e) =>
+                    updateConfigMutation.mutate({
+                      postGitHubProgressReplies: e.target.checked,
+                    })
+                  }
+                  disabled={updateConfigMutation.isPending}
+                  className="h-4 w-4 accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                />
+              </div>
+
               <div>
                 <div className="text-sm">Trusted reviewers</div>
                 <div className="text-[11px] text-muted-foreground">
@@ -497,18 +518,111 @@ export default function Settings() {
                 </div>
               </div>
 
-              <div>
-                <div className="text-sm">Ignored bots</div>
-                <div className="text-[11px] text-muted-foreground">
-                  {config?.ignoredBots?.length
-                    ? config.ignoredBots.join(", ")
-                    : "none configured"}
-                </div>
-              </div>
+              <StringListRow
+                label="Ignored bots"
+                description="Bot logins whose comments and reviews are ignored."
+                placeholder="dependabot[bot]"
+                values={config?.ignoredBots ?? []}
+                onChange={(next) => updateConfigMutation.mutate({ ignoredBots: next })}
+                disabled={!config || updateConfigMutation.isPending}
+              />
             </div>
           </section>
         </div>
       </div>
+    </div>
+  );
+}
+
+function StringListRow({
+  label,
+  description,
+  placeholder,
+  values,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  description: string;
+  placeholder: string;
+  values: string[];
+  onChange: (next: string[]) => void;
+  disabled: boolean;
+}) {
+  const [draft, setDraft] = useState("");
+  const inputId = `setting-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+  const descriptionId = `${inputId}-description`;
+
+  const addValue = () => {
+    const trimmed = draft.trim();
+    const lowered = trimmed.toLowerCase();
+    if (!trimmed || values.some((v) => v.toLowerCase() === lowered)) {
+      setDraft("");
+      return;
+    }
+    onChange([...values, trimmed]);
+    setDraft("");
+  };
+
+  const removeValue = (index: number) => {
+    onChange(values.filter((_, i) => i !== index));
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-end gap-2">
+        <label htmlFor={inputId} className="min-w-0 flex-1 cursor-pointer">
+          <span className="block text-sm">{label}</span>
+          <span id={descriptionId} className="block text-[11px] text-muted-foreground">{description}</span>
+          <input
+            id={inputId}
+            type="text"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addValue();
+              }
+            }}
+            placeholder={placeholder}
+            disabled={disabled}
+            aria-describedby={descriptionId}
+            className="mt-2 w-full min-w-0 border border-border bg-transparent px-2 py-1 text-sm focus:border-foreground focus:outline-none disabled:opacity-50"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={addValue}
+          disabled={!draft.trim() || disabled}
+          className="border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+        >
+          add
+        </button>
+      </div>
+      {values.length ? (
+        <div className="flex flex-wrap gap-1.5">
+          {values.map((value, index) => (
+            <span
+              key={value}
+              className="inline-flex items-center gap-1.5 border border-border px-2 py-0.5 font-mono text-xs"
+            >
+              {value}
+              <button
+                type="button"
+                onClick={() => removeValue(index)}
+                disabled={disabled}
+                aria-label={`Remove ${value}`}
+                className="text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div className="text-[11px] text-muted-foreground">none configured</div>
+      )}
     </div>
   );
 }
