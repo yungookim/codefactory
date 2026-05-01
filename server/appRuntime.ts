@@ -771,7 +771,7 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
         if (!byRepo.has(pr.repo)) {
           byRepo.set(pr.repo, {
             repo: pr.repo,
-            autoCreateReleases: true,
+            autoCreateReleases: false,
             ownPrsOnly: true,
           });
         }

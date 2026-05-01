@@ -298,7 +298,7 @@ export default function Settings() {
                 </div>
                 <input
                   type="checkbox"
-                  checked={config?.autoCreateReleases ?? true}
+                  checked={config?.autoCreateReleases ?? false}
                   onChange={(e) => updateConfigMutation.mutate({ autoCreateReleases: e.target.checked })}
                   disabled={updateConfigMutation.isPending}
                   className="mt-1 accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"

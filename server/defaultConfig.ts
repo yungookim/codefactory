@@ -9,7 +9,7 @@ export const DEFAULT_CONFIG: Config = {
   pollIntervalMs: 120000,
   maxChangesPerRun: 20,
   autoResolveMergeConflicts: true,
-  autoCreateReleases: true,
+  autoCreateReleases: false,
   autoUpdateDocs: true,
   includeRepositoryLinksInGitHubComments: true,
   postGitHubProgressReplies: false,

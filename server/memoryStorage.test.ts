@@ -446,7 +446,7 @@ describe("MemStorage", () => {
       assert.equal(updated.autoUpdateDocs, true);
       assert.equal(updated.includeRepositoryLinksInGitHubComments, true);
       assert.equal(updated.postGitHubProgressReplies, false);
-      assert.equal(updated.autoCreateReleases, true);
+      assert.equal(updated.autoCreateReleases, DEFAULT_CONFIG.autoCreateReleases);
       assert.equal(updated.autoHealCI, false);
       assert.equal(updated.maxHealingAttemptsPerSession, 3);
     });
@@ -478,7 +478,7 @@ describe("MemStorage", () => {
       const repos = await storage.listRepoSettings();
       assert.deepEqual(repos, [{
         repo: "acme/widgets",
-        autoCreateReleases: true,
+        autoCreateReleases: false,
         ownPrsOnly: true,
       }]);
     });

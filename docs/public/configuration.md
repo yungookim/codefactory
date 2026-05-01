@@ -77,9 +77,9 @@ Watched repositories also have repo-level settings exposed in the dashboard's re
 |---------|---------|-------------|
 | `ownPrsOnly` | `true` | Auto-discover only PRs authored by the authenticated GitHub user for that repo. This appears in the dashboard as **My PRs only**. |
 | `ownPrsOnly` | `false` | Auto-discover all open PRs in that repo. This appears in the dashboard as **My PRs + teammates**. |
-| `autoCreateReleases` | `true` | Keep release automation enabled for the repo when the rest of the release prerequisites are met. |
+| `autoCreateReleases` | `false` | Keep automatic release publishing opt-in for the repo. Enable it when merged PRs should publish GitHub releases automatically after the rest of the release prerequisites are met. |
 
-New watched repos default to **My PRs only**. If you want team-wide tracking for a repository, switch it to **My PRs + teammates** in the dashboard or patch `ownPrsOnly: false` through `/api/repos/settings`.
+New watched repos default to **My PRs only** with automatic release publishing disabled. If you want team-wide tracking for a repository, switch it to **My PRs + teammates** in the dashboard or patch `ownPrsOnly: false` through `/api/repos/settings`.
 
 PRs added directly by URL stay tracked regardless of a repo's `ownPrsOnly` setting.
 
