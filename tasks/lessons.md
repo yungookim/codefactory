@@ -8,6 +8,14 @@
   - Add coverage or runtime behavior that clears or supersedes stale agent-availability warnings after a successful rerun or healthy agent check.
   - Make warning copy expose enough state to distinguish current health failures from historical job failures.
 
+## 2026-04-30 - Do not treat CLI path heuristics as universal
+- Pattern: I expanded Codex CLI detection with shell and `nvm` heuristics, but the user correctly pointed out that other people may use unknown shell managers, package managers, or custom install paths.
+- Rule: For local CLI integrations, heuristics are only a convenience layer; the robust product design needs an explicit user-configurable absolute command path or equivalent override.
+- Prevention checklist:
+  - Prefer a layered resolver: configured absolute path first, current process PATH second, common install paths third, shell probing last.
+  - Surface the resolved path and the failing lookup attempts in Settings or diagnostics so users can repair without guessing.
+  - Avoid claiming local-tool detection is fixed across machines until there is a manual override path and regression coverage for it.
+
 ## 2026-04-28 - Make agent recovery opt-in and settings-visible
 - Pattern: A request to surface coding-agent auth failures expanded into fallback behavior, and the user had to specify that fallback should be configurable, settings-visible, and disabled by default.
 - Rule: When adding automatic recovery behavior that can switch execution tools or change operator intent, make it opt-in unless the user explicitly asks for always-on automation.
