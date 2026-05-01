@@ -181,6 +181,17 @@ type AgentAvailabilityFailure = {
   fixSteps: string[];
 };
 
+function buildCliMissingFixSteps(agentLabel: AgentLabel, command: "claude" | "codex"): string[] {
+  return [
+    `Install the ${agentLabel === "Claude" ? "Claude Code" : "Codex"} CLI on this machine.`,
+    `If ${agentLabel} is already installed, make sure oh-my-pr can find it on PATH. The app checks its process PATH, then \`$SHELL -lc "command -v ${command}"\`.`,
+    "For nvm installs, add the active Node bin directory to a login-shell startup file such as ~/.zprofile; for example: export PATH=\"$HOME/.nvm/versions/node/<version>/bin:$PATH\".",
+    `Verify with \`command -v ${command}\` and \`$SHELL -lc "command -v ${command}"\`.`,
+    "Restart oh-my-pr after installing.",
+    "Rerun the babysitter for this PR.",
+  ];
+}
+
 const AGENT_FIX_STEPS: Record<AgentLabel, Record<AgentUnavailabilityKind, string[]>> = {
   Claude: {
     auth: [
@@ -188,11 +199,7 @@ const AGENT_FIX_STEPS: Record<AgentLabel, Record<AgentUnavailabilityKind, string
       "Restart oh-my-pr if it was launched before you refreshed credentials.",
       "Rerun the babysitter for this PR.",
     ],
-    cli_missing: [
-      "Install the Claude Code CLI on this machine.",
-      "Restart oh-my-pr after installing.",
-      "Rerun the babysitter for this PR.",
-    ],
+    cli_missing: buildCliMissingFixSteps("Claude", "claude"),
   },
   Codex: {
     auth: [
@@ -200,11 +207,7 @@ const AGENT_FIX_STEPS: Record<AgentLabel, Record<AgentUnavailabilityKind, string
       "Restart oh-my-pr if it was launched before you refreshed credentials.",
       "Rerun the babysitter for this PR.",
     ],
-    cli_missing: [
-      "Install the Codex CLI on this machine.",
-      "Restart oh-my-pr after installing.",
-      "Rerun the babysitter for this PR.",
-    ],
+    cli_missing: buildCliMissingFixSteps("Codex", "codex"),
   },
 };
 

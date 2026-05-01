@@ -623,6 +623,68 @@ test("GET /api/activities warns when a babysitter job fails from agent authentic
   }
 });
 
+for (const agent of [
+  { preferredAgent: "codex", label: "Codex", installName: "Codex", prNumber: 78 },
+  { preferredAgent: "claude", label: "Claude", installName: "Claude Code", prNumber: 79 },
+] as const) {
+  test(`GET /api/activities explains PATH repair when ${agent.label} CLI is missing`, async () => {
+    const harness = await createHarness();
+    const pr = await seedPR(harness.storage, {
+      title: `fix ${agent.preferredAgent} warning`,
+      repo: "acme/widgets",
+      number: agent.prNumber,
+      url: `https://github.com/acme/widgets/pull/${agent.prNumber}`,
+    });
+
+    try {
+      const job = await harness.storage.enqueueBackgroundJob({
+        kind: "babysit_pr",
+        targetId: pr.id,
+        dedupeKey: `babysit_pr:${pr.id}`,
+        payload: { preferredAgent: agent.preferredAgent },
+        availableAt: "2026-04-26T11:00:00.000Z",
+      });
+      await harness.storage.claimNextBackgroundJob({
+        workerId: "worker-1",
+        leaseToken: "lease-1",
+        leaseExpiresAt: "2026-04-26T11:10:00.000Z",
+        now: "2026-04-26T11:01:00.000Z",
+      });
+      await harness.storage.failBackgroundJob(
+        job.id,
+        "lease-1",
+        `Configured coding agent ${agent.preferredAgent} CLI is not installed`,
+        "2026-04-26T11:02:00.000Z",
+      );
+      await harness.storage.updatePR(pr.id, {
+        status: "error",
+        lastChecked: "2026-04-26T11:02:00.000Z",
+      });
+
+      const response = await fetch(`${harness.baseUrl}/api/activities`);
+      assert.equal(response.status, 200);
+      const body = await response.json() as {
+        warnings?: Array<{
+          title: string;
+          fixSteps: string[];
+        }>;
+      };
+
+      assert.equal(body.warnings?.[0]?.title, `${agent.label} CLI not installed`);
+      assert.deepEqual(body.warnings?.[0]?.fixSteps, [
+        `Install the ${agent.installName} CLI on this machine.`,
+        `If ${agent.label} is already installed, make sure oh-my-pr can find it on PATH. The app checks its process PATH, then \`$SHELL -lc "command -v ${agent.preferredAgent}"\`.`,
+        "For nvm installs, add the active Node bin directory to a login-shell startup file such as ~/.zprofile; for example: export PATH=\"$HOME/.nvm/versions/node/<version>/bin:$PATH\".",
+        `Verify with \`command -v ${agent.preferredAgent}\` and \`$SHELL -lc "command -v ${agent.preferredAgent}"\`.`,
+        "Restart oh-my-pr after installing.",
+        "Rerun the babysitter for this PR.",
+      ]);
+    } finally {
+      await harness.close();
+    }
+  });
+}
+
 test("DELETE /api/activities/failed clears only failed activity jobs", async () => {
   const harness = await createHarness();
   const pr = await seedPR(harness.storage, {
