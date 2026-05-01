@@ -49,6 +49,7 @@ test("serveStatic fallback serves index.html from hidden install paths", async (
     try {
       const response = await fetch(`http://127.0.0.1:${address.port}/settings`);
       assert.equal(response.status, 200);
+      assert.ok(response.headers.get("ratelimit-limit"));
       assert.match(await response.text(), /oh-my-pr/);
     } finally {
       await closeServer(server);
