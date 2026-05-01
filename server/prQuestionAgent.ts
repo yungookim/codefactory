@@ -1,6 +1,6 @@
 import type { IStorage } from "./storage";
 import type { CodingAgent } from "./agentRunner";
-import { resolveAgent, runCommand, summarizeCommandResult } from "./agentRunner";
+import { resolveAgent, runAgentCommand, summarizeCommandResult } from "./agentRunner";
 
 /**
  * Answers a user question about a PR by gathering context (PR state, feedback,
@@ -22,7 +22,7 @@ export async function answerPRQuestion(params: {
     const agent = await resolveAgent(preferredAgent);
     const prompt = buildPrompt(context, question);
 
-    const result = await runCommand(
+    const result = await runAgentCommand(
       agent,
       agent === "claude"
         ? ["-p", "--output-format", "text", prompt]

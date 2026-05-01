@@ -26,7 +26,6 @@ import {
   formatRepoSlug,
   GitHubIntegrationError,
   listFailingStatuses,
-  listMergedPullsToday,
   listOpenPullsForRepo,
   parseRepoSlug,
   postFollowUpForFeedbackItem,
@@ -37,7 +36,6 @@ import {
   updateStatusReply,
   type GitHubPullSummary,
   type GitHubStatusFailure,
-  type MergedPRSummary,
   type ParsedPRUrl,
   type ParsedRepoSlug,
   type StatusReplyRef,
@@ -46,7 +44,6 @@ import { CIHealingManager, isTerminalHealingState } from "./ciHealingManager";
 import { classifyCIFailures, type ClassifiedCIFailure } from "./ciFailureClassifier";
 import { isFailingCheckSnapshot } from "./ciCheckIngestor";
 import { runCIHealingRepairAttempt } from "./ciHealingAgent";
-import { generateSocialChangelog } from "./socialChangelogAgent";
 import { getCodeFactoryPaths } from "./paths";
 import { ensureRepoCache, preparePrWorktree, removePrWorktree } from "./repoWorkspace";
 import { buildBackgroundJobDedupeKey, type ScheduleBackgroundJob } from "./backgroundJobQueue";
@@ -82,7 +79,6 @@ type GitHubService = {
   fetchCheckSnapshotsForRef?: typeof fetchCheckSnapshotsForRef;
   getAuthenticatedLogin?: (octokit: Awaited<ReturnType<typeof buildOctokit>>) => Promise<string | null>;
   listFailingStatuses: typeof listFailingStatuses;
-  listMergedPullsToday?: typeof listMergedPullsToday; // optional — absent in test mocks
   listOpenPullsForRepo: typeof listOpenPullsForRepo;
   postFollowUpForFeedbackItem: typeof postFollowUpForFeedbackItem;
   postPRComment: typeof postPRComment;
@@ -142,7 +138,6 @@ const defaultGitHubService: GitHubService = {
     return login ? login : null;
   },
   listFailingStatuses,
-  listMergedPullsToday,
   listOpenPullsForRepo,
   postFollowUpForFeedbackItem,
   postPRComment,
@@ -1448,9 +1443,6 @@ export class PRBabysitter {
       .map((repo) => parseRepoSlug(repo))
       .filter((repo): repo is NonNullable<typeof repo> => Boolean(repo));
 
-    // Repos that had at least one PR newly archived this cycle — checked for merges.
-    const reposWithNewlyArchivedPRs: typeof repos = [];
-
     for (const repo of repos) {
       const repoSlug = formatRepoSlug(repo);
 
@@ -1476,7 +1468,6 @@ export class PRBabysitter {
 
       // Archive tracked PRs that are no longer open on GitHub
       const trackedForRepo = tracked.filter((pr) => pr.repo === repoSlug);
-      let hadNewlyArchived = false;
       for (const pr of trackedForRepo) {
         if (!openNumbers.has(pr.number) && pr.status !== "archived") {
           let closeState:
@@ -1607,14 +1598,8 @@ export class PRBabysitter {
               }
             }
           }
-
-          hadNewlyArchived = true;
         }
       }
-      if (hadNewlyArchived) {
-        reposWithNewlyArchivedPRs.push(repo);
-      }
-
       for (const pull of openPulls) {
         let local = await this.storage.getPRByRepoAndNumber(repoSlug, pull.number);
         if (!local) {
@@ -1673,106 +1658,6 @@ export class PRBabysitter {
         }
       }
     }
-
-    // Social changelog trigger: after every 5 PRs merged to main today, generate a post.
-    if (reposWithNewlyArchivedPRs.length > 0 && this.github.listMergedPullsToday) {
-      await this.maybeTriggerSocialChangelog(
-        octokit,
-        reposWithNewlyArchivedPRs,
-        config.codingAgent as CodingAgent,
-      );
-    }
-  }
-
-  private async maybeTriggerSocialChangelog(
-    octokit: Awaited<ReturnType<typeof buildOctokit>>,
-    repos: Array<{ owner: string; repo: string }>,
-    preferredAgent: CodingAgent,
-  ): Promise<void> {
-    if (!this.github.listMergedPullsToday) return;
-
-    const today = new Date().toISOString().slice(0, 10);
-    const TRIGGER_EVERY = 5;
-
-    // Aggregate all PRs merged to main today across the affected repos.
-    const allMerged: MergedPRSummary[] = [];
-    for (const repo of repos) {
-      try {
-        const merged = await this.github.listMergedPullsToday(octokit, repo);
-        allMerged.push(...merged);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`social-changelog: failed to list merged PRs for ${formatRepoSlug(repo)}: ${message}`, err);
-      }
-    }
-
-    const totalMergedToday = allMerged.length;
-    if (totalMergedToday === 0 || totalMergedToday % TRIGGER_EVERY !== 0) {
-      return;
-    }
-
-    // Don't generate twice for the same (date, count) pair.
-    const existing = await this.storage.getSocialChangelogForDateAndCount(today, totalMergedToday);
-    if (existing) {
-      return;
-    }
-
-    const prSummaries = allMerged.map((p) => ({
-      number: p.number,
-      title: p.title,
-      url: p.url,
-      author: p.author,
-      repo: p.repo,
-    }));
-
-    const changelog = await this.storage.createSocialChangelog({
-      date: today,
-      triggerCount: totalMergedToday,
-      prSummaries,
-      content: null,
-      status: "generating",
-      error: null,
-      completedAt: null,
-    });
-
-    console.log(
-      `social-changelog: ${totalMergedToday} PRs merged today — generating social post (id=${changelog.id})`,
-    );
-
-    if (this.scheduleBackgroundJob) {
-      try {
-        await this.scheduleBackgroundJob(
-          "generate_social_changelog",
-          changelog.id,
-          buildBackgroundJobDedupeKey("generate_social_changelog", changelog.id),
-          buildActivityPayload({
-            label: "Generating social changelog",
-            detail: `${changelog.date} - ${changelog.triggerCount} merged PRs`,
-            targetUrl: null,
-          }),
-        );
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`social-changelog: failed to enqueue post for id=${changelog.id}: ${message}`, err);
-        await this.storage.updateSocialChangelog(changelog.id, {
-          status: "error",
-          error: message.trim().slice(0, 2_000),
-          completedAt: new Date().toISOString(),
-        });
-      }
-      return;
-    }
-
-    void generateSocialChangelog({
-      storage: this.storage,
-      changelogId: changelog.id,
-      prSummaries,
-      date: today,
-      preferredAgent,
-    }).catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`social-changelog: failed to generate post for id=${changelog.id}: ${message}`, err);
-    });
   }
 
   /**

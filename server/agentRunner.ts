@@ -55,11 +55,41 @@ export function isAgentUnavailableError(error: unknown): boolean {
 }
 
 export async function commandExists(command: string): Promise<boolean> {
+  return (await resolveCommandPath(command)) !== null;
+}
+
+export async function resolveCommandPath(command: string): Promise<string | null> {
+  if (!/^[A-Za-z0-9._-]+$/.test(command)) {
+    return null;
+  }
+
   const result = await runCommand("which", [command], {
     timeoutMs: 4000,
   });
 
-  return result.code === 0;
+  const pathFromCurrentEnv = firstOutputLine(result.stdout);
+  if (result.code === 0 && pathFromCurrentEnv) {
+    return pathFromCurrentEnv;
+  }
+
+  const shell = process.env.SHELL || "/bin/zsh";
+  const shellResult = await runCommand(shell, ["-lc", `command -v ${command}`], {
+    timeoutMs: 4000,
+  });
+  const pathFromLoginShell = firstOutputLine(shellResult.stdout);
+  if (shellResult.code === 0 && pathFromLoginShell) {
+    return pathFromLoginShell;
+  }
+
+  return null;
+}
+
+export async function runAgentCommand(
+  agent: CodingAgent,
+  args: string[],
+  options?: Parameters<typeof runCommand>[2],
+): Promise<CommandResult> {
+  return runCommand((await resolveCommandPath(agent)) ?? agent, args, options);
 }
 
 export async function resolveAgent(
@@ -97,7 +127,7 @@ export async function checkAgentHealth(agent: CodingAgent): Promise<AgentHealthR
 
   const prompt = "Respond with exactly: ok";
   const result = agent === "codex"
-    ? await runCommand(
+    ? await runAgentCommand(
         "codex",
         [
           "exec",
@@ -108,7 +138,7 @@ export async function checkAgentHealth(agent: CodingAgent): Promise<AgentHealthR
         ],
         { timeoutMs: 30000 },
       )
-    : await runCommand(
+    : await runAgentCommand(
         "claude",
         [
           "-p",
@@ -145,7 +175,7 @@ export async function evaluateFixNecessityWithAgent(params: {
     const outputFile = path.join(tempDir, "output.txt");
 
     try {
-      const result = await runCommand(
+      const result = await runAgentCommand(
         "codex",
         [
           "exec",
@@ -189,7 +219,7 @@ export async function evaluateFixNecessityWithAgent(params: {
     extractionPrompt,
   ];
 
-  const result = await runCommand(
+  const result = await runAgentCommand(
     "claude",
     claudeArgs,
     { cwd, timeoutMs: 180000 },
@@ -213,7 +243,7 @@ export async function applyFixesWithAgent(params: {
   const { agent, cwd, prompt, env, onStdoutChunk, onStderrChunk } = params;
 
   if (agent === "codex") {
-    const result = await runCommand(
+    const result = await runAgentCommand(
       "codex",
       [
         "exec",
@@ -229,7 +259,7 @@ export async function applyFixesWithAgent(params: {
     return result;
   }
 
-  return runCommand(
+  return runAgentCommand(
     "claude",
     [
       "-p",
@@ -287,6 +317,14 @@ function tryParseJsonFromText(text: string): unknown {
 
 function isMissingFileError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function firstOutputLine(output: string): string | null {
+  const line = output
+    .split(/\r?\n/)
+    .map((candidate) => candidate.trim())
+    .find(Boolean);
+  return line ?? null;
 }
 
 function summarizeHealthFailure(result: CommandResult): string {

@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { resolveAgent, runCommand, type CodingAgent } from "./agentRunner";
+import { resolveAgent, runAgentCommand, type CodingAgent } from "./agentRunner";
 
 const DEFAULT_RELEASE_AGENT_TIMEOUT_MS = 120_000;
 
@@ -45,7 +45,7 @@ export async function evaluateReleaseWorthinessWithAgent(params: {
     const outputFile = path.join(tempDir, "output.txt");
 
     try {
-      const result = await runCommand(
+      const result = await runAgentCommand(
         "codex",
         [
           "exec",
@@ -70,7 +70,7 @@ export async function evaluateReleaseWorthinessWithAgent(params: {
     }
   }
 
-  const result = await runCommand(
+  const result = await runAgentCommand(
     "claude",
     [
       "-p",
