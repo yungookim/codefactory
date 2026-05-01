@@ -5,6 +5,9 @@ import { parseRepoSlug } from "./github";
 import type { IStorage } from "./storage";
 import { buildBackgroundJobDedupeKey, type ScheduleBackgroundJob } from "./backgroundJobQueue";
 import { buildActivityPayload } from "./activityPayload";
+import { childLogger } from "./logger";
+
+const log = childLogger("release");
 import {
   evaluateReleaseWorthinessWithAgent,
   type ReleaseAgentPullSummary,
@@ -459,7 +462,10 @@ export class ReleaseManager {
           }),
         },
       ).catch((error) => {
-        console.error(`Failed to schedule release run ${id}:`, error);
+        log.warn(
+          { err: error instanceof Error ? error.message : String(error), runId: id },
+          "Failed to schedule release run",
+        );
       });
       return;
     }

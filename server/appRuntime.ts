@@ -23,6 +23,9 @@ import { PRBabysitter } from "./babysitter";
 import { detectAgentUnavailability, type AgentUnavailabilityKind } from "./agentRunner";
 import { applyEvaluationDecision, applyFlagDecision } from "./feedbackLifecycle";
 import { applyManualFeedbackDecision } from "./manualFeedback";
+import { childLogger } from "./logger";
+
+const log = childLogger("runtime");
 import { createBackgroundJobHandlers } from "./backgroundJobHandlers";
 import { BackgroundJobDispatcher } from "./backgroundJobDispatcher";
 import { BackgroundJobQueue, buildBackgroundJobDedupeKey } from "./backgroundJobQueue";
@@ -376,7 +379,10 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
             attemptCount: job.attemptCount,
           },
         }).catch((error) => {
-          console.error("Failed to log reclaimed background job", error);
+          log.warn(
+            { err: error instanceof Error ? error.message : String(error) },
+            "Failed to log reclaimed background job",
+          );
         });
       }
     },
@@ -393,7 +399,10 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
       );
     },
     (error) => {
-      console.error("Repository babysitter watcher failed", error);
+      log.warn(
+        { err: error instanceof Error ? error.message : String(error) },
+        "Repository babysitter watcher failed",
+      );
     },
   );
   const runWatcher = watcherScheduler.run;

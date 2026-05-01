@@ -44,7 +44,10 @@ import { CIHealingManager, isTerminalHealingState } from "./ciHealingManager";
 import { classifyCIFailures, type ClassifiedCIFailure } from "./ciFailureClassifier";
 import { isFailingCheckSnapshot } from "./ciCheckIngestor";
 import { runCIHealingRepairAttempt } from "./ciHealingAgent";
+import { childLogger } from "./logger";
 import { getCodeFactoryPaths } from "./paths";
+
+const log = childLogger("babysitter");
 import { ensureRepoCache, preparePrWorktree, removePrWorktree } from "./repoWorkspace";
 import { buildBackgroundJobDedupeKey, type ScheduleBackgroundJob } from "./backgroundJobQueue";
 import { buildActivityPayload } from "./activityPayload";
@@ -1431,7 +1434,10 @@ export class PRBabysitter {
       if (!authenticatedLoginPromise) {
         authenticatedLoginPromise = (this.github.getAuthenticatedLogin?.(octokit) ?? Promise.resolve(null))
           .catch((error) => {
-            console.error("Failed to determine authenticated GitHub login for watcher filtering", error);
+            log.warn(
+              { err: error instanceof Error ? error.message : String(error) },
+              "Failed to determine authenticated GitHub login for watcher filtering",
+            );
             return null;
           });
       }
@@ -1450,7 +1456,10 @@ export class PRBabysitter {
       try {
         openPulls = await this.github.listOpenPullsForRepo(octokit, repo);
       } catch (error) {
-        console.error(`Failed to list open PRs for ${repoSlug}`, error);
+        log.warn(
+          { err: error instanceof Error ? error.message : String(error), repo: repoSlug },
+          "Failed to list open PRs",
+        );
         continue;
       }
 
@@ -1801,7 +1810,10 @@ export class PRBabysitter {
 	          });
 	        })
 	        .catch((logError) => {
-	          console.error("Babysitter log write failed", logError);
+	          log.warn(
+	            { err: logError instanceof Error ? logError.message : String(logError) },
+	            "Babysitter log write failed",
+	          );
 	        });
 
       return logQueue;
@@ -3654,7 +3666,11 @@ export class PRBabysitter {
           });
         }
       }
-      console.error("Babysitter failure", error);
+      const failureMsg = error instanceof Error ? error.message : String(error);
+      log.warn({ err: failureMsg, prId }, "Babysitter failure");
+      if (error instanceof Error && error.stack) {
+        log.debug({ stack: error.stack, prId }, "Babysitter failure stack");
+      }
       if (options?.rethrowOnFailure) {
         throw error;
       }

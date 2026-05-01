@@ -26,6 +26,8 @@ const allowlist = [
   "passport",
   "passport-local",
   "pg",
+  "pino",
+  "pino-pretty",
   "postcss",
   "sanitize-html",
   "stripe",

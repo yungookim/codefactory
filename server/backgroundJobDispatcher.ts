@@ -2,6 +2,9 @@ import { randomUUID } from "crypto";
 import type { BackgroundJob, BackgroundJobKind } from "@shared/schema";
 import type { IStorage } from "./storage";
 import { BackgroundJobQueue } from "./backgroundJobQueue";
+import { childLogger } from "./logger";
+
+const log = childLogger("jobs");
 
 export type BackgroundJobHandler = (job: BackgroundJob) => Promise<void>;
 
@@ -60,7 +63,10 @@ export class BackgroundJobDispatcher {
     this.retryBackoffMs = Math.max(0, params.retryBackoffMs ?? 30_000);
     this.now = params.now ?? (() => new Date());
     this.onError = params.onError ?? ((error) => {
-      console.error("Background job dispatcher error", error);
+      log.warn(
+        { err: error instanceof Error ? error.message : String(error) },
+        "Background job dispatcher error",
+      );
     });
     this.onReclaimedJobs = params.onReclaimedJobs ?? (() => {});
   }
