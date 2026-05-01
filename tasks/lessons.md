@@ -1,5 +1,13 @@
 # Lessons Learned
 
+## 2026-05-01 - Include PATH repair steps for local CLI warnings
+- Pattern: The Codex CLI was installed under an nvm-managed Node bin directory, but oh-my-pr still showed a generic "CLI not installed" warning because the app runtime could not discover it on PATH.
+- Rule: When surfacing local CLI missing warnings, include concrete PATH diagnostics and login-shell repair steps, not only install/restart instructions.
+- Prevention checklist:
+  - Explain that oh-my-pr checks the app process PATH and then `$SHELL -lc "command -v <tool>"`.
+  - Include nvm-specific guidance to put the active Node bin directory in a login-shell startup file such as `~/.zprofile`.
+  - Add regression coverage for warning `fixSteps` whenever changing local tool availability messages.
+
 ## 2026-04-30 - Keep speculative automation acknowledgements local
 - Pattern: The babysitter posted "Accepted" progress replies on GitHub for every accepted review comment, which surprised teammates because triage acknowledgements looked like public conversation from the user before a fix existed.
 - Rule: In `oh-my-pr`, only post GitHub replies when there is a concrete command, result, audit trail, or thread-resolution outcome to expose; keep speculative triage/progress acknowledgements in local logs unless the user explicitly opts into public progress chatter in Settings.

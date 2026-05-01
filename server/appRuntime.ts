@@ -198,6 +198,9 @@ const AGENT_FIX_STEPS: Record<AgentLabel, Record<AgentUnavailabilityKind, string
     ],
     cli_missing: [
       "Install the Codex CLI on this machine.",
+      "If Codex is already installed, make sure oh-my-pr can find it on PATH. The app checks its process PATH, then `$SHELL -lc \"command -v codex\"`.",
+      "For nvm installs, add the active Node bin directory to a login-shell startup file such as `~/.zprofile`; for example: `export PATH=\"$HOME/.nvm/versions/node/v24.12.0/bin:$PATH\"`.",
+      "Verify with `command -v codex` and `$SHELL -lc \"command -v codex\"`.",
       "Restart oh-my-pr after installing.",
       "Rerun the babysitter for this PR.",
     ],
