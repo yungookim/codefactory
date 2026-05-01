@@ -102,11 +102,16 @@ oh-my-pr can be used in a few ways:
 Server output is structured (pino) and goes to two destinations by default:
 
 - stdout (pretty-printed in dev, JSON in production)
-- `~/.oh-my-pr/log/server.log` (or wherever `OH_MY_PR_HOME` points)
+- `~/.oh-my-pr/log/server.log` (or under `OH_MY_PR_HOME`)
 
 Override the file path with `--log-file <path>` or `OH_MY_PR_LOG_FILE`; disable file logging with `--no-log-file` or `OH_MY_PR_NO_LOG_FILE=1`. Set the level with `--log-level <trace|debug|info|warn|error|fatal>` or `LOG_LEVEL`. Defaults: `info` in production, `debug` in development.
 
-GitHub tokens are redacted before any log line is written: `ghp_/gho_/ghs_/ghu_/ghr_` prefixes, `github_pat_…`, `x-access-token:…@` URLs, and `Bearer …` / `token …` authorization values are replaced with `[REDACTED]` automatically.
+GitHub tokens are redacted before any log line is written. The sanitizer replaces these values with `[REDACTED]` automatically:
+
+- `ghp_/gho_/ghs_/ghu_/ghr_` prefixes
+- `github_pat_…` tokens
+- `x-access-token:…@` URLs
+- `Bearer …` / `token …` authorization values
 
 ### Optional Automation
 
