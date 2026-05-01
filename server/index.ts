@@ -3,6 +3,9 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { localOnlyMiddleware } from "./localOnly";
 import { createServer } from "http";
+import { childLogger, logger } from "./logger";
+
+const serverLog = childLogger("server");
 
 const app = express();
 const httpServer = createServer(app);
@@ -28,13 +31,7 @@ app.use(express.urlencoded({ extended: false }));
 app.use("/api", localOnlyMiddleware);
 
 export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
-  console.log(`${formattedTime} [${source}] ${message}`);
+  logger.info({ source }, message);
 }
 
 async function openDashboard(url: string) {
@@ -53,7 +50,10 @@ async function openDashboard(url: string) {
     const status = error.status || error.statusCode || 500;
     const message = error.message || "Internal Server Error";
 
-    console.error("Internal Server Error:", err);
+    serverLog.error(
+      { err: err instanceof Error ? err.message : String(err), status },
+      "Internal Server Error",
+    );
 
     if (res.headersSent) {
       return next(err);
