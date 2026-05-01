@@ -450,6 +450,8 @@ function StringListRow({
   disabled: boolean;
 }) {
   const [draft, setDraft] = useState("");
+  const inputId = `setting-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+  const descriptionId = `${inputId}-description`;
 
   const addValue = () => {
     const trimmed = draft.trim();
@@ -468,19 +470,46 @@ function StringListRow({
 
   return (
     <div className="flex flex-col gap-2">
-      <div>
-        <div className="text-sm">{label}</div>
-        <div className="text-[11px] text-muted-foreground">{description}</div>
+      <div className="flex items-end gap-2">
+        <label htmlFor={inputId} className="min-w-0 flex-1 cursor-pointer">
+          <span className="block text-sm">{label}</span>
+          <span id={descriptionId} className="block text-[11px] text-muted-foreground">{description}</span>
+          <input
+            id={inputId}
+            type="text"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addValue();
+              }
+            }}
+            placeholder={placeholder}
+            disabled={disabled}
+            aria-describedby={descriptionId}
+            className="mt-2 w-full min-w-0 border border-border bg-transparent px-2 py-1 text-sm focus:border-foreground focus:outline-none disabled:opacity-50"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={addValue}
+          disabled={!draft.trim() || disabled}
+          className="border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+        >
+          add
+        </button>
       </div>
       {values.length ? (
         <div className="flex flex-wrap gap-1.5">
           {values.map((value, index) => (
             <span
-              key={`${value}-${index}`}
+              key={value}
               className="inline-flex items-center gap-1.5 border border-border px-2 py-0.5 font-mono text-xs"
             >
               {value}
               <button
+                type="button"
                 onClick={() => removeValue(index)}
                 disabled={disabled}
                 aria-label={`Remove ${value}`}
@@ -494,29 +523,6 @@ function StringListRow({
       ) : (
         <div className="text-[11px] text-muted-foreground">none configured</div>
       )}
-      <div className="flex items-center gap-2">
-        <input
-          type="text"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              addValue();
-            }
-          }}
-          placeholder={placeholder}
-          disabled={disabled}
-          className="min-w-0 flex-1 border border-border bg-transparent px-2 py-1 text-sm focus:border-foreground focus:outline-none disabled:opacity-50"
-        />
-        <button
-          onClick={addValue}
-          disabled={!draft.trim() || disabled}
-          className="border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
-        >
-          add
-        </button>
-      </div>
     </div>
   );
 }

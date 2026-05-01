@@ -45,6 +45,7 @@ The settings page in the dashboard provides a UI for:
 - **GitHub token management** — Add, remove, and reorder saved tokens before falling back to `GITHUB_TOKEN` or `gh auth`.
 - **Agent selection** — Choose whether autonomous runs use Claude Code or OpenAI Codex.
 - **Babysitter tuning** — Control polling, batching, merge-conflict handling, release automation, and automatic docs assessment.
+- **Ignored bots** — Add or remove bot logins whose comments and reviews should be ignored.
 - **PR comment branding** — Toggle whether agent-authored GitHub PR comments link back to oh-my-pr and include the `Posted by oh-my-pr` footer.
 - **CI healing** — Enable autonomous CI repair and tune retry/session limits.
 - **Deployment healing** — Not yet exposed in the dashboard; use `PATCH /api/config` for the deployment-healing keys listed below.
