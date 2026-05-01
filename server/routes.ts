@@ -11,6 +11,26 @@ import {
 } from "./appRuntime";
 import { createAppUpdateChecker, type AppUpdateChecker } from "./appUpdate";
 import { GitHubIntegrationError } from "./github";
+import {
+  getKnownLogSources,
+  readLogRecords,
+  subscribeToLogs,
+  type LogLevel,
+  type LogRecord,
+} from "./logger";
+
+const VALID_LEVELS: LogLevel[] = ["trace", "debug", "info", "warn", "error", "fatal"];
+
+function parseLevel(value: unknown): LogLevel | undefined {
+  if (typeof value !== "string") return undefined;
+  return (VALID_LEVELS as string[]).includes(value) ? (value as LogLevel) : undefined;
+}
+
+function parsePositiveInt(value: unknown): number | undefined {
+  if (typeof value !== "string") return undefined;
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
 
 const TOKEN_MASK_PREFIX = "***";
 
@@ -111,6 +131,59 @@ export async function registerRoutes(
 
   app.get("/api/runtime", async (_req, res) => {
     res.json(await runtime.getRuntimeSnapshot());
+  });
+
+  app.get("/api/server-logs", (req, res) => {
+    const records = readLogRecords({
+      level: parseLevel(req.query.level),
+      source: typeof req.query.source === "string" ? req.query.source : undefined,
+      since: parsePositiveInt(req.query.since),
+      search: typeof req.query.search === "string" ? req.query.search : undefined,
+      limit: parsePositiveInt(req.query.limit) ?? 500,
+    });
+    res.json({
+      records,
+      sources: getKnownLogSources(),
+      latestSeq: records.length > 0 ? records[records.length - 1].seq : (parsePositiveInt(req.query.since) ?? 0),
+    });
+  });
+
+  app.get("/api/server-logs/stream", (req, res) => {
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    // Defeat any compression middleware that may be added later — SSE must not buffer.
+    res.setHeader("Content-Encoding", "identity");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+
+    const send = (record: LogRecord) => {
+      res.write(`id: ${record.seq}\n`);
+      res.write(`data: ${JSON.stringify(record)}\n\n`);
+    };
+
+    // Replay any backlog the client missed, if `since` was provided.
+    const since = parsePositiveInt(req.query.since);
+    if (since !== undefined) {
+      const backlog = readLogRecords({ since, limit: 1000 });
+      for (const record of backlog) send(record);
+    }
+
+    const unsubscribe = subscribeToLogs(send);
+
+    const heartbeat = setInterval(() => {
+      res.write(`: heartbeat ${Date.now()}\n\n`);
+    }, 20_000);
+
+    const cleanup = () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+      res.end();
+    };
+
+    req.on("close", cleanup);
+    req.on("aborted", cleanup);
   });
 
   app.get("/api/activities", async (_req, res) => {

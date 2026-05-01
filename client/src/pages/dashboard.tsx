@@ -1214,6 +1214,12 @@ export default function Dashboard() {
           >
             releases
           </Link>
+          <Link
+            href="/logs"
+            className="text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+          >
+            logs
+          </Link>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-[11px] text-muted-foreground">

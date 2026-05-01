@@ -9,6 +9,7 @@ import Dashboard from "@/pages/dashboard";
 import Settings from "@/pages/settings";
 import Changelogs from "@/pages/changelogs";
 import Releases from "@/pages/releases";
+import Logs from "@/pages/logs";
 import NotFound from "@/pages/not-found";
 
 function AppRouter() {
@@ -18,6 +19,7 @@ function AppRouter() {
       <Route path="/settings" component={Settings} />
       <Route path="/changelogs" component={Changelogs} />
       <Route path="/releases" component={Releases} />
+      <Route path="/logs" component={Logs} />
       <Route component={NotFound} />
     </Switch>
   );
