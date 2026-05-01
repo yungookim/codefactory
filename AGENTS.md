@@ -70,6 +70,11 @@ Follow the standardized test guidance in `test.md`. Use the red-green-refactor l
 
 Add focused regression coverage for changes to storage, GitHub sync, repo workspace isolation, background jobs, CI/deployment healing, or babysitter flows.
 
+## Logging
+Use the structured logger in `server/logger.ts`, not `console.*`. Create a child logger per module: `const log = childLogger("babysitter")`. Prefer structured calls so fields are queryable: `log.warn({ err: error.message, prId }, "Babysitter failure")` over interpolated strings.
+
+For recoverable conditions, log at `warn` with the message only and emit the stack at `debug` separately. Reserve `error` for genuinely unexpected failures. GitHub tokens are auto-redacted (paths plus a regex sanitizer covering `ghp_/gho_/ghs_/ghu_/ghr_`, `github_pat_`, `x-access-token:…@`, and `Bearer/token` values), but don't add free-text fields that concatenate token-bearing strings without checking the sanitizer covers your case.
+
 ## Agent Defaults
 When agents are used, default to `codingAgent: "claude"` and `model: "opus"`. There is no separate "thinking"/reasoning-effort configuration flag in this app today; agent reasoning behavior follows the selected model/runtime defaults. These defaults are set in `server/defaultConfig.ts` and can be changed at runtime via the dashboard model selector or the `/api/config` endpoint.
 
