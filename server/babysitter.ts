@@ -10,6 +10,7 @@ import {
   isAgentUnavailableError,
   resolveAgent,
   runCommand,
+  summarizeCommandResult,
   type AgentHealthResult,
   type CodingAgent,
 } from "./agentRunner";
@@ -104,6 +105,7 @@ type DependencyPreflightParams = {
   pr: PR;
   pullSummary: GitHubPullSummary;
   requiresVerification: boolean;
+  runCommand: typeof runCommand;
 };
 
 type DependencyPreflightResult =
@@ -558,6 +560,78 @@ function hasAuditTrail(
   });
 }
 
+function looksLikeStatusReply(body: string): boolean {
+  return body.includes("**Accepted**")
+    || body.includes("**Agent running**")
+    || body.includes("**Agent failed**")
+    || body.includes("**Agent completed**")
+    || body.includes("**Resolved**");
+}
+
+function readStatusReplyRefs(metadata: AgentRun["metadata"]): Record<string, StatusReplyRef> {
+  const raw = metadata?.statusReplyRefs;
+  if (!raw || typeof raw !== "object") {
+    return {};
+  }
+
+  const refs: Record<string, StatusReplyRef> = {};
+  for (const [feedbackId, value] of Object.entries(raw)) {
+    if (!value || typeof value !== "object") {
+      continue;
+    }
+
+    const candidate = value as Partial<StatusReplyRef>;
+    if (
+      typeof candidate.commentDatabaseId === "number"
+      && (candidate.replyKind === "review_thread" || candidate.replyKind === "review" || candidate.replyKind === "general_comment")
+      && typeof candidate.body === "string"
+    ) {
+      refs[feedbackId] = {
+        commentDatabaseId: candidate.commentDatabaseId,
+        replyKind: candidate.replyKind,
+        body: candidate.body,
+      };
+    }
+  }
+
+  return refs;
+}
+
+function findStatusReplyRefForFeedback(item: FeedbackItem, feedbackItems: FeedbackItem[]): StatusReplyRef | null {
+  for (const candidate of feedbackItems) {
+    if (candidate.id === item.id || !looksLikeStatusReply(candidate.body)) {
+      continue;
+    }
+
+    const commentDatabaseId = Number(candidate.sourceId);
+    if (!Number.isFinite(commentDatabaseId)) {
+      continue;
+    }
+
+    if (item.replyKind === "review_thread") {
+      if (candidate.type !== "review_comment" || !item.threadId || candidate.threadId !== item.threadId) {
+        continue;
+      }
+
+      return {
+        commentDatabaseId,
+        replyKind: "review_thread",
+        body: candidate.body,
+      };
+    }
+
+    if (candidate.type === "general_comment") {
+      return {
+        commentDatabaseId,
+        replyKind: item.replyKind,
+        body: candidate.body,
+      };
+    }
+  }
+
+  return null;
+}
+
 function collectAuditTrailErrors(params: {
   pr: PR;
   followUpTasks: FeedbackItem[];
@@ -895,22 +969,44 @@ async function checkDependencyPreflight(params: DependencyPreflightParams): Prom
     return { ok: true };
   }
 
-  const hasLockfile = await Promise.all([
-    pathExists(path.join(params.cwd, "package-lock.json")),
-    pathExists(path.join(params.cwd, "npm-shrinkwrap.json")),
-    pathExists(path.join(params.cwd, "pnpm-lock.yaml")),
-    pathExists(path.join(params.cwd, "yarn.lock")),
-  ]).then((results) => results.some(Boolean));
+  const lockfiles = {
+    packageLock: await pathExists(path.join(params.cwd, "package-lock.json")),
+    npmShrinkwrap: await pathExists(path.join(params.cwd, "npm-shrinkwrap.json")),
+    pnpmLock: await pathExists(path.join(params.cwd, "pnpm-lock.yaml")),
+    yarnLock: await pathExists(path.join(params.cwd, "yarn.lock")),
+  };
 
-  if (!hasLockfile) {
+  if (!lockfiles.packageLock && !lockfiles.npmShrinkwrap && !lockfiles.pnpmLock && !lockfiles.yarnLock) {
     return { ok: true };
   }
 
   if (!(await pathExists(path.join(params.cwd, "node_modules")))) {
-    return {
-      ok: false,
-      reason: "Node dependency cache is missing in the PR worktree; install dependencies before starting remediation",
-    };
+    const ignoreCheck = await params.runCommand("git", ["check-ignore", "-q", "node_modules"], {
+      cwd: params.cwd,
+      timeoutMs: 5000,
+    });
+    if (ignoreCheck.code !== 0) {
+      return {
+        ok: false,
+        reason: "Node dependency cache is missing, but node_modules is not ignored by git; refusing to install dependencies automatically",
+      };
+    }
+
+    const installCommand = lockfiles.pnpmLock
+      ? { command: "pnpm", args: ["install", "--frozen-lockfile"] }
+      : lockfiles.yarnLock
+        ? { command: "yarn", args: ["install", "--frozen-lockfile"] }
+        : { command: "npm", args: ["ci"] };
+    const result = await params.runCommand(installCommand.command, installCommand.args, {
+      cwd: params.cwd,
+      timeoutMs: 300000,
+    });
+    if (result.code !== 0) {
+      return {
+        ok: false,
+        reason: summarizeCommandResult(result, `Dependency install failed while running ${installCommand.command} ${installCommand.args.join(" ")}`),
+      };
+    }
   }
 
   return { ok: true };
@@ -975,11 +1071,29 @@ export class PRBabysitter {
       drainReason: message,
     });
 
-    await Promise.all(prIds.map((prId) =>
-      this.storage.addLog(prId, "error", `Automation paused: ${message}`, {
+    await Promise.all(prIds.map(async (prId) => {
+      const pr = await this.storage.getPR(prId);
+      if (pr) {
+        const updatedItems = pr.feedbackItems.map((item) =>
+          item.decision === "accept" && (item.status === "queued" || item.status === "in_progress")
+            ? markFailed(item, message)
+            : item,
+        );
+        if (updatedItems.some((item, index) => item !== pr.feedbackItems[index])) {
+          const counters = countDecisions(updatedItems);
+          await this.storage.updatePR(pr.id, {
+            feedbackItems: updatedItems,
+            accepted: counters.accepted,
+            rejected: counters.rejected,
+            flagged: counters.flagged,
+          });
+        }
+      }
+
+      await this.storage.addLog(prId, "error", `Automation paused: ${message}`, {
         phase: "agent.health",
-      }),
-    ));
+      });
+    }));
   }
 
   private async ensureAgentHealthy(agent: CodingAgent, prIds: string[]): Promise<void> {
@@ -2112,14 +2226,69 @@ export class PRBabysitter {
       const includeRepositoryLinksInGitHubComments = config.includeRepositoryLinksInGitHubComments;
       const postGitHubProgressReplies = config.postGitHubProgressReplies;
       // Track status reply comments so we can update them with progress.
-      const statusReplies = new Map<string, StatusReplyRef>();
+      const statusReplies = new Map<string, StatusReplyRef>(
+        Object.entries(readStatusReplyRefs(runRecord.metadata)),
+      );
+      const persistStatusReplyRef = async (feedbackId: string, ref: StatusReplyRef) => {
+        const statusReplyRefs = {
+          ...readStatusReplyRefs(runRecord.metadata),
+          [feedbackId]: ref,
+        };
+        await updateRunRecord({
+          metadata: {
+            ...(runRecord.metadata ?? {}),
+            statusReplyRefs,
+          },
+        });
+      };
+      const recoverStatusReplyRef = async (feedbackId: string): Promise<StatusReplyRef | null> => {
+        const existing = statusReplies.get(feedbackId);
+        if (existing) {
+          return existing;
+        }
+
+        const item = pr.feedbackItems.find((candidate) => candidate.id === feedbackId);
+        if (!item) {
+          return null;
+        }
+
+        const recovered = findStatusReplyRefForFeedback(item, pr.feedbackItems);
+        if (!recovered) {
+          return null;
+        }
+
+        statusReplies.set(feedbackId, recovered);
+        await persistStatusReplyRef(feedbackId, recovered);
+        return recovered;
+      };
       const updateItemStatus = async (feedbackId: string, line: string) => {
-        const ref = statusReplies.get(feedbackId);
+        const ref = await recoverStatusReplyRef(feedbackId);
         if (!ref) return;
         try {
           const newBody = appendStatusLine(ref.body, line);
           await this.github.updateStatusReply(octokit, parsedPr, ref, newBody);
+          await persistStatusReplyRef(feedbackId, ref);
         } catch (error) {
+          const item = pr.feedbackItems.find((candidate) => candidate.id === feedbackId);
+          const recovered = item ? findStatusReplyRefForFeedback(item, pr.feedbackItems) : null;
+          if (recovered && recovered.commentDatabaseId !== ref.commentDatabaseId) {
+            try {
+              const newBody = appendStatusLine(recovered.body, line);
+              await this.github.updateStatusReply(octokit, parsedPr, recovered, newBody);
+              statusReplies.set(feedbackId, recovered);
+              await persistStatusReplyRef(feedbackId, recovered);
+              return;
+            } catch (retryError) {
+              await logBestEffortFailure(
+                pr.id,
+                "github.status",
+                `Failed to update recovered status reply for ${feedbackId}: ${summarizeUnknownError(retryError)}`,
+                { feedbackId },
+              );
+              return;
+            }
+          }
+
           await logBestEffortFailure(
             pr.id,
             "github.status",
@@ -2264,6 +2433,7 @@ export class PRBabysitter {
               );
               if (ref) {
                 statusReplies.set(item.id, ref);
+                await persistStatusReplyRef(item.id, ref);
               }
             } catch (error) {
               await logBestEffortFailure(
@@ -2531,6 +2701,7 @@ export class PRBabysitter {
             pr,
             pullSummary,
             requiresVerification: hasCommentOrStatusAgentWork || hasConflicts || docsAssessmentNeeded || hasDocsTask,
+            runCommand: this.runtime.runCommand,
           });
           if (!dependencyPreflight.ok) {
             await queueLog(pr.id, "error", `Dependency preflight failed: ${dependencyPreflight.reason}`, {

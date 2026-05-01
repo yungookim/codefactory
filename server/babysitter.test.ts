@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir } from "fs/promises";
+import { mkdtemp, mkdir, writeFile } from "fs/promises";
 import os from "os";
 import path from "path";
 import test from "node:test";
@@ -774,6 +774,20 @@ test("syncAndBabysitTrackedRepos resumes automatic babysits when pr watch is re-
 
 test("syncAndBabysitTrackedRepos pauses automation when the selected agent is unhealthy", async () => {
   const storage = new MemStorage();
+  const queuedItem = makeFeedbackItem({
+    id: "gh-review-comment-queued",
+    auditToken: "codefactory-feedback:gh-review-comment-queued",
+    decision: "accept",
+    status: "queued",
+    statusReason: "Queued",
+  });
+  const inProgressItem = makeFeedbackItem({
+    id: "gh-review-comment-running",
+    auditToken: "codefactory-feedback:gh-review-comment-running",
+    decision: "accept",
+    status: "in_progress",
+    statusReason: "Running",
+  });
   const pr = await storage.addPR({
     number: 42,
     title: "Needs watching",
@@ -782,8 +796,8 @@ test("syncAndBabysitTrackedRepos pauses automation when the selected agent is un
     author: "octocat",
     url: "https://github.com/octo/example/pull/42",
     status: "watching",
-    feedbackItems: [],
-    accepted: 0,
+    feedbackItems: [queuedItem, inProgressItem],
+    accepted: 2,
     rejected: 0,
     flagged: 0,
     testsPassed: null,
@@ -818,8 +832,13 @@ test("syncAndBabysitTrackedRepos pauses automation when the selected agent is un
 
   const runtimeState = await storage.getRuntimeState();
   const logs = await storage.getLogs(pr.id);
+  const updated = await storage.getPR(pr.id);
   assert.equal(runtimeState.drainMode, true);
   assert.match(runtimeState.drainReason ?? "", /Claude authentication failed/);
+  assert.equal(updated?.feedbackItems[0]?.status, "failed");
+  assert.match(updated?.feedbackItems[0]?.statusReason ?? "", /Claude authentication failed/);
+  assert.equal(updated?.feedbackItems[1]?.status, "failed");
+  assert.match(updated?.feedbackItems[1]?.statusReason ?? "", /Claude authentication failed/);
   assert.deepEqual(scheduled, []);
   assert.ok(logs.some((log) => log.message.includes("Automation paused")));
 });
@@ -1531,6 +1550,106 @@ test("babysitPR blocks remediation when dependency preflight fails", async () =>
   delete process.env.CODEFACTORY_HOME;
 });
 
+test("babysitPR installs locked Node dependencies before remediation when cache is missing", async () => {
+  const storage = new MemStorage();
+  await storage.updateConfig({ autoUpdateDocs: false });
+  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "oh-my-pr-test-"));
+  process.env.CODEFACTORY_HOME = worktreeRoot;
+  const existingItem = makeFeedbackItem({
+    decision: "accept",
+    decisionReason: "Needs a fix",
+    status: "queued",
+  });
+  const pr = await storage.addPR({
+    number: 42,
+    title: "Needs deps",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "watching",
+    feedbackItems: [existingItem],
+    accepted: 1,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  let feedbackFetchCount = 0;
+  const followUp = makeFeedbackItem({
+    id: "gh-review-comment-2",
+    body: existingItem.auditToken,
+    sourceId: "2",
+    threadId: existingItem.threadId,
+    threadResolved: true,
+    createdAt: new Date().toISOString(),
+  });
+  const gitRun = makeGitRunCommand({
+    localHeadSha: "def456",
+    remoteHeadSha: "def456",
+  });
+  const installCommands: string[] = [];
+  const runCommand = async (command: string, args: string[], options?: { cwd?: string }) => {
+    if (command === "npm") {
+      installCommands.push([command, ...args].join(" "));
+      if (options?.cwd) {
+        await mkdir(path.join(options.cwd, "node_modules"), { recursive: true });
+      }
+      return { code: 0, stdout: "installed\n", stderr: "" };
+    }
+
+    const result = await gitRun(command, args);
+    if (command === "git" && args[0] === "-C" && args[2] === "worktree" && args[3] === "add") {
+      await writeFile(path.join(args[5], "package.json"), "{\"scripts\":{\"test\":\"node --test\"}}\n");
+      await writeFile(path.join(args[5], "package-lock.json"), "{\"lockfileVersion\":3,\"packages\":{}}\n");
+    }
+    return result;
+  };
+
+  const babysitter = new PRBabysitter(
+    storage,
+    {
+      buildOctokit: async () => ({}) as never,
+      fetchFeedbackItemsForPR: async () => {
+        feedbackFetchCount += 1;
+        return feedbackFetchCount === 1 ? [existingItem] : [{ ...existingItem, threadResolved: true }, followUp];
+      },
+      fetchPullSummary: async () => makePullSummary(pr, { headSha: "abc123" }),
+      listFailingStatuses: async () => [],
+      checkCISettled: async () => true,
+      listOpenPullsForRepo: async () => [],
+      postFollowUpForFeedbackItem: async () => undefined,
+      resolveReviewThread: async () => undefined,
+      resolveGitHubAuthToken: async () => undefined,
+      addReactionToComment: async () => undefined,
+      postPRComment: async () => undefined,
+      postStatusReplyForFeedbackItem: async () => null,
+      updateStatusReply: async () => undefined,
+    },
+    {
+      resolveAgent: async () => "codex",
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({
+        code: 0,
+        stdout: "FEEDBACK_SUMMARY_START codefactory-feedback:gh-review-comment-1\nDone.\nFEEDBACK_SUMMARY_END\n",
+        stderr: "",
+      }),
+      runCommand: runCommand as never,
+    },
+  );
+
+  await babysitter.babysitPR(pr.id, "codex");
+
+  const updated = await storage.getPR(pr.id);
+  assert.equal(updated?.status, "watching");
+  assert.deepEqual(installCommands, ["npm ci"]);
+
+  delete process.env.CODEFACTORY_HOME;
+});
+
 test("babysitPR omits repository links in GitHub comments when disabled", async () => {
   const storage = new MemStorage();
   await storage.updateConfig({
@@ -1952,6 +2071,155 @@ test("babysitPR posts progress replies when GitHub progress replies are enabled"
       { id: existingItem.id, body: expectedAcceptedStatus },
     ]);
     assert.equal(statusReplyRefs.get(existingItem.id)?.body, expectedFinalStatusBody);
+  } finally {
+    delete process.env.CODEFACTORY_HOME;
+  }
+});
+
+test("runQueuedBabysitPR recovers an existing status reply after restart", async () => {
+  const storage = new MemStorage();
+  await storage.updateConfig({ autoUpdateDocs: false });
+  const existingItem = makeFeedbackItem({
+    replyKind: "review",
+    threadId: null,
+    threadResolved: null,
+    type: "review",
+    file: null,
+    line: null,
+    decision: "accept",
+    status: "in_progress",
+    statusReason: "Agent was running before restart",
+  });
+  const staleStatusReply = makeFeedbackItem({
+    id: "gh-review-comment-77",
+    author: "alex-morgan-o",
+    body: "\u23f3 **Accepted** \u2014 this comment requires code changes. Queuing fix...",
+    sourceId: "77",
+    sourceNodeId: "PRRC_kwDO_status",
+    sourceUrl: "https://github.com/octo/example/pull/42#discussion_r77",
+    replyKind: "general_comment",
+    threadId: null,
+    threadResolved: null,
+    type: "general_comment",
+    file: null,
+    line: null,
+    auditToken: "codefactory-feedback:gh-review-comment-77",
+    createdAt: "2026-03-15T10:02:00.000Z",
+    decision: "reject",
+    decisionReason: "oh-my-pr status comment",
+    status: "rejected",
+    statusReason: "oh-my-pr status comment",
+  });
+  const pr = await storage.addPR({
+    number: 106,
+    title: "Verbose PR",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "processing",
+    feedbackItems: [existingItem],
+    accepted: 1,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+  const createdAt = new Date().toISOString();
+  await storage.upsertAgentRun({
+    id: "run-recovery",
+    prId: pr.id,
+    preferredAgent: "codex",
+    resolvedAgent: "codex",
+    status: "running",
+    phase: "run.agent-running",
+    prompt: "Fix the queued feedback",
+    initialHeadSha: "abc123",
+    metadata: null,
+    lastError: null,
+    createdAt,
+    updatedAt: createdAt,
+  });
+
+  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "codefactory-home-"));
+  process.env.CODEFACTORY_HOME = worktreeRoot;
+
+  try {
+    let feedbackFetchCount = 0;
+    const updatedStatusBodies: string[] = [];
+    const followUp = makeFeedbackItem({
+      id: "gh-review-comment-2",
+      author: "code-factory",
+      body: `Implemented the requested rename.\n\n${existingItem.auditToken}`,
+      sourceId: "2",
+      sourceNodeId: "PRRC_kwDO_followup",
+      sourceUrl: "https://github.com/alex-morgan-o/lolodex/pull/106#discussion_r2",
+      threadId: existingItem.threadId,
+      threadResolved: true,
+      createdAt: new Date().toISOString(),
+      decision: null,
+      status: "pending",
+    });
+
+    const babysitter = new PRBabysitter(
+      storage,
+      {
+        buildOctokit: async () => ({}) as never,
+        fetchFeedbackItemsForPR: async () => {
+          feedbackFetchCount += 1;
+          if (feedbackFetchCount === 1) {
+            return [existingItem, staleStatusReply];
+          }
+
+          return [
+            { ...existingItem, threadResolved: true },
+            staleStatusReply,
+            followUp,
+          ];
+        },
+        fetchPullSummary: async () => makePullSummary(pr),
+        listFailingStatuses: async () => [],
+        checkCISettled: async () => true,
+        listOpenPullsForRepo: async () => [],
+        postFollowUpForFeedbackItem: async () => undefined,
+        resolveReviewThread: async () => undefined,
+        resolveGitHubAuthToken: async () => undefined,
+        addReactionToComment: async () => undefined,
+        postPRComment: async () => undefined,
+        postStatusReplyForFeedbackItem: async () => {
+          throw new Error("recovery should reuse the existing status reply");
+        },
+        updateStatusReply: async (_octokit, _parsed, ref, body) => {
+          assert.equal(ref.commentDatabaseId, 77);
+          assert.equal(ref.replyKind, existingItem.replyKind);
+          ref.body = body;
+          updatedStatusBodies.push(body);
+        },
+      },
+      {
+        resolveAgent: async () => "codex",
+        ciPollIntervalMs: 0,
+        evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+        applyFixesWithAgent: async () => ({
+          code: 0,
+          stdout: "FEEDBACK_SUMMARY_START codefactory-feedback:gh-review-comment-1\nDone.\nFEEDBACK_SUMMARY_END\n",
+          stderr: "",
+        }),
+        runCommand: makeGitRunCommand({
+          localHeadSha: "def456",
+          remoteHeadSha: "def456",
+        }),
+      },
+    );
+
+    await babysitter.runQueuedBabysitPR(pr.id, "codex");
+
+    assert.ok(updatedStatusBodies.some((body) => body.includes("**Agent running**")));
+    assert.ok(updatedStatusBodies.at(-1)?.includes("**Resolved**"));
+    const [run] = await storage.listAgentRuns({ prId: pr.id });
+    assert.equal(run?.status, "completed");
+    assert.equal((run?.metadata?.statusReplyRefs as Record<string, { commentDatabaseId: number }> | undefined)?.[existingItem.id]?.commentDatabaseId, 77);
   } finally {
     delete process.env.CODEFACTORY_HOME;
   }
