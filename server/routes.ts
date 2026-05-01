@@ -21,6 +21,8 @@ import {
 
 const VALID_LEVELS: LogLevel[] = ["trace", "debug", "info", "warn", "error", "fatal"];
 
+type SseWritable = Pick<Response, "write">;
+
 function parseLevel(value: unknown): LogLevel | undefined {
   if (typeof value !== "string") return undefined;
   return (VALID_LEVELS as string[]).includes(value) ? (value as LogLevel) : undefined;
@@ -86,6 +88,10 @@ function resolveMaskedGithubTokens(currentTokens: string[], requestedTokens: str
       return trimmed;
     })
     .filter(Boolean);
+}
+
+export function writeServerLogSseEvent(res: SseWritable, record: LogRecord): boolean {
+  return res.write(`id: ${record.seq}\ndata: ${JSON.stringify(record)}\n\n`) !== false;
 }
 
 function resolveConfigSecrets(current: Config, updates: Partial<Config>): Partial<Config> {
@@ -158,29 +164,37 @@ export async function registerRoutes(
     res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders?.();
 
+    let closed = false;
+    let heartbeat: NodeJS.Timeout | undefined;
+    let unsubscribe = () => {};
+
+    const cleanup = () => {
+      if (closed) return;
+      closed = true;
+      if (heartbeat) clearInterval(heartbeat);
+      unsubscribe();
+      if (!res.writableEnded) res.end();
+    };
+
     const send = (record: LogRecord) => {
-      res.write(`id: ${record.seq}\n`);
-      res.write(`data: ${JSON.stringify(record)}\n\n`);
+      if (!writeServerLogSseEvent(res, record)) cleanup();
     };
 
     // Replay any backlog the client missed, if `since` was provided.
     const since = parsePositiveInt(req.query.since);
     if (since !== undefined) {
       const backlog = readLogRecords({ since, limit: 1000 });
-      for (const record of backlog) send(record);
+      for (const record of backlog) {
+        send(record);
+        if (closed) return;
+      }
     }
 
-    const unsubscribe = subscribeToLogs(send);
+    unsubscribe = subscribeToLogs(send);
 
-    const heartbeat = setInterval(() => {
-      res.write(`: heartbeat ${Date.now()}\n\n`);
+    heartbeat = setInterval(() => {
+      if (res.write(`: heartbeat ${Date.now()}\n\n`) === false) cleanup();
     }, 20_000);
-
-    const cleanup = () => {
-      clearInterval(heartbeat);
-      unsubscribe();
-      res.end();
-    };
 
     req.on("close", cleanup);
     req.on("aborted", cleanup);

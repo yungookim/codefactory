@@ -93,6 +93,7 @@ Watched repositories default to `My PRs only`. You can switch a repo to `My PRs 
 oh-my-pr can be used in a few ways:
 
 - web dashboard: `oh-my-pr`
+- server logs page: `http://localhost:5001/logs`
 - MCP server: `oh-my-pr mcp`
 - local REST API: see [LOCAL_API.md](LOCAL_API.md)
 - optional Tauri desktop shell

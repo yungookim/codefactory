@@ -28,29 +28,31 @@ export function sanitizeString(s: string): string {
 
 function sanitizeDeep(value: unknown, seen = new WeakSet<object>()): unknown {
   if (typeof value === "string") return sanitizeString(value);
-  if (Array.isArray(value)) return value.map((item) => sanitizeDeep(item, seen));
   if (value && typeof value === "object") {
     if (seen.has(value)) return "[Circular]";
     seen.add(value);
-    if (value instanceof Error) {
-      const out: Record<string, unknown> = {
-        name: value.name,
-        message: sanitizeString(value.message),
-      };
-      if (value.stack) out.stack = sanitizeString(value.stack);
-      if ("cause" in value) out.cause = sanitizeDeep(value.cause, seen);
-      for (const [k, v] of Object.entries(value)) {
+    try {
+      if (Array.isArray(value)) return value.map((item) => sanitizeDeep(item, seen));
+      if (value instanceof Error) {
+        const out: Record<string, unknown> = {
+          name: value.name,
+          message: sanitizeString(value.message),
+        };
+        if (value.stack) out.stack = sanitizeString(value.stack);
+        if ("cause" in value) out.cause = sanitizeDeep(value.cause, seen);
+        for (const [k, v] of Object.entries(value)) {
+          out[k] = sanitizeDeep(v, seen);
+        }
+        return out;
+      }
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
         out[k] = sanitizeDeep(v, seen);
       }
-      seen.delete(value);
       return out;
+    } finally {
+      seen.delete(value);
     }
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = sanitizeDeep(v, seen);
-    }
-    seen.delete(value);
-    return out;
   }
   return value;
 }
@@ -90,6 +92,7 @@ const records: LogRecord[] = [];
 let recordsHead = 0;
 let recordsFilled = false;
 let recordSeq = 0;
+let ringStreamBuffer = "";
 const subscribers = new Set<(record: LogRecord) => void>();
 
 function pushRecord(record: LogRecord) {
@@ -126,6 +129,7 @@ export function _resetRingBufferForTests() {
   recordsHead = 0;
   recordsFilled = false;
   recordSeq = 0;
+  ringStreamBuffer = "";
   subscribers.clear();
 }
 
@@ -202,8 +206,11 @@ export function subscribeToLogs(cb: (record: LogRecord) => void): () => void {
 
 const ringStream = new Writable({
   write(chunk, _enc, cb) {
-    const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-    for (const line of text.split("\n")) {
+    ringStreamBuffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    const lines = ringStreamBuffer.split("\n");
+    ringStreamBuffer = lines.pop() ?? "";
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
       if (line.length === 0) continue;
       const parsed = parseLine(line);
       if (!parsed) continue;
@@ -214,8 +221,8 @@ const ringStream = new Writable({
         subscribers.forEach((sub) => {
           try {
             sub(record);
-          } catch {
-            /* ignore subscriber errors */
+          } catch (err) {
+            console.error("Error in log subscriber:", err);
           }
         });
       }
@@ -223,6 +230,12 @@ const ringStream = new Writable({
     cb();
   },
 });
+
+export function _writeRingChunkForTests(chunk: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    ringStream.write(chunk, (err) => err ? reject(err) : resolve());
+  });
+}
 
 // ----- Level / destination resolution -----
 

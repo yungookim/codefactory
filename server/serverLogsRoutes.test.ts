@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import test from "node:test";
 import express from "express";
 import { MemStorage } from "./memoryStorage";
-import { registerRoutes } from "./routes";
+import { registerRoutes, writeServerLogSseEvent } from "./routes";
 import { _resetRingBufferForTests, logger } from "./logger";
 
 async function createHarness() {
@@ -205,4 +205,25 @@ test("GET /api/server-logs/stream replays backlog when since is provided", async
   } finally {
     await h.close();
   }
+});
+
+test("writeServerLogSseEvent reports backpressure", () => {
+  const writes: string[] = [];
+  const ok = writeServerLogSseEvent({
+    write(chunk: string) {
+      writes.push(chunk);
+      return false;
+    },
+  }, {
+    seq: 42,
+    time: 1710000000000,
+    level: "info",
+    msg: "slow client event",
+    fields: {},
+  });
+
+  assert.equal(ok, false);
+  assert.equal(writes.length, 1);
+  assert.match(writes[0], /^id: 42\n/);
+  assert.match(writes[0], /data: .*slow client event/);
 });
