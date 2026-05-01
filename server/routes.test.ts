@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import test from "node:test";
 import express from "express";
 import type { Octokit } from "@octokit/rest";
-import type { AppUpdateStatus, NewPR } from "@shared/schema";
+import type { AppUpdateStatus, Config, NewPR } from "@shared/schema";
 import type { ReleaseAgentPullSummary, ReleaseEvaluationDecision } from "./releaseAgent";
 import { ReleaseManager, type ReleaseGitHubService } from "./releaseManager";
 import { MemStorage } from "./memoryStorage";
@@ -186,6 +186,30 @@ test("PATCH /api/config accepts legacy single githubToken updates", async () => 
 
     const stored = await harness.storage.getConfig();
     assert.deepEqual(stored.githubTokens, ["ghs_legacy9999"]);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("PATCH /api/config persists explicit agent command paths", async () => {
+  const harness = await createHarness();
+  try {
+    const response = await fetch(`${harness.baseUrl}/api/config`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        codexCommandPath: "/Users/dev/bin/codex",
+        claudeCommandPath: "/opt/homebrew/bin/claude",
+      }),
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json() as Config;
+    const stored = await harness.storage.getConfig();
+
+    assert.equal(body.codexCommandPath, "/Users/dev/bin/codex");
+    assert.equal(body.claudeCommandPath, "/opt/homebrew/bin/claude");
+    assert.equal(stored.codexCommandPath, "/Users/dev/bin/codex");
+    assert.equal(stored.claudeCommandPath, "/opt/homebrew/bin/claude");
   } finally {
     await harness.close();
   }

@@ -61,6 +61,8 @@ type ConfigRow = {
   github_token: string;
   github_tokens_json: string;
   coding_agent: Config["codingAgent"];
+  codex_command_path: string;
+  claude_command_path: string;
   fallback_to_next_coding_agent: number;
   model: string;
   max_turns: number;
@@ -493,6 +495,8 @@ export class SqliteStorage implements IStorage {
         github_token TEXT NOT NULL,
         github_tokens_json TEXT NOT NULL DEFAULT '[]',
         coding_agent TEXT NOT NULL,
+        codex_command_path TEXT NOT NULL DEFAULT '',
+        claude_command_path TEXT NOT NULL DEFAULT '',
         fallback_to_next_coding_agent INTEGER NOT NULL DEFAULT 0,
         model TEXT NOT NULL,
         max_turns INTEGER NOT NULL,
@@ -789,6 +793,8 @@ export class SqliteStorage implements IStorage {
     this.ensureColumn("feedback_items", "status", "TEXT NOT NULL DEFAULT 'pending'");
     this.ensureColumn("feedback_items", "status_reason", "TEXT");
     this.ensureColumn("config", "github_tokens_json", "TEXT NOT NULL DEFAULT '[]'");
+    this.ensureColumn("config", "codex_command_path", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("config", "claude_command_path", "TEXT NOT NULL DEFAULT ''");
     this.ensureColumn("config", "fallback_to_next_coding_agent", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("config", "auto_resolve_merge_conflicts", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("config", "auto_create_releases", "INTEGER NOT NULL DEFAULT 1");
@@ -851,6 +857,8 @@ export class SqliteStorage implements IStorage {
     return {
       githubTokens,
       codingAgent: row.coding_agent,
+      codexCommandPath: row.codex_command_path ?? DEFAULT_CONFIG.codexCommandPath,
+      claudeCommandPath: row.claude_command_path ?? DEFAULT_CONFIG.claudeCommandPath,
       fallbackToNextCodingAgent: Boolean(
         row.fallback_to_next_coding_agent ?? Number(DEFAULT_CONFIG.fallbackToNextCodingAgent),
       ),
@@ -894,6 +902,8 @@ export class SqliteStorage implements IStorage {
           github_token,
           github_tokens_json,
           coding_agent,
+          codex_command_path,
+          claude_command_path,
           fallback_to_next_coding_agent,
           model,
           max_turns,
@@ -915,11 +925,13 @@ export class SqliteStorage implements IStorage {
           deployment_check_poll_interval_ms,
           trusted_reviewers_json,
           ignored_bots_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           github_token = excluded.github_token,
           github_tokens_json = excluded.github_tokens_json,
           coding_agent = excluded.coding_agent,
+          codex_command_path = excluded.codex_command_path,
+          claude_command_path = excluded.claude_command_path,
           fallback_to_next_coding_agent = excluded.fallback_to_next_coding_agent,
           model = excluded.model,
           max_turns = excluded.max_turns,
@@ -946,6 +958,8 @@ export class SqliteStorage implements IStorage {
         config.githubTokens[0] ?? "",
         JSON.stringify(config.githubTokens),
         config.codingAgent,
+        config.codexCommandPath.trim(),
+        config.claudeCommandPath.trim(),
         Number(config.fallbackToNextCodingAgent),
         legacyModelValue,
         config.maxTurns,

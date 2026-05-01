@@ -223,6 +223,42 @@ test("resolveAgent finds an agent installed under nvm when app PATH is narrow", 
   }
 });
 
+test("resolveAgent prefers configured absolute command paths", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "fake-configured-agent-"));
+  const fakeCodexPath = path.join(tempRoot, "custom-codex");
+  const originalPath = process.env.PATH;
+  const originalHome = process.env.HOME;
+  const originalShell = process.env.SHELL;
+
+  try {
+    await copyFile(process.execPath, fakeCodexPath);
+    await chmod(fakeCodexPath, 0o755);
+    process.env.PATH = "/usr/bin:/bin";
+    process.env.HOME = tempRoot;
+    process.env.SHELL = path.join(tempRoot, "missing-shell");
+
+    assert.equal(await resolveAgent("codex", {
+      commandPaths: { codex: fakeCodexPath },
+    }), "codex");
+    assert.equal(await resolveCommandPath("codex", {
+      codex: fakeCodexPath,
+    }), fakeCodexPath);
+  } finally {
+    process.env.PATH = originalPath;
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (originalShell === undefined) {
+      delete process.env.SHELL;
+    } else {
+      process.env.SHELL = originalShell;
+    }
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // runCommand basic behavior
 // ---------------------------------------------------------------------------

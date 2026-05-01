@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import type { CodingAgent, CommandResult } from "./agentRunner";
+import type { AgentCommandPaths, CodingAgent, CommandResult } from "./agentRunner";
 import { applyFixesWithAgent, runCommand, summarizeCommandResult } from "./agentRunner";
 import type { ClassifiedCIFailure } from "./ciFailureClassifier";
 import { preparePrWorktree, removePrWorktree } from "./repoWorkspace";
@@ -22,6 +22,7 @@ export type CIHealingRepairPromptInput = {
   author: string;
   branch: string;
   agent: CodingAgent;
+  commandPaths?: AgentCommandPaths;
   failures: ClassifiedCIFailure[];
   maxFailuresToInclude?: number;
   maxEvidencePerFailure?: number;
@@ -334,6 +335,7 @@ export async function runCIHealingRepairAttempt(input: CIHealingWorktreeInput & 
       cwd: worktree.worktreePath,
       prompt,
       env: input.env,
+      commandPaths: input.commandPaths,
     });
 
     if (agentResult.code === 0) {

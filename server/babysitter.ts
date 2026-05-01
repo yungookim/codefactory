@@ -7,9 +7,11 @@ import {
   applyFixesWithAgent,
   checkAgentHealth,
   evaluateFixNecessityWithAgent,
+  getAgentCommandPaths,
   isAgentUnavailableError,
   resolveAgent,
   runCommand,
+  type AgentCommandPaths,
   type AgentHealthResult,
   type CodingAgent,
 } from "./agentRunner";
@@ -930,7 +932,7 @@ export class PRBabysitter {
   private readonly deploymentHealingManager?: DeploymentHealingManager;
   private readonly scheduleBackgroundJob?: ScheduleBackgroundJob;
   private readonly clock: () => Date;
-  private readonly agentHealthCache = new Map<CodingAgent, { checkedAtMs: number; result: AgentHealthResult }>();
+  private readonly agentHealthCache = new Map<string, { checkedAtMs: number; result: AgentHealthResult }>();
 
   constructor(
     storage: IStorage,
@@ -953,17 +955,18 @@ export class PRBabysitter {
     return this.clock();
   }
 
-  private async readAgentHealth(agent: CodingAgent): Promise<AgentHealthResult> {
+  private async readAgentHealth(agent: CodingAgent, commandPaths?: AgentCommandPaths): Promise<AgentHealthResult> {
     const nowMs = this.now().getTime();
-    const cached = this.agentHealthCache.get(agent);
+    const cacheKey = `${agent}:${commandPaths?.[agent] ?? ""}`;
+    const cached = this.agentHealthCache.get(cacheKey);
     if (cached && nowMs - cached.checkedAtMs < AGENT_HEALTH_CACHE_TTL_MS) {
       return cached.result;
     }
 
     const result = this.runtime.checkAgentHealth
-      ? await this.runtime.checkAgentHealth(agent)
+      ? await this.runtime.checkAgentHealth(agent, { commandPaths })
       : { ok: true } as AgentHealthResult;
-    this.agentHealthCache.set(agent, { checkedAtMs: nowMs, result });
+    this.agentHealthCache.set(cacheKey, { checkedAtMs: nowMs, result });
     return result;
   }
 
@@ -982,8 +985,8 @@ export class PRBabysitter {
     ));
   }
 
-  private async ensureAgentHealthy(agent: CodingAgent, prIds: string[]): Promise<void> {
-    const health = await this.readAgentHealth(agent);
+  private async ensureAgentHealthy(agent: CodingAgent, prIds: string[], commandPaths?: AgentCommandPaths): Promise<void> {
+    const health = await this.readAgentHealth(agent, commandPaths);
     if (health.ok) {
       return;
     }
@@ -1890,8 +1893,9 @@ export class PRBabysitter {
       });
 
       const config = await this.storage.getConfig();
+      const commandPaths = getAgentCommandPaths(config);
       const selectedAgent = forcedResolvedAgent || preferredAgent;
-      await this.ensureAgentHealthy(selectedAgent, [prId]);
+      await this.ensureAgentHealthy(selectedAgent, [prId], commandPaths);
 
       await updateRunRecord({ phase: "run.sync" });
 
@@ -1902,9 +1906,10 @@ export class PRBabysitter {
       });
       let agent = forcedResolvedAgent || (await this.runtime.resolveAgent(preferredAgent, {
         allowFallback: config.fallbackToNextCodingAgent,
+        commandPaths,
       }));
       if (agent !== selectedAgent) {
-        await this.ensureAgentHealthy(agent, [pr.id]);
+        await this.ensureAgentHealthy(agent, [pr.id], commandPaths);
       }
       await updateRunRecord({
         resolvedAgent: agent,
@@ -1952,7 +1957,7 @@ export class PRBabysitter {
         const fallbackAgent = getNextCodingAgent(failedAgent);
         let resolvedFallback: CodingAgent;
         try {
-          resolvedFallback = await this.runtime.resolveAgent(fallbackAgent, { allowFallback: false });
+          resolvedFallback = await this.runtime.resolveAgent(fallbackAgent, { allowFallback: false, commandPaths });
         } catch {
           return false;
         }
@@ -1988,6 +1993,7 @@ export class PRBabysitter {
             agent,
             cwd: params.cwd,
             prompt: params.prompt,
+            commandPaths,
           });
         } catch (error) {
           if (await tryFallbackToNextAgent(error, params.phase)) {
@@ -1995,6 +2001,7 @@ export class PRBabysitter {
               agent,
               cwd: params.cwd,
               prompt: params.prompt,
+              commandPaths,
             });
           }
           throw error;
@@ -2153,6 +2160,7 @@ export class PRBabysitter {
         const { phase, onFallback, ...agentParams } = params;
         const result = await this.runtime.applyFixesWithAgent({
           agent,
+          commandPaths,
           ...agentParams,
         });
         if (result.code === 0) {
@@ -2173,6 +2181,7 @@ export class PRBabysitter {
 
         return this.runtime.applyFixesWithAgent({
           agent,
+          commandPaths,
           ...agentParams,
         });
       };
@@ -3128,6 +3137,7 @@ export class PRBabysitter {
           author: pullSummary.author,
           branch: pr.branch,
           agent,
+          commandPaths,
           failures: healableHealingFailures,
           runId: `${runId}-ci-healing`,
           rootDir: getCodeFactoryPaths().rootDir,

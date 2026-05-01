@@ -19,6 +19,18 @@ export type CommandResult = {
   timedOut?: boolean;
 };
 
+export type AgentCommandPaths = Partial<Record<CodingAgent, string | null | undefined>>;
+
+export function getAgentCommandPaths(config: {
+  codexCommandPath?: string | null;
+  claudeCommandPath?: string | null;
+}): AgentCommandPaths {
+  return {
+    codex: config.codexCommandPath,
+    claude: config.claudeCommandPath,
+  };
+}
+
 export type AgentHealthResult =
   | { ok: true }
   | { ok: false; reason: string };
@@ -59,9 +71,19 @@ export async function commandExists(command: string): Promise<boolean> {
   return (await resolveCommandPath(command)) !== null;
 }
 
-export async function resolveCommandPath(command: string): Promise<string | null> {
+export async function resolveCommandPath(command: string, commandPaths?: AgentCommandPaths): Promise<string | null> {
   if (!/^[A-Za-z0-9._-]+$/.test(command)) {
     return null;
+  }
+
+  if (command === "codex" || command === "claude") {
+    const configuredPath = commandPaths?.[command]?.trim();
+    if (configuredPath) {
+      if (!path.isAbsolute(configuredPath)) {
+        return null;
+      }
+      return await isExecutable(configuredPath) ? configuredPath : null;
+    }
   }
 
   const result = await runCommand("which", [command], {
@@ -94,19 +116,20 @@ export async function runAgentCommand(
   agent: CodingAgent,
   args: string[],
   options?: Parameters<typeof runCommand>[2],
+  commandPaths?: AgentCommandPaths,
 ): Promise<CommandResult> {
-  return runCommand((await resolveCommandPath(agent)) ?? agent, args, options);
+  return runCommand((await resolveCommandPath(agent, commandPaths)) ?? agent, args, options);
 }
 
 export async function resolveAgent(
   preferred: CodingAgent,
-  options?: { allowFallback?: boolean },
+  options?: { allowFallback?: boolean; commandPaths?: AgentCommandPaths },
 ): Promise<CodingAgent> {
   if (!AGENTS.includes(preferred)) {
     preferred = "codex";
   }
 
-  if (await commandExists(preferred)) {
+  if (await resolveCommandPath(preferred, options?.commandPaths)) {
     return preferred;
   }
 
@@ -115,19 +138,22 @@ export async function resolveAgent(
   }
 
   const fallback = preferred === "codex" ? "claude" : "codex";
-  if (await commandExists(fallback)) {
+  if (await resolveCommandPath(fallback, options?.commandPaths)) {
     return fallback;
   }
 
   throw new Error("Neither codex nor claude CLI is installed");
 }
 
-export async function checkAgentHealth(agent: CodingAgent): Promise<AgentHealthResult> {
+export async function checkAgentHealth(
+  agent: CodingAgent,
+  options?: { commandPaths?: AgentCommandPaths },
+): Promise<AgentHealthResult> {
   if (!AGENTS.includes(agent)) {
     return { ok: false, reason: `Unknown coding agent: ${agent}` };
   }
 
-  if (!(await commandExists(agent))) {
+  if (!(await resolveCommandPath(agent, options?.commandPaths))) {
     return { ok: false, reason: `${agent} CLI is not installed` };
   }
 
@@ -143,6 +169,7 @@ export async function checkAgentHealth(agent: CodingAgent): Promise<AgentHealthR
           prompt,
         ],
         { timeoutMs: 30000 },
+        options?.commandPaths,
       )
     : await runAgentCommand(
         "claude",
@@ -153,6 +180,7 @@ export async function checkAgentHealth(agent: CodingAgent): Promise<AgentHealthR
           prompt,
         ],
         { timeoutMs: 30000 },
+        options?.commandPaths,
       );
 
   if (result.code !== 0) {
@@ -167,8 +195,9 @@ export async function evaluateFixNecessityWithAgent(params: {
   agent: CodingAgent;
   cwd: string;
   prompt: string;
+  commandPaths?: AgentCommandPaths;
 }): Promise<EvaluationResult> {
-  const { agent, cwd, prompt } = params;
+  const { agent, cwd, prompt, commandPaths } = params;
 
   const extractionPrompt = [
     "Respond with ONLY valid JSON and nothing else.",
@@ -193,6 +222,7 @@ export async function evaluateFixNecessityWithAgent(params: {
           extractionPrompt,
         ],
         { cwd, timeoutMs: 180000 },
+        commandPaths,
       );
 
       if (result.code !== 0) {
@@ -229,6 +259,7 @@ export async function evaluateFixNecessityWithAgent(params: {
     "claude",
     claudeArgs,
     { cwd, timeoutMs: 180000 },
+    commandPaths,
   );
 
   if (result.code !== 0) {
@@ -243,10 +274,11 @@ export async function applyFixesWithAgent(params: {
   cwd: string;
   prompt: string;
   env?: NodeJS.ProcessEnv;
+  commandPaths?: AgentCommandPaths;
   onStdoutChunk?: (chunk: string) => void;
   onStderrChunk?: (chunk: string) => void;
 }): Promise<CommandResult> {
-  const { agent, cwd, prompt, env, onStdoutChunk, onStderrChunk } = params;
+  const { agent, cwd, prompt, env, commandPaths, onStdoutChunk, onStderrChunk } = params;
 
   if (agent === "codex") {
     const result = await runAgentCommand(
@@ -260,6 +292,7 @@ export async function applyFixesWithAgent(params: {
         prompt,
       ],
       { cwd, env, timeoutMs: 900000, onStdoutChunk, onStderrChunk },
+      commandPaths,
     );
 
     return result;
@@ -273,6 +306,7 @@ export async function applyFixesWithAgent(params: {
       prompt,
     ],
     { cwd, env, timeoutMs: 900000, onStdoutChunk, onStderrChunk },
+    commandPaths,
   );
 }
 
@@ -336,14 +370,20 @@ function firstOutputLine(output: string): string | null {
 async function findKnownInstallPath(command: string): Promise<string | null> {
   const candidates = await buildKnownInstallCandidates(command);
   for (const candidate of candidates) {
-    try {
-      await access(candidate, constants.X_OK);
+    if (await isExecutable(candidate)) {
       return candidate;
-    } catch {
-      // Try the next conventional local-tool location.
     }
   }
   return null;
+}
+
+async function isExecutable(candidate: string): Promise<boolean> {
+  try {
+    await access(candidate, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function buildKnownInstallCandidates(command: string): Promise<string[]> {

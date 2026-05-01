@@ -91,6 +91,48 @@ export default function Settings() {
                   <option value="claude">claude</option>
                 </select>
               </div>
+              <div className="grid gap-3 border-t border-border pt-4 md:grid-cols-2">
+                <label className="space-y-1.5">
+                  <span className="text-sm">Codex path</span>
+                  <span className="block text-[11px] text-muted-foreground">
+                    Absolute path to the Codex CLI
+                  </span>
+                  <input
+                    key={`settings-codex-${config?.codexCommandPath ?? ""}`}
+                    type="text"
+                    defaultValue={config?.codexCommandPath ?? ""}
+                    placeholder="/Users/you/.nvm/versions/node/v24/bin/codex"
+                    onBlur={(e) => {
+                      const next = e.target.value.trim();
+                      if (next !== (config?.codexCommandPath ?? "")) {
+                        updateConfigMutation.mutate({ codexCommandPath: next });
+                      }
+                    }}
+                    disabled={updateConfigMutation.isPending}
+                    className="w-full border border-border bg-transparent px-2 py-1 text-xs font-mono focus:border-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-50"
+                  />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-sm">Claude path</span>
+                  <span className="block text-[11px] text-muted-foreground">
+                    Absolute path to the Claude CLI
+                  </span>
+                  <input
+                    key={`settings-claude-${config?.claudeCommandPath ?? ""}`}
+                    type="text"
+                    defaultValue={config?.claudeCommandPath ?? ""}
+                    placeholder="/opt/homebrew/bin/claude"
+                    onBlur={(e) => {
+                      const next = e.target.value.trim();
+                      if (next !== (config?.claudeCommandPath ?? "")) {
+                        updateConfigMutation.mutate({ claudeCommandPath: next });
+                      }
+                    }}
+                    disabled={updateConfigMutation.isPending}
+                    className="w-full border border-border bg-transparent px-2 py-1 text-xs font-mono focus:border-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-50"
+                  />
+                </label>
+              </div>
               <label className="flex items-start justify-between gap-3">
                 <div>
                   <div className="text-sm">Fallback to next coding agent</div>

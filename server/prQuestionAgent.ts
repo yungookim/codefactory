@@ -1,5 +1,5 @@
 import type { IStorage } from "./storage";
-import type { CodingAgent } from "./agentRunner";
+import type { AgentCommandPaths, CodingAgent } from "./agentRunner";
 import { resolveAgent, runAgentCommand, summarizeCommandResult } from "./agentRunner";
 
 /**
@@ -12,14 +12,15 @@ export async function answerPRQuestion(params: {
   questionId: string;
   question: string;
   preferredAgent: CodingAgent;
+  commandPaths?: AgentCommandPaths;
 }): Promise<void> {
-  const { storage, prId, questionId, question, preferredAgent } = params;
+  const { storage, prId, questionId, question, preferredAgent, commandPaths } = params;
 
   await storage.updateQuestion(questionId, { status: "answering" });
 
   try {
     const context = await buildPRContext(storage, prId);
-    const agent = await resolveAgent(preferredAgent);
+    const agent = await resolveAgent(preferredAgent, { commandPaths });
     const prompt = buildPrompt(context, question);
 
     const result = await runAgentCommand(
@@ -28,6 +29,7 @@ export async function answerPRQuestion(params: {
         ? ["-p", "--output-format", "text", prompt]
         : ["exec", "--skip-git-repo-check", "--sandbox", "read-only", prompt],
       { timeoutMs: 180_000 },
+      commandPaths,
     );
 
     if (result.code !== 0) {

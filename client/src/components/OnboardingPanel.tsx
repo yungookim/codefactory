@@ -198,6 +198,23 @@ export function OnboardingPanel() {
     queryKey: ["/api/config"],
   });
 
+  const updateConfigMutation = useMutation({
+    mutationFn: async (updates: Partial<Config>) => {
+      const res = await apiRequest("PATCH", "/api/config", updates);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/config"] });
+      toast({ description: "Agent paths saved." });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        description: `Could not save agent paths: ${error.message}`,
+      });
+    },
+  });
+
   const installWorkflowMutation = useMutation({
     mutationFn: async ({ repo, tool }: { repo: string; tool: InstallReviewTool }) => {
       const res = await apiRequest("POST", "/api/onboarding/install-review", { repo, tool });
@@ -276,6 +293,56 @@ export function OnboardingPanel() {
           </div>
 
           <div className="space-y-3">
+            <div className="border border-border bg-background/60 px-3 py-3">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-[11px] font-medium uppercase tracking-wider">Local agent CLIs</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Optional absolute paths when the app cannot inherit your shell PATH.
+                  </div>
+                </div>
+                <Link href="/settings" className="text-[10px] uppercase tracking-wider text-muted-foreground underline underline-offset-2 hover:text-foreground">
+                  settings
+                </Link>
+              </div>
+              <div className="grid gap-2 md:grid-cols-2">
+                <label className="space-y-1">
+                  <span className="text-[11px] text-muted-foreground">Codex path</span>
+                  <input
+                    key={`onboarding-codex-${config?.codexCommandPath ?? ""}`}
+                    type="text"
+                    defaultValue={config?.codexCommandPath ?? ""}
+                    placeholder="/Users/you/.nvm/versions/node/v24/bin/codex"
+                    onBlur={(e) => {
+                      const next = e.target.value.trim();
+                      if (next !== (config?.codexCommandPath ?? "")) {
+                        updateConfigMutation.mutate({ codexCommandPath: next });
+                      }
+                    }}
+                    disabled={updateConfigMutation.isPending}
+                    className="w-full border border-border bg-transparent px-2 py-1 text-[11px] font-mono focus:border-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-50"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[11px] text-muted-foreground">Claude path</span>
+                  <input
+                    key={`onboarding-claude-${config?.claudeCommandPath ?? ""}`}
+                    type="text"
+                    defaultValue={config?.claudeCommandPath ?? ""}
+                    placeholder="/opt/homebrew/bin/claude"
+                    onBlur={(e) => {
+                      const next = e.target.value.trim();
+                      if (next !== (config?.claudeCommandPath ?? "")) {
+                        updateConfigMutation.mutate({ claudeCommandPath: next });
+                      }
+                    }}
+                    disabled={updateConfigMutation.isPending}
+                    className="w-full border border-border bg-transparent px-2 py-1 text-[11px] font-mono focus:border-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-50"
+                  />
+                </label>
+              </div>
+            </div>
+
             {steps.map((step, index) => (
               <StepCard key={step.id} step={step} index={index + 1}>
                 {step.id === "github" && !step.complete && (

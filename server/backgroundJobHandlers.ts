@@ -1,5 +1,5 @@
 import type { BackgroundJob, DeploymentPlatform } from "@shared/schema";
-import type { CodingAgent } from "./agentRunner";
+import { getAgentCommandPaths, type CodingAgent } from "./agentRunner";
 import type { PRBabysitter } from "./babysitter";
 import { CancelBackgroundJobError, type BackgroundJobHandlers } from "./backgroundJobDispatcher";
 import { createAdapter } from "./deploymentAdapters";
@@ -95,6 +95,7 @@ export function createBackgroundJobHandlers(params: {
         questionId: question.id,
         question: question.question,
         preferredAgent: config.codingAgent,
+        commandPaths: getAgentCommandPaths(config),
       });
     },
 
@@ -219,6 +220,7 @@ export function createBackgroundJobHandlers(params: {
             baseBranch,
             repoCloneUrl: buildGitHubCloneUrl(repo, githubToken),
             agent: config.codingAgent,
+            commandPaths: getAgentCommandPaths(config),
             githubToken: githubToken ?? "",
           });
 

@@ -440,6 +440,8 @@ export const configSchema = z.object({
   githubTokens: z.array(z.string()),
   githubToken: z.string().optional(),
   codingAgent: z.enum(["codex", "claude"]),
+  codexCommandPath: z.string(),
+  claudeCommandPath: z.string(),
   fallbackToNextCodingAgent: z.boolean(),
   maxTurns: z.number(),
   batchWindowMs: z.number(),

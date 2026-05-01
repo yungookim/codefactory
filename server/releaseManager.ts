@@ -1,6 +1,6 @@
 import type { Octokit } from "@octokit/rest";
 import type { Config, ReleaseRun, ReleaseRunIncludedPR } from "@shared/schema";
-import type { CodingAgent } from "./agentRunner";
+import { getAgentCommandPaths, type CodingAgent } from "./agentRunner";
 import { parseRepoSlug } from "./github";
 import type { IStorage } from "./storage";
 import { buildBackgroundJobDedupeKey, type ScheduleBackgroundJob } from "./backgroundJobQueue";
@@ -301,6 +301,7 @@ export class ReleaseManager {
         const includedPrs = includedPulls.map(toIncludedPR);
         const decision = await this.evaluateRelease({
           preferredAgent: config.codingAgent as CodingAgent,
+          commandPaths: getAgentCommandPaths(config),
           repo: run.repo,
           baseBranch: run.baseBranch,
           latestTag,

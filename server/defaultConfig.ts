@@ -3,6 +3,8 @@ import type { Config } from "@shared/schema";
 export const DEFAULT_CONFIG: Config = {
   githubTokens: [],
   codingAgent: "claude",
+  codexCommandPath: "",
+  claudeCommandPath: "",
   fallbackToNextCodingAgent: false,
   maxTurns: 15,
   batchWindowMs: 300000,
