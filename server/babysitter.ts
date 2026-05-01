@@ -1502,7 +1502,7 @@ export class PRBabysitter {
             phase: "watcher",
           });
 
-          const repoAutoCreateReleases = repoSettingsByRepo.get(repoSlug)?.autoCreateReleases ?? true;
+          const repoAutoCreateReleases = repoSettingsByRepo.get(repoSlug)?.autoCreateReleases ?? false;
           if (closeState?.merged && this.releaseManager && config.autoCreateReleases) {
             if (!repoAutoCreateReleases) {
               await this.storage.addLog(pr.id, "info", `PR #${pr.number} was merged, but auto-release is disabled for ${repoSlug}`, {

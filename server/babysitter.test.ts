@@ -354,6 +354,8 @@ test("syncFeedbackForPR logs completion even when no new feedback items arrive",
 test("syncAndBabysitTrackedRepos queues release evaluation for merged archived PRs", async () => {
   const storage = new MemStorage();
   const queued: Array<Record<string, string | number>> = [];
+  await storage.updateConfig({ autoCreateReleases: true });
+  await storage.updateRepoSettings("octo/example", { autoCreateReleases: true });
 
   const pr = await storage.addPR({
     number: 42,
@@ -951,6 +953,7 @@ test("syncAndBabysitTrackedRepos respects autoCreateReleases when a merged PR is
 test("syncAndBabysitTrackedRepos respects repo-level autoCreateReleases when a merged PR is archived", async () => {
   const storage = new MemStorage();
   const queued: Array<Record<string, string | number>> = [];
+  await storage.updateConfig({ autoCreateReleases: true });
   await storage.updateRepoSettings("octo/example", { autoCreateReleases: false });
 
   const pr = await storage.addPR({
@@ -997,6 +1000,8 @@ test("syncAndBabysitTrackedRepos respects repo-level autoCreateReleases when a m
 test("syncAndBabysitTrackedRepos skips release evaluation when merged PR metadata is incomplete", async () => {
   const storage = new MemStorage();
   const queued: Array<Record<string, string | number>> = [];
+  await storage.updateConfig({ autoCreateReleases: true });
+  await storage.updateRepoSettings("octo/example", { autoCreateReleases: true });
 
   const pr = await storage.addPR({
     number: 42,

@@ -120,6 +120,10 @@ describe("DEFAULT_CONFIG", () => {
     assert.equal(DEFAULT_CONFIG.autoUpdateDocs, true);
   });
 
+  it("disables automatic release creation by default", () => {
+    assert.equal(DEFAULT_CONFIG.autoCreateReleases, false);
+  });
+
   it("includes repository links in GitHub comments by default", () => {
     assert.equal(DEFAULT_CONFIG.includeRepositoryLinksInGitHubComments, true);
   });
