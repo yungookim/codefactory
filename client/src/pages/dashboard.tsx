@@ -78,6 +78,7 @@ const EMPTY_ACTIVITY_SNAPSHOT: ActivitySnapshot = {
   generatedAt: "",
 };
 const MAX_VISIBLE_LOGS = 200;
+const TRACKED_REPOS_OPEN_KEY = "oh-my-pr:tracked-repos-open";
 
 type WatchScope = (typeof WATCH_SCOPE_OPTIONS)[number]["value"];
 type RepoSettings = WatchedRepo & {
@@ -980,8 +981,26 @@ export default function Dashboard() {
   const [addUrl, setAddUrl] = useState("");
   const [addRepo, setAddRepo] = useState("");
   const [addControlsOpen, setAddControlsOpen] = useState<boolean | null>(null);
+  const [trackedReposOpen, setTrackedReposOpen] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      const stored = window.localStorage.getItem(TRACKED_REPOS_OPEN_KEY);
+      return stored === null ? true : stored === "true";
+    } catch {
+      return true;
+    }
+  });
   const [watchScope, setWatchScope] = useState<WatchScope>("mine");
   const [viewMode, setViewMode] = useState<"active" | "archived">("active");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(TRACKED_REPOS_OPEN_KEY, String(trackedReposOpen));
+    } catch {
+      // Ignore storage errors when browser settings restrict localStorage.
+    }
+  }, [trackedReposOpen]);
 
   const { data: prs = [], isLoading } = useQuery<PR[]>({
     queryKey: ["/api/prs"],
@@ -1382,11 +1401,26 @@ export default function Dashboard() {
                   </form>
                 </Collapsible.Content>
               </Collapsible.Root>
-              <div className="border-b border-border p-3">
-                <div className="mb-1 flex items-center justify-between">
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                    Tracked repositories
-                  </span>
+              <Collapsible.Root
+                open={trackedReposOpen}
+                onOpenChange={setTrackedReposOpen}
+                className="border-b border-border"
+              >
+                <div className="flex items-center justify-between gap-2 p-3">
+                  <Collapsible.Trigger asChild>
+                    <button
+                      type="button"
+                      data-testid="button-toggle-tracked-repos"
+                      aria-label={trackedReposOpen ? "Collapse tracked repositories" : "Expand tracked repositories"}
+                      className="flex min-w-0 items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                    >
+                      <span aria-hidden="true">{trackedReposOpen ? "▾" : "▸"}</span>
+                      <span>Tracked repositories</span>
+                      {!trackedReposOpen && repos.length > 0 && (
+                        <span className="text-muted-foreground/70">({repos.length})</span>
+                      )}
+                    </button>
+                  </Collapsible.Trigger>
                   <button
                     type="button"
                     onClick={() => syncReposMutation.mutate()}
@@ -1397,81 +1431,83 @@ export default function Dashboard() {
                     {syncReposMutation.isPending ? "Fetching..." : "Fetch"}
                   </button>
                 </div>
-                {repos.length === 0 ? (
-                  <div className="text-[11px] text-muted-foreground">No repositories being watched yet.</div>
-                ) : (
-                  <div className="space-y-1 text-[12px]">
-                    {repos.map((repo) => {
-                      const manualReleasePending = manualReleaseMutation.isPending
-                        && manualReleaseMutation.variables === repo.repo;
+                <Collapsible.Content className="px-3 pb-3">
+                  {repos.length === 0 ? (
+                    <div className="text-[11px] text-muted-foreground">No repositories being watched yet.</div>
+                  ) : (
+                    <div className="space-y-1 text-[12px]">
+                      {repos.map((repo) => {
+                        const manualReleasePending = manualReleaseMutation.isPending
+                          && manualReleaseMutation.variables === repo.repo;
 
-                      return (
-                        <div
-                          key={repo.repo}
-                          className="space-y-2 border border-border/60 px-2 py-2"
-                        >
-                          <a
-                            href={getRepoHref(repo.repo)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            data-testid={`tracked-repo-${repo.repo.replace("/", "-")}`}
-                            className="min-w-0 break-all text-foreground/75 underline decoration-border underline-offset-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                        return (
+                          <div
+                            key={repo.repo}
+                            className="space-y-2 border border-border/60 px-2 py-2"
                           >
-                            {repo.repo}
-                          </a>
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div>
-                              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                                Track automatically
-                              </div>
-                              <WatchScopeControl
-                                value={getWatchScope(repo.ownPrsOnly)}
-                                onChange={(value) =>
-                                  updateRepoSettingsMutation.mutate({
-                                    repo: repo.repo,
-                                    ownPrsOnly: value === "mine",
-                                  })
-                                }
-                                disabled={updateRepoSettingsMutation.isPending}
-                                name={`tracked-repo-scope-${repo.repo}`}
-                                testIdPrefix={`tracked-repo-scope-${repo.repo.replace("/", "-")}`}
-                                compact
-                              />
-                            </div>
-                            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 self-end">
-                              <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                                <input
-                                  type="checkbox"
-                                  checked={repo.autoCreateReleases}
-                                  onChange={(e) =>
+                            <a
+                              href={getRepoHref(repo.repo)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              data-testid={`tracked-repo-${repo.repo.replace("/", "-")}`}
+                              className="min-w-0 break-all text-foreground/75 underline decoration-border underline-offset-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                            >
+                              {repo.repo}
+                            </a>
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div>
+                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                  Track automatically
+                                </div>
+                                <WatchScopeControl
+                                  value={getWatchScope(repo.ownPrsOnly)}
+                                  onChange={(value) =>
                                     updateRepoSettingsMutation.mutate({
                                       repo: repo.repo,
-                                      autoCreateReleases: e.target.checked,
+                                      ownPrsOnly: value === "mine",
                                     })
                                   }
                                   disabled={updateRepoSettingsMutation.isPending}
-                                  data-testid={`tracked-repo-auto-release-${repo.repo.replace("/", "-")}`}
-                                  className="accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                                  name={`tracked-repo-scope-${repo.repo}`}
+                                  testIdPrefix={`tracked-repo-scope-${repo.repo.replace("/", "-")}`}
+                                  compact
                                 />
-                                Auto-release
-                              </label>
-                              <button
-                                type="button"
-                                onClick={() => manualReleaseMutation.mutate(repo.repo)}
-                                disabled={manualReleaseMutation.isPending}
-                                data-testid={`tracked-repo-manual-release-${repo.repo.replace("/", "-")}`}
-                                className="border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
-                              >
-                                {manualReleasePending ? "Releasing..." : "Release"}
-                              </button>
+                              </div>
+                              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 self-end">
+                                <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                                  <input
+                                    type="checkbox"
+                                    checked={repo.autoCreateReleases}
+                                    onChange={(e) =>
+                                      updateRepoSettingsMutation.mutate({
+                                        repo: repo.repo,
+                                        autoCreateReleases: e.target.checked,
+                                      })
+                                    }
+                                    disabled={updateRepoSettingsMutation.isPending}
+                                    data-testid={`tracked-repo-auto-release-${repo.repo.replace("/", "-")}`}
+                                    className="accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                                  />
+                                  Auto-release
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => manualReleaseMutation.mutate(repo.repo)}
+                                  disabled={manualReleaseMutation.isPending}
+                                  data-testid={`tracked-repo-manual-release-${repo.repo.replace("/", "-")}`}
+                                  className="border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
+                                >
+                                  {manualReleasePending ? "Releasing..." : "Release"}
+                                </button>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Collapsible.Content>
+              </Collapsible.Root>
             </>
           )}
           <div className="flex-1">
