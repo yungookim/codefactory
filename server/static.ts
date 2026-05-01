@@ -1,8 +1,13 @@
 import express, { type Express } from "express";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 
-export function serveStatic(app: Express, serverDir = __dirname) {
+function getDefaultServerDir() {
+  return typeof __dirname === "string" ? __dirname : path.dirname(fileURLToPath(import.meta.url));
+}
+
+export function serveStatic(app: Express, serverDir = getDefaultServerDir()) {
   const distPath = path.resolve(serverDir, "public");
   if (!fs.existsSync(distPath)) {
     throw new Error(

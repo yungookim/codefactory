@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import express from "express";
 import { serveStatic } from "./static";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 async function closeServer(server: Server) {
   server.closeAllConnections?.();
@@ -51,5 +55,28 @@ test("serveStatic fallback serves index.html from hidden install paths", async (
     }
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("serveStatic default server directory does not require CommonJS globals", () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      "--input-type=module",
+      "-e",
+      "import express from 'express'; import { serveStatic } from './server/static.ts'; serveStatic(express());",
+    ],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+    },
+  );
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  assert.doesNotMatch(output, /ReferenceError: __dirname is not defined/);
+  if (result.status !== 0) {
+    assert.match(output, /Could not find the build directory:/);
   }
 });
