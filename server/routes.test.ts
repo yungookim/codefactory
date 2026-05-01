@@ -442,6 +442,120 @@ test("GET /api/activities batches PR activity metadata", async () => {
   }
 });
 
+test("GET /api/activities hides failed babysitter jobs for archived PRs", async () => {
+  const harness = await createHarness();
+  const archivedPr = await seedPR(harness.storage, {
+    title: "already merged",
+    repo: "acme/widgets",
+    number: 77,
+    url: "https://github.com/acme/widgets/pull/77",
+    status: "archived",
+  });
+  const activePr = await seedPR(harness.storage, {
+    title: "still open",
+    repo: "acme/widgets",
+    number: 78,
+    url: "https://github.com/acme/widgets/pull/78",
+  });
+
+  try {
+    const archivedJob = await harness.storage.enqueueBackgroundJob({
+      kind: "babysit_pr",
+      targetId: archivedPr.id,
+      dedupeKey: `babysit_pr:${archivedPr.id}`,
+      payload: { preferredAgent: "claude" },
+      availableAt: "2026-04-26T10:00:00.000Z",
+    });
+    await harness.storage.claimNextBackgroundJob({
+      workerId: "worker-archived",
+      leaseToken: "lease-archived",
+      leaseExpiresAt: "2026-04-26T10:10:00.000Z",
+      now: "2026-04-26T10:01:00.000Z",
+    });
+    await harness.storage.failBackgroundJob(
+      archivedJob.id,
+      "lease-archived",
+      "agent timed out",
+      "2026-04-26T10:02:00.000Z",
+    );
+
+    const activeJob = await harness.storage.enqueueBackgroundJob({
+      kind: "babysit_pr",
+      targetId: activePr.id,
+      dedupeKey: `babysit_pr:${activePr.id}`,
+      payload: { preferredAgent: "claude" },
+      availableAt: "2026-04-26T10:03:00.000Z",
+    });
+    await harness.storage.claimNextBackgroundJob({
+      workerId: "worker-active",
+      leaseToken: "lease-active",
+      leaseExpiresAt: "2026-04-26T10:10:00.000Z",
+      now: "2026-04-26T10:03:00.000Z",
+    });
+    await harness.storage.failBackgroundJob(
+      activeJob.id,
+      "lease-active",
+      "agent timed out",
+      "2026-04-26T10:04:00.000Z",
+    );
+
+    const response = await fetch(`${harness.baseUrl}/api/activities`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as {
+      failed: Array<{ id: string; targetId: string }>;
+    };
+
+    assert.deepEqual(body.failed.map((item) => item.id), [activeJob.id]);
+    assert.equal(body.failed[0]?.targetId, activePr.id);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("GET /api/activities hides failed question jobs for archived PRs", async () => {
+  const harness = await createHarness();
+  const archivedPr = await seedPR(harness.storage, {
+    title: "closed follow-up",
+    repo: "acme/widgets",
+    number: 77,
+    url: "https://github.com/acme/widgets/pull/77",
+    status: "archived",
+  });
+
+  try {
+    const questionJob = await harness.storage.enqueueBackgroundJob({
+      kind: "answer_pr_question",
+      targetId: "question-archived",
+      dedupeKey: "answer_pr_question:question-archived",
+      payload: { prId: archivedPr.id },
+      availableAt: "2026-04-26T10:00:00.000Z",
+    });
+    await harness.storage.claimNextBackgroundJob({
+      workerId: "worker-question",
+      leaseToken: "lease-question",
+      leaseExpiresAt: "2026-04-26T10:10:00.000Z",
+      now: "2026-04-26T10:01:00.000Z",
+      kinds: ["answer_pr_question"],
+    });
+    await harness.storage.failBackgroundJob(
+      questionJob.id,
+      "lease-question",
+      "question agent timed out",
+      "2026-04-26T10:02:00.000Z",
+    );
+
+    const response = await fetch(`${harness.baseUrl}/api/activities`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as {
+      failed: Array<{ id: string }>;
+    };
+
+    assert.equal(body.failed.length, 0);
+  } finally {
+    await harness.close();
+  }
+});
+
 test("GET /api/activities warns when a babysitter job fails from agent authentication", async () => {
   const harness = await createHarness();
   const pr = await seedPR(harness.storage, {

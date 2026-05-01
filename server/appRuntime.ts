@@ -555,6 +555,19 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     };
   };
 
+  const isFailedActivityForArchivedPR = (job: BackgroundJob, context: ActivityDescriptionContext): boolean => {
+    if (job.kind === "babysit_pr") {
+      return context.prsById.get(job.targetId)?.status === "archived";
+    }
+
+    if (job.kind === "answer_pr_question") {
+      const prId = readJobStringPayload(job, "prId");
+      return prId ? context.prsById.get(prId)?.status === "archived" : false;
+    }
+
+    return false;
+  };
+
   const mapOperatorWarning = (job: BackgroundJob, context: ActivityDescriptionContext): OperatorWarning | null => {
     const failure = classifyAgentAvailabilityFailure(job);
     if (!failure) {
@@ -673,9 +686,10 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
         storage.listBackgroundJobs({ status: "queued" }),
       ]);
 
-      const failedWarningJobs = failedJobs.filter((job) => classifyAgentAvailabilityFailure(job));
       const descriptionContext = await buildActivityDescriptionContext([...failedJobs, ...leasedJobs, ...queuedJobs]);
-      const failed = failedJobs.map((job) => mapActivityJob(job, descriptionContext));
+      const visibleFailedJobs = failedJobs.filter((job) => !isFailedActivityForArchivedPR(job, descriptionContext));
+      const failedWarningJobs = visibleFailedJobs.filter((job) => classifyAgentAvailabilityFailure(job));
+      const failed = visibleFailedJobs.map((job) => mapActivityJob(job, descriptionContext));
       const inProgress = leasedJobs.map((job) => mapActivityJob(job, descriptionContext));
       const queued = queuedJobs.map((job) => mapActivityJob(job, descriptionContext));
       const warnings = failedWarningJobs
