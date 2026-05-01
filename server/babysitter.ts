@@ -158,9 +158,9 @@ const defaultBabysitterRuntime: BabysitterRuntime = {
 const STATUS_MESSAGES = {
   accepted: "\u23f3 **Accepted** — this comment requires code changes. Queuing fix...",
   agentRunning: (agent: CodingAgent) => `\ud83e\uddf0 **Agent running** — \`${agent}\` is working on the fix...`,
-  agentFailed: (reason?: string) => reason
-    ? `\u274c **Agent failed** — ${reason}`
-    : "\u274c **Agent failed** — the coding agent exited with an error.",
+  agentFailed: (agent: CodingAgent, reason?: string) => reason
+    ? `\u274c **Agent failed** — \`${agent}\` exited with an error: ${reason}`
+    : `\u274c **Agent failed** — \`${agent}\` exited with an error.`,
   agentCompleted: "\u2705 **Agent completed** — verifying changes...",
   resolved: (headSha: string) => {
     const shortSha = headSha.trim().slice(0, 7);
@@ -2111,6 +2111,7 @@ export class PRBabysitter {
 
       const includeRepositoryLinksInGitHubComments = config.includeRepositoryLinksInGitHubComments;
       const postGitHubProgressReplies = config.postGitHubProgressReplies;
+      // Track status reply comments so we can update them with progress.
       const statusReplies = new Map<string, StatusReplyRef>();
       const updateItemStatus = async (feedbackId: string, line: string) => {
         const ref = statusReplies.get(feedbackId);
@@ -2858,10 +2859,8 @@ export class PRBabysitter {
             // Post agent command to GitHub PR as a comment for debugging visibility.
             await postAgentCommandComment(agent, fixPrompt);
 
-            if (postGitHubProgressReplies) {
-              const agentRunningStatus = STATUS_MESSAGES.agentRunning(agent);
-              await Promise.all(effectiveCommentTasks.map((task) => updateItemStatus(task.id, agentRunningStatus)));
-            }
+            const agentRunningStatus = STATUS_MESSAGES.agentRunning(agent);
+            await Promise.all(effectiveCommentTasks.map((task) => updateItemStatus(task.id, agentRunningStatus)));
 
             const applyResult = await applyWithCurrentAgent({
               cwd: worktreePath,
@@ -2871,7 +2870,6 @@ export class PRBabysitter {
               onStderrChunk: agentStderr.onChunk,
               phase: "agent",
               onFallback: async (fallbackAgent) => {
-                if (!postGitHubProgressReplies) return;
                 const fallbackStatus = STATUS_MESSAGES.agentRunning(fallbackAgent);
                 await Promise.all(effectiveCommentTasks.map((task) => updateItemStatus(task.id, fallbackStatus)));
               },
@@ -2881,15 +2879,11 @@ export class PRBabysitter {
 
             if (applyResult.code !== 0) {
               const failureReason = formatConciseFailureReason(applyResult.stderr || applyResult.stdout);
-              if (postGitHubProgressReplies) {
-                await Promise.all(effectiveCommentTasks.map((task) => updateItemStatus(task.id, STATUS_MESSAGES.agentFailed(failureReason))));
-              }
+              await Promise.all(effectiveCommentTasks.map((task) => updateItemStatus(task.id, STATUS_MESSAGES.agentFailed(agent, failureReason))));
               throw new Error(`${agent} apply failed (${applyResult.code}): ${failureReason}`);
             }
 
-            if (postGitHubProgressReplies) {
-              await Promise.all(effectiveCommentTasks.map((task) => updateItemStatus(task.id, STATUS_MESSAGES.agentCompleted)));
-            }
+            await Promise.all(effectiveCommentTasks.map((task) => updateItemStatus(task.id, STATUS_MESSAGES.agentCompleted)));
 
             // Extract per-feedback-item summaries from agent output.
             agentSummaries = extractAgentSummaries(applyResult.stdout);
@@ -3232,9 +3226,7 @@ export class PRBabysitter {
           },
         });
 
-        if (postGitHubProgressReplies) {
-          await updateItemStatus(item.id, STATUS_MESSAGES.resolved(headShaForFollowUp));
-        }
+        await updateItemStatus(item.id, STATUS_MESSAGES.resolved(headShaForFollowUp));
       }
 
       pr = await this.syncFeedbackForPR(pr.id, {
