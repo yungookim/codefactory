@@ -311,7 +311,7 @@ const TOOLS: Tool[] = [
       "Partially update oh-my-pr configuration. All fields are optional; only provided " +
       "fields are changed. Available fields: githubTokens, githubToken (legacy), codingAgent, maxTurns, " +
       "fallbackToNextCodingAgent, batchWindowMs, pollIntervalMs, maxChangesPerRun, autoResolveMergeConflicts, autoUpdateDocs, " +
-      "includeRepositoryLinksInGitHubComments, " +
+      "includeRepositoryLinksInGitHubComments, postGitHubProgressReplies, " +
       "watchedRepos, trustedReviewers, ignoredBots.",
     inputSchema: {
       type: "object",
@@ -327,6 +327,7 @@ const TOOLS: Tool[] = [
         autoResolveMergeConflicts: { type: "boolean" },
         autoUpdateDocs: { type: "boolean" },
         includeRepositoryLinksInGitHubComments: { type: "boolean" },
+        postGitHubProgressReplies: { type: "boolean" },
         watchedRepos: { type: "array", items: { type: "string" } },
         trustedReviewers: { type: "array", items: { type: "string" } },
         ignoredBots: { type: "array", items: { type: "string" } },

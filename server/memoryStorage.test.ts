@@ -426,6 +426,7 @@ describe("MemStorage", () => {
         config.includeRepositoryLinksInGitHubComments,
         DEFAULT_CONFIG.includeRepositoryLinksInGitHubComments,
       );
+      assert.equal(config.postGitHubProgressReplies, DEFAULT_CONFIG.postGitHubProgressReplies);
       assert.equal(config.autoHealCI, DEFAULT_CONFIG.autoHealCI);
       assert.equal(config.maxHealingAttemptsPerSession, DEFAULT_CONFIG.maxHealingAttemptsPerSession);
       assert.equal(config.maxHealingAttemptsPerFingerprint, DEFAULT_CONFIG.maxHealingAttemptsPerFingerprint);
@@ -444,6 +445,7 @@ describe("MemStorage", () => {
       assert.equal(updated.fallbackToNextCodingAgent, false);
       assert.equal(updated.autoUpdateDocs, true);
       assert.equal(updated.includeRepositoryLinksInGitHubComments, true);
+      assert.equal(updated.postGitHubProgressReplies, false);
       assert.equal(updated.autoCreateReleases, true);
       assert.equal(updated.autoHealCI, false);
       assert.equal(updated.maxHealingAttemptsPerSession, 3);
@@ -453,6 +455,7 @@ describe("MemStorage", () => {
       const updated = await storage.updateConfig({
         githubTokens: ["tok_123", "tok_456"],
         includeRepositoryLinksInGitHubComments: false,
+        postGitHubProgressReplies: true,
         autoHealCI: true,
         maxHealingAttemptsPerSession: 5,
         maxHealingAttemptsPerFingerprint: 4,
@@ -462,6 +465,7 @@ describe("MemStorage", () => {
       const fetched = await storage.getConfig();
       assert.deepEqual(updated, fetched);
       assert.deepEqual(fetched.githubTokens, ["tok_123", "tok_456"]);
+      assert.equal(fetched.postGitHubProgressReplies, true);
     });
   });
 

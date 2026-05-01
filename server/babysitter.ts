@@ -160,9 +160,9 @@ const defaultBabysitterRuntime: BabysitterRuntime = {
 const STATUS_MESSAGES = {
   accepted: "\u23f3 **Accepted** — this comment requires code changes. Queuing fix...",
   agentRunning: (agent: CodingAgent) => `\ud83e\uddf0 **Agent running** — \`${agent}\` is working on the fix...`,
-  agentFailed: (reason?: string) => reason
-    ? `\u274c **Agent failed** — ${reason}`
-    : "\u274c **Agent failed** — the coding agent exited with an error.",
+  agentFailed: (agent: CodingAgent, reason?: string) => reason
+    ? `\u274c **Agent failed** — \`${agent}\` exited with an error: ${reason}`
+    : `\u274c **Agent failed** — \`${agent}\` exited with an error.`,
   agentCompleted: "\u2705 **Agent completed** — verifying changes...",
   resolved: (headSha: string) => {
     const shortSha = headSha.trim().slice(0, 7);
@@ -2223,11 +2223,12 @@ export class PRBabysitter {
         }
       }
 
+      const includeRepositoryLinksInGitHubComments = config.includeRepositoryLinksInGitHubComments;
+      const postGitHubProgressReplies = config.postGitHubProgressReplies;
       // Track status reply comments so we can update them with progress.
       const statusReplies = new Map<string, StatusReplyRef>(
         Object.entries(readStatusReplyRefs(runRecord.metadata)),
       );
-      const includeRepositoryLinksInGitHubComments = config.includeRepositoryLinksInGitHubComments;
       const persistStatusReplyRef = async (feedbackId: string, ref: StatusReplyRef) => {
         const statusReplyRefs = {
           ...readStatusReplyRefs(runRecord.metadata),
@@ -2422,26 +2423,28 @@ export class PRBabysitter {
             );
           }
 
-          // Post an initial status reply so the reviewer sees progress.
-          try {
-            const ref = await this.github.postStatusReplyForFeedbackItem(
-              octokit,
-              parsedPr,
-              item,
-              withOptionalAppCommentFooter(STATUS_MESSAGES.accepted, includeRepositoryLinksInGitHubComments),
-            );
-            if (ref) {
-              statusReplies.set(item.id, ref);
-              await persistStatusReplyRef(item.id, ref);
+          if (postGitHubProgressReplies) {
+            try {
+              const ref = await this.github.postStatusReplyForFeedbackItem(
+                octokit,
+                parsedPr,
+                item,
+                withOptionalAppCommentFooter(STATUS_MESSAGES.accepted, includeRepositoryLinksInGitHubComments),
+              );
+              if (ref) {
+                statusReplies.set(item.id, ref);
+                await persistStatusReplyRef(item.id, ref);
+              }
+            } catch (error) {
+              await logBestEffortFailure(
+                pr.id,
+                "github.status",
+                `Failed to post status reply for ${item.id}: ${summarizeUnknownError(error)}`,
+                { feedbackId: item.id },
+              );
             }
-          } catch (error) {
-            await logBestEffortFailure(
-              pr.id,
-              "github.status",
-              `Failed to post status reply for ${item.id}: ${summarizeUnknownError(error)}`,
-              { feedbackId: item.id },
-            );
           }
+
         } else {
           await queueLog(pr.id, "info", `Rejected feedback ${item.id}: ${evaluation.reason}`, {
             phase: "evaluate.comments",
@@ -3027,7 +3030,6 @@ export class PRBabysitter {
             // Post agent command to GitHub PR as a comment for debugging visibility.
             await postAgentCommandComment(agent, fixPrompt);
 
-            // Update status replies: agent is starting.
             const agentRunningStatus = STATUS_MESSAGES.agentRunning(agent);
             await Promise.all(effectiveCommentTasks.map((task) => updateItemStatus(task.id, agentRunningStatus)));
 
@@ -3047,13 +3049,11 @@ export class PRBabysitter {
             await agentStderr.flush();
 
             if (applyResult.code !== 0) {
-              // Update status replies on failure.
               const failureReason = formatConciseFailureReason(applyResult.stderr || applyResult.stdout);
-              await Promise.all(effectiveCommentTasks.map((task) => updateItemStatus(task.id, STATUS_MESSAGES.agentFailed(failureReason))));
+              await Promise.all(effectiveCommentTasks.map((task) => updateItemStatus(task.id, STATUS_MESSAGES.agentFailed(agent, failureReason))));
               throw new Error(`${agent} apply failed (${applyResult.code}): ${failureReason}`);
             }
 
-            // Update status replies: agent succeeded.
             await Promise.all(effectiveCommentTasks.map((task) => updateItemStatus(task.id, STATUS_MESSAGES.agentCompleted)));
 
             // Extract per-feedback-item summaries from agent output.
@@ -3397,7 +3397,6 @@ export class PRBabysitter {
           },
         });
 
-        // Final status update on the progress reply.
         await updateItemStatus(item.id, STATUS_MESSAGES.resolved(headShaForFollowUp));
       }
 
