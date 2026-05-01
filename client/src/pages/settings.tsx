@@ -418,17 +418,104 @@ export default function Settings() {
                 </div>
               </div>
 
-              <div>
-                <div className="text-sm">Ignored bots</div>
-                <div className="text-[11px] text-muted-foreground">
-                  {config?.ignoredBots?.length
-                    ? config.ignoredBots.join(", ")
-                    : "none configured"}
-                </div>
-              </div>
+              <StringListRow
+                label="Ignored bots"
+                description="Bot logins whose comments and reviews are ignored."
+                placeholder="dependabot[bot]"
+                values={config?.ignoredBots ?? []}
+                onChange={(next) => updateConfigMutation.mutate({ ignoredBots: next })}
+                disabled={!config || updateConfigMutation.isPending}
+              />
             </div>
           </section>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function StringListRow({
+  label,
+  description,
+  placeholder,
+  values,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  description: string;
+  placeholder: string;
+  values: string[];
+  onChange: (next: string[]) => void;
+  disabled: boolean;
+}) {
+  const [draft, setDraft] = useState("");
+
+  const addValue = () => {
+    const trimmed = draft.trim();
+    const lowered = trimmed.toLowerCase();
+    if (!trimmed || values.some((v) => v.toLowerCase() === lowered)) {
+      setDraft("");
+      return;
+    }
+    onChange([...values, trimmed]);
+    setDraft("");
+  };
+
+  const removeValue = (index: number) => {
+    onChange(values.filter((_, i) => i !== index));
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div>
+        <div className="text-sm">{label}</div>
+        <div className="text-[11px] text-muted-foreground">{description}</div>
+      </div>
+      {values.length ? (
+        <div className="flex flex-wrap gap-1.5">
+          {values.map((value, index) => (
+            <span
+              key={`${value}-${index}`}
+              className="inline-flex items-center gap-1.5 border border-border px-2 py-0.5 font-mono text-xs"
+            >
+              {value}
+              <button
+                onClick={() => removeValue(index)}
+                disabled={disabled}
+                aria-label={`Remove ${value}`}
+                className="text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div className="text-[11px] text-muted-foreground">none configured</div>
+      )}
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              addValue();
+            }
+          }}
+          placeholder={placeholder}
+          disabled={disabled}
+          className="min-w-0 flex-1 border border-border bg-transparent px-2 py-1 text-sm focus:border-foreground focus:outline-none disabled:opacity-50"
+        />
+        <button
+          onClick={addValue}
+          disabled={!draft.trim() || disabled}
+          className="border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+        >
+          add
+        </button>
       </div>
     </div>
   );
