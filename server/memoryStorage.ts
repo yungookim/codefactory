@@ -635,6 +635,14 @@ export class MemStorage implements IStorage {
     return expired.length;
   }
 
+  async clearFailedBackgroundJobs(): Promise<number> {
+    const failed = Array.from(this.backgroundJobs.values()).filter((job) => job.status === "failed");
+    for (const job of failed) {
+      this.backgroundJobs.delete(job.id);
+    }
+    return failed.length;
+  }
+
   async getReleaseRun(id: string): Promise<ReleaseRun | undefined> {
     const run = this.releaseRuns.get(id);
     return run ? this.cloneReleaseRun(run) : undefined;

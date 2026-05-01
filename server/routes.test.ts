@@ -509,6 +509,65 @@ test("GET /api/activities warns when a babysitter job fails from agent authentic
   }
 });
 
+test("DELETE /api/activities/failed clears only failed activity jobs", async () => {
+  const harness = await createHarness();
+  const pr = await seedPR(harness.storage, {
+    title: "clear failed activity",
+    repo: "acme/widgets",
+    number: 77,
+    url: "https://github.com/acme/widgets/pull/77",
+  });
+
+  try {
+    const failedJob = await harness.storage.enqueueBackgroundJob({
+      kind: "babysit_pr",
+      targetId: pr.id,
+      dedupeKey: `babysit_pr:${pr.id}`,
+      payload: { preferredAgent: "claude" },
+      availableAt: "2026-04-26T10:00:00.000Z",
+    });
+    await harness.storage.claimNextBackgroundJob({
+      workerId: "worker-1",
+      leaseToken: "lease-1",
+      leaseExpiresAt: "2026-04-26T10:10:00.000Z",
+      now: "2026-04-26T10:01:00.000Z",
+    });
+    await harness.storage.failBackgroundJob(
+      failedJob.id,
+      "lease-1",
+      "agent timed out",
+      "2026-04-26T10:02:00.000Z",
+    );
+
+    const queuedJob = await harness.storage.enqueueBackgroundJob({
+      kind: "sync_watched_repos",
+      targetId: "runtime:1",
+      dedupeKey: "sync_watched_repos",
+      availableAt: "2026-04-26T10:03:00.000Z",
+    });
+
+    const response = await fetch(`${harness.baseUrl}/api/activities/failed`, {
+      method: "DELETE",
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json() as { cleared: number };
+    assert.equal(body.cleared, 1);
+
+    const activitiesResponse = await fetch(`${harness.baseUrl}/api/activities`);
+    assert.equal(activitiesResponse.status, 200);
+    const activities = await activitiesResponse.json() as {
+      failed: Array<{ id: string }>;
+      queued: Array<{ id: string }>;
+    };
+    assert.equal(activities.failed.length, 0);
+    assert.equal(activities.queued.length, 1);
+    assert.equal(activities.queued[0]?.id, queuedJob.id);
+  } finally {
+    await harness.close();
+  }
+});
+
 test("POST /api/repos/release queues a manual release run for the requested repo", async () => {
   const storage = new MemStorage();
   const harness = await createHarness(storage, {

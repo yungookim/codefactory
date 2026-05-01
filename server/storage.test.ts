@@ -619,6 +619,10 @@ test("SqliteStorage persists background jobs and requeues expired leases", async
       assert.equal(failedJobs.length, 1);
       assert.equal(failedJobs[0]?.id, highPriority.id);
 
+      const cleared = await second.clearFailedBackgroundJobs();
+      assert.equal(cleared, 1);
+      assert.equal((await second.listBackgroundJobs({ status: "failed" })).length, 0);
+
       const queuedJobs = await second.listBackgroundJobs({ status: "queued" });
       assert.equal(queuedJobs.length, 1);
       assert.equal(queuedJobs[0]?.id, lowPriority.id);

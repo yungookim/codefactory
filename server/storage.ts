@@ -126,6 +126,7 @@ export interface IStorage {
   failBackgroundJob(id: string, leaseToken: string, error: string, completedAt: string): Promise<BackgroundJob | undefined>;
   cancelBackgroundJob(id: string, leaseToken: string, error: string | null, completedAt: string): Promise<BackgroundJob | undefined>;
   requeueExpiredBackgroundJobs(now: string): Promise<number>;
+  clearFailedBackgroundJobs(): Promise<number>;
 
   // Social media changelogs
   getSocialChangelogs(): Promise<SocialChangelog[]>;

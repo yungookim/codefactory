@@ -2313,6 +2313,14 @@ export class SqliteStorage implements IStorage {
     return Number(result.changes);
   }
 
+  async clearFailedBackgroundJobs(): Promise<number> {
+    const result = this.run(`
+      DELETE FROM background_jobs
+      WHERE status = 'failed'
+    `);
+    return Number(result.changes);
+  }
+
   async getAgentRun(id: string): Promise<AgentRun | undefined> {
     const row = this.get<AgentRunRow>(`
       SELECT id, pr_id, preferred_agent, resolved_agent, status, phase, prompt, initial_head_sha,
