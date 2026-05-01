@@ -78,6 +78,7 @@ const EMPTY_ACTIVITY_SNAPSHOT: ActivitySnapshot = {
   generatedAt: "",
 };
 const MAX_VISIBLE_LOGS = 200;
+const TRACKED_REPOS_OPEN_KEY = "oh-my-pr:tracked-repos-open";
 
 type WatchScope = (typeof WATCH_SCOPE_OPTIONS)[number]["value"];
 type RepoSettings = WatchedRepo & {
@@ -980,8 +981,18 @@ export default function Dashboard() {
   const [addUrl, setAddUrl] = useState("");
   const [addRepo, setAddRepo] = useState("");
   const [addControlsOpen, setAddControlsOpen] = useState<boolean | null>(null);
+  const [trackedReposOpen, setTrackedReposOpen] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    const stored = window.localStorage.getItem(TRACKED_REPOS_OPEN_KEY);
+    return stored === null ? true : stored === "true";
+  });
   const [watchScope, setWatchScope] = useState<WatchScope>("mine");
   const [viewMode, setViewMode] = useState<"active" | "archived">("active");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(TRACKED_REPOS_OPEN_KEY, String(trackedReposOpen));
+  }, [trackedReposOpen]);
 
   const { data: prs = [], isLoading } = useQuery<PR[]>({
     queryKey: ["/api/prs"],
@@ -1376,11 +1387,26 @@ export default function Dashboard() {
                   </form>
                 </Collapsible.Content>
               </Collapsible.Root>
-              <div className="border-b border-border p-3">
-                <div className="mb-1 flex items-center justify-between">
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                    Tracked repositories
-                  </span>
+              <Collapsible.Root
+                open={trackedReposOpen}
+                onOpenChange={setTrackedReposOpen}
+                className="border-b border-border"
+              >
+                <div className="flex items-center justify-between gap-2 p-3">
+                  <Collapsible.Trigger asChild>
+                    <button
+                      type="button"
+                      data-testid="button-toggle-tracked-repos"
+                      aria-label={trackedReposOpen ? "Collapse tracked repositories" : "Expand tracked repositories"}
+                      className="flex min-w-0 items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                    >
+                      <span aria-hidden="true">{trackedReposOpen ? "▾" : "▸"}</span>
+                      <span>Tracked repositories</span>
+                      {!trackedReposOpen && repos.length > 0 && (
+                        <span className="text-muted-foreground/70">({repos.length})</span>
+                      )}
+                    </button>
+                  </Collapsible.Trigger>
                   <button
                     type="button"
                     onClick={() => syncReposMutation.mutate()}
@@ -1391,6 +1417,7 @@ export default function Dashboard() {
                     {syncReposMutation.isPending ? "Fetching..." : "Fetch"}
                   </button>
                 </div>
+                <Collapsible.Content className="px-3 pb-3">
                 {repos.length === 0 ? (
                   <div className="text-[11px] text-muted-foreground">No repositories being watched yet.</div>
                 ) : (
@@ -1465,7 +1492,8 @@ export default function Dashboard() {
                     })}
                   </div>
                 )}
-              </div>
+                </Collapsible.Content>
+              </Collapsible.Root>
             </>
           )}
           <div className="flex-1">
