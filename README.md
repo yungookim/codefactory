@@ -98,6 +98,22 @@ oh-my-pr can be used in a few ways:
 - local REST API: see [LOCAL_API.md](LOCAL_API.md)
 - optional Tauri desktop shell
 
+### Logging
+
+Server output is structured (pino) and goes to two destinations by default:
+
+- stdout (pretty-printed in dev, JSON in production)
+- `~/.oh-my-pr/log/server.log` (or under `OH_MY_PR_HOME`)
+
+Override the file path with `--log-file <path>` or `OH_MY_PR_LOG_FILE`; disable file logging with `--no-log-file` or `OH_MY_PR_NO_LOG_FILE=1`. Set the level with `--log-level <trace|debug|info|warn|error|fatal>` or `LOG_LEVEL`. Defaults: `info` in production, `debug` in development.
+
+GitHub tokens are redacted before any log line is written. The sanitizer replaces these values with `[REDACTED]` automatically:
+
+- `ghp_/gho_/ghs_/ghu_/ghr_` prefixes
+- `github_pat_…` tokens
+- `x-access-token:…@` URLs
+- `Bearer …` / `token …` authorization values
+
 ### Optional Automation
 
 If you enable them, oh-my-pr can also:
@@ -116,6 +132,18 @@ oh-my-pr              # web dashboard
 oh-my-pr mcp          # MCP server
 oh-my-pr --help       # help
 oh-my-pr --version    # version
+```
+
+Logging flags work with both `web` and `mcp` and can appear before or after the subcommand:
+
+```bash
+oh-my-pr -q                    # errors only
+oh-my-pr --verbose             # debug level
+oh-my-pr --debug               # alias for --verbose
+oh-my-pr --trace               # maximum verbosity
+oh-my-pr --log-level warn      # explicit level
+oh-my-pr --log-file ./out.log  # override file destination
+oh-my-pr --no-log-file         # disable file logging entirely
 ```
 
 Set `PORT` to change the default web server port (`5001`). If an MCP host needs to connect to a non-default server port, set `OH_MY_PR_PORT` for `oh-my-pr mcp`.
