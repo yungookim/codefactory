@@ -1,10 +1,14 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import type { Config } from "@shared/schema";
+import type { Config, RuntimeState } from "@shared/schema";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { toast } from "@/hooks/use-toast";
 import { Link } from "wouter";
+import {
+  getDrainActionLabel,
+  getDrainStatusView,
+} from "@/lib/runtimeDisplay";
 
 export default function Settings() {
   const { data: config } = useQuery<Config>({
@@ -30,6 +34,30 @@ export default function Settings() {
   const removeGithubToken = (index: number) => {
     updateGithubTokens(githubTokens.filter((_, i) => i !== index));
   };
+
+  const { data: runtimeState, isError: runtimeStateIsError } = useQuery<RuntimeState>({
+    queryKey: ["/api/runtime"],
+    refetchInterval: 5000,
+  });
+  const drainStatusView = getDrainStatusView(runtimeState, runtimeStateIsError);
+
+  const drainMutation = useMutation({
+    mutationFn: async (input: { enabled: boolean; reason?: string }) => {
+      const res = await apiRequest("POST", "/api/runtime/drain", input);
+      return res.json();
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/runtime"] });
+      toast({
+        description: variables.enabled
+          ? "Automation paused. New runs are blocked; in-flight runs will finish."
+          : "Automation resumed.",
+      });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", description: `Failed to update drain mode: ${error.message}` });
+    },
+  });
 
   const updateConfigMutation = useMutation({
     mutationFn: async (updates: Partial<Config>) => {
@@ -277,6 +305,57 @@ export default function Settings() {
                   data-testid="checkbox-auto-create-releases"
                 />
               </label>
+            </div>
+          </section>
+
+          {/* Runtime */}
+          <section>
+            <h2 className="mb-4 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Runtime
+            </h2>
+            <div className="flex flex-col gap-4 rounded border border-border p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm">Automation</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Drain mode blocks new agent runs. In-flight runs continue until they finish.
+                  </div>
+                  <div
+                    className="mt-2 text-[11px]"
+                    aria-live="polite"
+                    data-testid="text-drain-status"
+                  >
+                    <span className={drainStatusView.className}>{drainStatusView.label}</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    drainMutation.mutate(
+                      runtimeState?.drainMode
+                        ? { enabled: false }
+                        : { enabled: true, reason: "Manually paused via web settings" },
+                    )
+                  }
+                  disabled={!runtimeState || drainMutation.isPending}
+                  data-testid="button-toggle-drain"
+                  className="shrink-0 border border-border px-2 py-1 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-50"
+                >
+                  {getDrainActionLabel(runtimeState)}
+                </button>
+              </div>
+              {runtimeState?.drainMode && (runtimeState.drainReason || runtimeState.drainRequestedAt) ? (
+                <div className="border-l-2 border-destructive bg-muted/30 px-3 py-2 text-[11px]">
+                  {runtimeState.drainReason ? (
+                    <div className="text-foreground">{runtimeState.drainReason}</div>
+                  ) : null}
+                  {runtimeState.drainRequestedAt ? (
+                    <div className="mt-1 text-muted-foreground">
+                      since {new Date(runtimeState.drainRequestedAt).toLocaleString()}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </section>
 

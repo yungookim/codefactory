@@ -45,6 +45,7 @@ The settings page in the dashboard provides a UI for:
 - **GitHub token management** — Add, remove, and reorder saved tokens before falling back to `GITHUB_TOKEN` or `gh auth`.
 - **Agent selection** — Choose whether autonomous runs use Claude Code or OpenAI Codex.
 - **Babysitter tuning** — Control polling, batching, merge-conflict handling, release automation, and automatic docs assessment.
+- **Runtime drain mode** — Pause new automation runs from Settings while allowing in-flight runs to finish.
 - **Ignored bots** — Add or remove bot logins whose comments and reviews should be ignored.
 - **PR comment branding** — Toggle whether agent-authored GitHub PR comments link back to oh-my-pr and include the `Posted by oh-my-pr` footer.
 - **GitHub progress replies** — Toggle whether the babysitter posts public Accepted/running/completed status replies while working through review comments.
