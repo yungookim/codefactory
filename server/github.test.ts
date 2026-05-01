@@ -41,6 +41,7 @@ const config: Config = {
   autoCreateReleases: true,
   autoUpdateDocs: true,
   includeRepositoryLinksInGitHubComments: true,
+  postGitHubProgressReplies: false,
   autoHealCI: false,
   maxHealingAttemptsPerSession: 3,
   maxHealingAttemptsPerFingerprint: 2,

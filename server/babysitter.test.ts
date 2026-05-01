@@ -1658,18 +1658,8 @@ test("babysitPR omits repository links in GitHub comments when disabled", async 
 
     await babysitter.babysitPR(pr.id, "codex");
 
-    const expectedAcceptedStatus = "\u23f3 **Accepted** \u2014 this comment requires code changes. Queuing fix...";
-    const expectedFinalStatusBody = [
-      expectedAcceptedStatus,
-      "\ud83e\uddf0 **Agent running** \u2014 `codex` is working on the fix...",
-      "\u2705 **Agent completed** \u2014 verifying changes...",
-      "\ud83c\udf89 **Resolved** \u2014 addressed in commit `def456`.",
-    ].join("\n");
-
-    assert.deepEqual(initialStatusBodies, [
-      { id: existingItem.id, body: expectedAcceptedStatus },
-    ]);
-    assert.equal(statusReplyRefs.get(existingItem.id)?.body, expectedFinalStatusBody);
+    assert.deepEqual(initialStatusBodies, []);
+    assert.equal(statusReplyRefs.has(existingItem.id), false);
     assert.deepEqual(postedFollowUps, [
       {
         id: "gh-review-comment-1",
@@ -1685,7 +1675,7 @@ test("babysitPR omits repository links in GitHub comments when disabled", async 
   }
 });
 
-test("babysitPR centralizes status replies, logs best-effort failures, and updates replies in parallel", async () => {
+test("babysitPR keeps acceptance local and logs best-effort reaction failures", async () => {
   const storage = new MemStorage();
   await storage.updateConfig({ autoUpdateDocs: false });
   const firstItem = makeFeedbackItem();
@@ -1828,6 +1818,125 @@ test("babysitPR centralizes status replies, logs best-effort failures, and updat
     await babysitter.babysitPR(pr.id, "codex");
 
     const logs = await storage.getLogs(pr.id);
+    assert.deepEqual(initialStatusBodies, []);
+    assert.equal(statusReplyRefs.size, 0);
+    assert.equal(maxConcurrentStatusUpdates, 0);
+    assert.ok(
+      logs.some((log) => {
+        return log.phase === "github.reaction"
+          && log.message.includes("Failed to add reaction for gh-review-comment-1: reaction endpoint unavailable");
+      }),
+    );
+  } finally {
+    delete process.env.CODEFACTORY_HOME;
+  }
+});
+
+test("babysitPR posts progress replies when GitHub progress replies are enabled", async () => {
+  const storage = new MemStorage();
+  await storage.updateConfig({
+    autoUpdateDocs: false,
+    postGitHubProgressReplies: true,
+  });
+  const existingItem = makeFeedbackItem();
+  const pr = await storage.addPR({
+    number: 106,
+    title: "Verbose PR",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "watching",
+    feedbackItems: [existingItem],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "codefactory-home-"));
+  process.env.CODEFACTORY_HOME = worktreeRoot;
+
+  try {
+    let feedbackFetchCount = 0;
+    const initialStatusBodies: Array<{ id: string; body: string }> = [];
+    const statusReplyRefs = new Map<
+      string,
+      { commentDatabaseId: number; replyKind: FeedbackItem["replyKind"]; body: string }
+    >();
+    const pullSummary = makePullSummary(pr);
+    const followUp = makeFeedbackItem({
+      id: "gh-review-comment-2",
+      author: "code-factory",
+      body: `Addressed in commit \`def456\` by the latest babysitter run.\n\n${existingItem.auditToken}`,
+      bodyHtml: `<p>Addressed in commit <code>def456</code> by the latest babysitter run.</p><p>${existingItem.auditToken}</p>`,
+      sourceId: "2",
+      sourceNodeId: "PRRC_kwDO_followup",
+      sourceUrl: "https://github.com/octo/example/pull/42#discussion_r2",
+      threadId: existingItem.threadId,
+      threadResolved: true,
+      createdAt: new Date().toISOString(),
+      decision: null,
+      decisionReason: null,
+      action: null,
+    });
+
+    const babysitter = new PRBabysitter(
+      storage,
+      {
+        buildOctokit: async () => ({}) as never,
+        fetchFeedbackItemsForPR: async () => {
+          feedbackFetchCount += 1;
+          return feedbackFetchCount === 1
+            ? [existingItem]
+            : [{ ...existingItem, threadResolved: true }, followUp];
+        },
+        fetchPullSummary: async () => pullSummary,
+        listFailingStatuses: async () => [],
+        checkCISettled: async () => true,
+        listOpenPullsForRepo: async () => [],
+        postFollowUpForFeedbackItem: async () => undefined,
+        resolveReviewThread: async () => undefined,
+        resolveGitHubAuthToken: async () => "test-token",
+        addReactionToComment: async () => {},
+        postPRComment: async () => undefined,
+        postStatusReplyForFeedbackItem: async (_octokit, _parsed, item, body) => {
+          initialStatusBodies.push({ id: item.id, body });
+          const ref = {
+            commentDatabaseId: Number(item.sourceId),
+            replyKind: item.replyKind,
+            body,
+          };
+          statusReplyRefs.set(item.id, ref);
+          return ref;
+        },
+        updateStatusReply: async (_octokit, _parsed, ref, body) => {
+          ref.body = body;
+        },
+      },
+      {
+        resolveAgent: async () => "codex",
+        ciPollIntervalMs: 0,
+        evaluateFixNecessityWithAgent: async () => ({
+          needsFix: true,
+          reason: "Comment requires a code change",
+        }),
+        applyFixesWithAgent: async () => ({
+          code: 0,
+          stdout: "",
+          stderr: "",
+        }),
+        runCommand: makeGitRunCommand({
+          localHeadSha: "def456",
+          remoteHeadSha: "def456",
+        }),
+      },
+    );
+
+    await babysitter.babysitPR(pr.id, "codex");
+
     const expectedAcceptedLine = "\u23f3 **Accepted** \u2014 this comment requires code changes. Queuing fix...";
     const expectedAcceptedStatus = `${expectedAcceptedLine}\n\n${APP_COMMENT_FOOTER}`;
     const expectedFinalStatusBody = [
@@ -1840,24 +1949,15 @@ test("babysitPR centralizes status replies, logs best-effort failures, and updat
     ].join("\n");
 
     assert.deepEqual(initialStatusBodies, [
-      { id: firstItem.id, body: expectedAcceptedStatus },
-      { id: secondItem.id, body: expectedAcceptedStatus },
+      { id: existingItem.id, body: expectedAcceptedStatus },
     ]);
-    assert.equal(statusReplyRefs.get(firstItem.id)?.body, expectedFinalStatusBody);
-    assert.equal(statusReplyRefs.get(secondItem.id)?.body, expectedFinalStatusBody);
-    assert.ok(maxConcurrentStatusUpdates >= 2);
-    assert.ok(
-      logs.some((log) => {
-        return log.phase === "github.reaction"
-          && log.message.includes("Failed to add reaction for gh-review-comment-1: reaction endpoint unavailable");
-      }),
-    );
+    assert.equal(statusReplyRefs.get(existingItem.id)?.body, expectedFinalStatusBody);
   } finally {
     delete process.env.CODEFACTORY_HOME;
   }
 });
 
-test("babysitPR posts a concise GitHub status reason when the agent fails to address feedback", async () => {
+test("babysitPR marks feedback failed without posting GitHub status when the agent fails", async () => {
   const storage = new MemStorage();
   await storage.updateConfig({ autoUpdateDocs: false });
   const existingItem = makeFeedbackItem();
@@ -1883,7 +1983,7 @@ test("babysitPR posts a concise GitHub status reason when the agent fails to add
 
   try {
     const pullSummary = makePullSummary(pr);
-    let latestStatusReplyBody = "";
+    let postedStatusReplies = 0;
     let postedFollowUps = 0;
 
     const babysitter = new PRBabysitter(
@@ -1901,14 +2001,11 @@ test("babysitPR posts a concise GitHub status reason when the agent fails to add
         resolveReviewThread: async () => undefined,
         resolveGitHubAuthToken: async () => "test-token",
         addReactionToComment: async () => {},
-        postStatusReplyForFeedbackItem: async (_octokit, _parsed, item, body) => {
-          latestStatusReplyBody = body;
-          return { commentDatabaseId: 55, replyKind: item.replyKind, body };
+        postStatusReplyForFeedbackItem: async () => {
+          postedStatusReplies += 1;
+          return null;
         },
-        updateStatusReply: async (_octokit, _parsed, ref, body) => {
-          ref.body = body;
-          latestStatusReplyBody = body;
-        },
+        updateStatusReply: async () => {},
       },
       {
         resolveAgent: async () => "codex",
@@ -1933,8 +2030,7 @@ test("babysitPR posts a concise GitHub status reason when the agent fails to add
 
     assert.equal(failedItem?.status, "failed");
     assert.equal(postedFollowUps, 0);
-    assert.match(latestStatusReplyBody, /\u274c \*\*Agent failed\*\* \u2014 TypeScript check failed\./);
-    assert.doesNotMatch(latestStatusReplyBody, /stack trace line/);
+    assert.equal(postedStatusReplies, 0);
   } finally {
     delete process.env.CODEFACTORY_HOME;
   }

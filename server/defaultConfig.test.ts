@@ -29,6 +29,7 @@ describe("DEFAULT_CONFIG", () => {
       "autoCreateReleases",
       "autoUpdateDocs",
       "includeRepositoryLinksInGitHubComments",
+      "postGitHubProgressReplies",
       "autoHealCI",
       "maxHealingAttemptsPerSession",
       "maxHealingAttemptsPerFingerprint",
@@ -121,6 +122,10 @@ describe("DEFAULT_CONFIG", () => {
 
   it("includes repository links in GitHub comments by default", () => {
     assert.equal(DEFAULT_CONFIG.includeRepositoryLinksInGitHubComments, true);
+  });
+
+  it("does not post GitHub progress replies by default", () => {
+    assert.equal(DEFAULT_CONFIG.postGitHubProgressReplies, false);
   });
 
   it("includes deployment-healing defaults", () => {
