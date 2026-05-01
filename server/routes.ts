@@ -165,13 +165,15 @@ export async function registerRoutes(
     res.flushHeaders?.();
 
     let closed = false;
-    let heartbeat: NodeJS.Timeout | undefined;
     let unsubscribe = () => {};
+    const heartbeat = setInterval(() => {
+      if (res.write(`: heartbeat ${Date.now()}\n\n`) === false) cleanup();
+    }, 20_000);
 
     const cleanup = () => {
       if (closed) return;
       closed = true;
-      if (heartbeat) clearInterval(heartbeat);
+      clearInterval(heartbeat);
       unsubscribe();
       if (!res.writableEnded) res.end();
     };
@@ -191,10 +193,6 @@ export async function registerRoutes(
     }
 
     unsubscribe = subscribeToLogs(send);
-
-    heartbeat = setInterval(() => {
-      if (res.write(`: heartbeat ${Date.now()}\n\n`) === false) cleanup();
-    }, 20_000);
 
     req.on("close", cleanup);
     req.on("aborted", cleanup);
