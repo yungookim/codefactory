@@ -593,6 +593,10 @@ describe("MemStorage", () => {
       assert.equal(failedJobs.length, 1);
       assert.equal(failedJobs[0]?.id, highPriority.id);
 
+      const cleared = await storage.clearFailedBackgroundJobs();
+      assert.equal(cleared, 1);
+      assert.equal((await storage.listBackgroundJobs({ status: "failed" })).length, 0);
+
       const queuedJobs = await storage.listBackgroundJobs({ status: "queued" });
       assert.equal(queuedJobs.length, 1);
       assert.equal(queuedJobs[0]?.id, lowPriority.id);

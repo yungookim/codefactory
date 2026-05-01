@@ -89,6 +89,7 @@ export type AppRuntime = {
   getRuntimeSnapshot(): Promise<RuntimeSnapshot>;
   setDrainMode(input: DrainModeParams): Promise<RuntimeSnapshot & { drained?: boolean }>;
   listActivities(): Promise<ActivitySnapshot>;
+  clearFailedActivities(): Promise<{ cleared: number }>;
   listRepos(): Promise<string[]>;
   listRepoSettings(): Promise<WatchedRepo[]>;
   addRepo(repoInput: string): Promise<{ repo: string }>;
@@ -690,6 +691,14 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
         warnings,
         generatedAt: new Date().toISOString(),
       };
+    },
+
+    async clearFailedActivities() {
+      const cleared = await storage.clearFailedBackgroundJobs();
+      if (cleared > 0) {
+        notifyChange();
+      }
+      return { cleared };
     },
 
     async setDrainMode(input) {
