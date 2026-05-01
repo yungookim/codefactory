@@ -11,7 +11,7 @@ process.env.OH_MY_PR_LOG_FILE = LOG_FILE;
 process.env.LOG_LEVEL = "info";
 process.env.NODE_ENV = "production";
 
-const { logger, sanitizeString, readRingBuffer, _resetRingBufferForTests } = await import("./logger");
+const { logger, sanitizeString, readRingBuffer, _resetRingBufferForTests, _writeRingChunkForTests } = await import("./logger");
 
 function flushAndRead(): Promise<string> {
   return new Promise((resolve) => {
@@ -86,6 +86,19 @@ test("redact paths censor structured token fields", async () => {
   assert.doesNotMatch(content, /ghp_xxxxxxxxxx/);
 });
 
+test("logger handles circular structured fields", async () => {
+  const circular: Record<string, unknown> = {
+    repo: "https://x-access-token:ghs_secret123456789012345@github.com/o/r.git",
+  };
+  circular.self = circular;
+
+  assert.doesNotThrow(() => logger.info(circular, "circular event"));
+
+  const content = await flushAndRead();
+  assert.match(content, /"\[Circular\]"/);
+  assert.doesNotMatch(content, /ghs_secret/);
+});
+
 test("ring buffer captures entries", async () => {
   _resetRingBufferForTests();
   for (let i = 0; i < 5; i += 1) logger.info(`ring-msg-${i}`);
@@ -94,6 +107,24 @@ test("ring buffer captures entries", async () => {
   assert.ok(buf.length >= 5);
   assert.match(buf.join("\n"), /ring-msg-0/);
   assert.match(buf.join("\n"), /ring-msg-4/);
+});
+
+test("ring buffer preserves records split across write chunks", async () => {
+  _resetRingBufferForTests();
+  const line = JSON.stringify({
+    level: 30,
+    time: 1710000000000,
+    source: "split-test",
+    msg: "split chunk event",
+  });
+
+  await _writeRingChunkForTests(line.slice(0, 20));
+  assert.equal(readRingBuffer().length, 0);
+
+  await _writeRingChunkForTests(`${line.slice(20)}   \n`);
+  const buf = readRingBuffer();
+  assert.equal(buf.length, 1);
+  assert.match(buf[0], /split chunk event/);
 });
 
 test.after(() => {

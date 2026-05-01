@@ -54,6 +54,8 @@ oh-my-pr --log-file /tmp/oh-my-pr.log
 oh-my-pr --no-log-file
 ```
 
+The dashboard also exposes a server log viewer at `/logs`. It shows recent structured server logs from the in-memory ring buffer, supports level/source/search filtering, and tails new log records live while the page is open. The live tail uses Server-Sent Events over the local HTTP server, so keep access local and avoid putting the dashboard behind buffering proxies.
+
 ## Dashboard Settings
 
 The settings page in the dashboard provides a UI for:

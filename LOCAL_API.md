@@ -513,6 +513,37 @@ Retrieve activity logs, optionally filtered by PR.
 
 **Response** `200` — array of [LogEntry objects](#logentry)
 
+#### `GET /api/server-logs`
+
+Retrieve recent structured server log records from the in-memory ring buffer
+that backs the dashboard `/logs` page.
+
+**Query parameters**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `level` | string | Minimum level: `trace`, `debug`, `info`, `warn`, `error`, or `fatal` |
+| `source` | string | Filter to one structured log source |
+| `since` | number | Return records with a sequence number greater than this cursor |
+| `search` | string | Case-insensitive match against the message or structured fields |
+| `limit` | number | Maximum number of records to return; defaults to `500` |
+
+**Response** `200`
+```json
+{
+  "records": [],
+  "sources": ["babysitter", "github"],
+  "latestSeq": 123
+}
+```
+
+#### `GET /api/server-logs/stream`
+
+Tail server logs as Server-Sent Events for the dashboard `/logs` page. Pass
+`since` to replay up to the latest 1000 missed records before live events
+begin. Slow clients may be disconnected rather than allowing unbounded response
+buffering.
+
 ---
 
 ### CI healing sessions

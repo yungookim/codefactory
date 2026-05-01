@@ -28,73 +28,214 @@ export function sanitizeString(s: string): string {
 
 function sanitizeDeep(value: unknown, seen = new WeakSet<object>()): unknown {
   if (typeof value === "string") return sanitizeString(value);
-  if (Array.isArray(value)) return value.map((item) => sanitizeDeep(item, seen));
   if (value && typeof value === "object") {
     if (seen.has(value)) return "[Circular]";
     seen.add(value);
-    if (value instanceof Error) {
-      const out: Record<string, unknown> = {
-        name: value.name,
-        message: sanitizeString(value.message),
-      };
-      if (value.stack) out.stack = sanitizeString(value.stack);
-      if ("cause" in value) out.cause = sanitizeDeep(value.cause, seen);
-      for (const [k, v] of Object.entries(value)) {
+    try {
+      if (Array.isArray(value)) return value.map((item) => sanitizeDeep(item, seen));
+      if (value instanceof Error) {
+        const out: Record<string, unknown> = {
+          name: value.name,
+          message: sanitizeString(value.message),
+        };
+        if (value.stack) out.stack = sanitizeString(value.stack);
+        if ("cause" in value) out.cause = sanitizeDeep(value.cause, seen);
+        for (const [k, v] of Object.entries(value)) {
+          out[k] = sanitizeDeep(v, seen);
+        }
+        return out;
+      }
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
         out[k] = sanitizeDeep(v, seen);
       }
-      seen.delete(value);
       return out;
+    } finally {
+      seen.delete(value);
     }
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = sanitizeDeep(v, seen);
-    }
-    seen.delete(value);
-    return out;
   }
   return value;
 }
 
-// ----- Ring buffer (for in-app log viewer in PR 2) -----
+// ----- Ring buffer & structured records (powers /api/server-logs) -----
+
+export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
+
+export type LogRecord = {
+  seq: number;
+  time: number;
+  level: LogLevel;
+  source?: string;
+  msg: string;
+  fields: Record<string, unknown>;
+};
 
 const RING_SIZE = 5000;
-const ring: string[] = new Array<string>();
-let ringHead = 0;
-let ringFilled = false;
+const PINO_LEVEL_NAMES: Record<number, LogLevel> = {
+  10: "trace",
+  20: "debug",
+  30: "info",
+  40: "warn",
+  50: "error",
+  60: "fatal",
+};
+const LOG_LEVEL_RANK: Record<LogLevel, number> = {
+  trace: 10,
+  debug: 20,
+  info: 30,
+  warn: 40,
+  error: 50,
+  fatal: 60,
+};
 
-function ringPush(line: string) {
-  if (!ringFilled) {
-    ring.push(line);
-    if (ring.length >= RING_SIZE) {
-      ringFilled = true;
-      ringHead = 0;
+const records: LogRecord[] = [];
+let recordsHead = 0;
+let recordsFilled = false;
+let recordSeq = 0;
+let ringStreamBuffer = "";
+const subscribers = new Set<(record: LogRecord) => void>();
+
+function pushRecord(record: LogRecord) {
+  if (!recordsFilled) {
+    records.push(record);
+    if (records.length >= RING_SIZE) {
+      recordsFilled = true;
+      recordsHead = 0;
     }
     return;
   }
-  ring[ringHead] = line;
-  ringHead = (ringHead + 1) % RING_SIZE;
+  records[recordsHead] = record;
+  recordsHead = (recordsHead + 1) % RING_SIZE;
 }
 
+function readAllRecords(): LogRecord[] {
+  if (!recordsFilled) return records.slice();
+  return [...records.slice(recordsHead), ...records.slice(0, recordsHead)];
+}
+
+// Back-compat: serialized lines for tests / quick assertions.
 export function readRingBuffer(): string[] {
-  if (!ringFilled) return ring.slice();
-  return [...ring.slice(ringHead), ...ring.slice(0, ringHead)];
+  return readAllRecords().map((r) => JSON.stringify({
+    level: LOG_LEVEL_RANK[r.level],
+    time: r.time,
+    source: r.source,
+    msg: r.msg,
+    ...r.fields,
+  }));
 }
 
 export function _resetRingBufferForTests() {
-  ring.length = 0;
-  ringHead = 0;
-  ringFilled = false;
+  records.length = 0;
+  recordsHead = 0;
+  recordsFilled = false;
+  recordSeq = 0;
+  ringStreamBuffer = "";
+  subscribers.clear();
+}
+
+function parseLine(line: string): Omit<LogRecord, "seq"> | null {
+  if (!line.startsWith("{")) return null;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const levelNum = typeof parsed.level === "number" ? parsed.level : 30;
+  const level = PINO_LEVEL_NAMES[levelNum] ?? "info";
+  const time = typeof parsed.time === "string"
+    ? Date.parse(parsed.time)
+    : typeof parsed.time === "number"
+      ? parsed.time
+      : Date.now();
+  const msg = typeof parsed.msg === "string" ? parsed.msg : "";
+  const source = typeof parsed.source === "string" ? parsed.source : undefined;
+  const { level: _l, time: _t, msg: _m, source: _s, ...rest } = parsed;
+  return { time, level, source, msg, fields: rest };
+}
+
+export type ReadLogsOptions = {
+  level?: LogLevel;
+  source?: string;
+  since?: number;
+  search?: string;
+  limit?: number;
+};
+
+export function readLogRecords(opts: ReadLogsOptions = {}): LogRecord[] {
+  let out = readAllRecords();
+
+  if (opts.level) {
+    const minRank = LOG_LEVEL_RANK[opts.level];
+    out = out.filter((r) => LOG_LEVEL_RANK[r.level] >= minRank);
+  }
+  if (opts.source) {
+    out = out.filter((r) => r.source === opts.source);
+  }
+  if (opts.since !== undefined) {
+    const since = opts.since;
+    out = out.filter((r) => r.seq > since);
+  }
+  if (opts.search) {
+    const needle = opts.search.toLowerCase();
+    out = out.filter((r) =>
+      r.msg.toLowerCase().includes(needle)
+      || JSON.stringify(r.fields).toLowerCase().includes(needle),
+    );
+  }
+  if (opts.limit && opts.limit > 0) {
+    out = out.slice(-opts.limit);
+  }
+  return out;
+}
+
+export function getKnownLogSources(): string[] {
+  const seen = new Set<string>();
+  for (const r of readAllRecords()) {
+    if (r.source) seen.add(r.source);
+  }
+  return Array.from(seen).sort();
+}
+
+export function subscribeToLogs(cb: (record: LogRecord) => void): () => void {
+  subscribers.add(cb);
+  return () => {
+    subscribers.delete(cb);
+  };
 }
 
 const ringStream = new Writable({
   write(chunk, _enc, cb) {
-    const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-    for (const line of text.split("\n")) {
-      if (line.length > 0) ringPush(line);
+    ringStreamBuffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    const lines = ringStreamBuffer.split("\n");
+    ringStreamBuffer = lines.pop() ?? "";
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (line.length === 0) continue;
+      const parsed = parseLine(line);
+      if (!parsed) continue;
+      recordSeq += 1;
+      const record: LogRecord = { seq: recordSeq, ...parsed };
+      pushRecord(record);
+      if (subscribers.size > 0) {
+        subscribers.forEach((sub) => {
+          try {
+            sub(record);
+          } catch (err) {
+            console.error("Error in log subscriber:", err);
+          }
+        });
+      }
     }
     cb();
   },
 });
+
+export function _writeRingChunkForTests(chunk: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    ringStream.write(chunk, (err) => err ? reject(err) : resolve());
+  });
+}
 
 // ----- Level / destination resolution -----
 
