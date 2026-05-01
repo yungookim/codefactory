@@ -204,6 +204,21 @@
 <td>—</td>
 <td>Fallback GitHub token when no dashboard token is configured; <code>gh auth</code> is used after that</td>
 </tr>
+<tr>
+<td><code>LOG_LEVEL</code></td>
+<td><code>debug</code> in development, <code>info</code> in production</td>
+<td>Server log level: <code>trace</code>, <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code>, or <code>fatal</code></td>
+</tr>
+<tr>
+<td><code>OH_MY_PR_LOG_FILE</code></td>
+<td><code>~/.oh-my-pr/log/server.log</code></td>
+<td>Override the structured server log file path</td>
+</tr>
+<tr>
+<td><code>OH_MY_PR_NO_LOG_FILE</code></td>
+<td>—</td>
+<td>Set to <code>1</code> to disable structured server log file output</td>
+</tr>
 </tbody></table>
 <p><code>CODEFACTORY_PORT</code> is still accepted by the MCP server as a legacy fallback, but new MCP configurations should use <code>OH_MY_PR_PORT</code>.</p>
 <h2>Storage</h2>
@@ -217,6 +232,15 @@
 <pre><code>~/.oh-my-pr/log/
 </code></pre>
 <p>These logs mirror the dashboard activity feed and are useful for debugging or auditing agent behavior.</p>
+<p>The server also writes structured runtime logs to <code>~/.oh-my-pr/log/server.log</code> by default. Use <code>LOG_LEVEL</code>, <code>OH_MY_PR_LOG_FILE</code>, or <code>OH_MY_PR_NO_LOG_FILE=1</code> to tune file output.</p>
+<p>CLI flags can override the same logging settings for a single run:</p>
+<pre><code>oh-my-pr --quiet
+oh-my-pr --verbose
+oh-my-pr --log-level warn
+oh-my-pr --log-level=trace
+oh-my-pr --log-file /tmp/oh-my-pr.log
+oh-my-pr --no-log-file
+</code></pre>
 <h2>Dashboard Settings</h2>
 <p>The settings page in the dashboard provides a UI for:</p>
 <ul>

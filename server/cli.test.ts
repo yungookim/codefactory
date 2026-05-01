@@ -75,6 +75,15 @@ test("parseCliArgs --log-level validates the value", () => {
     mode: "web",
     log: { level: "warn" },
   });
+  assert.deepEqual(parseCliArgs(["--log-level=error"]), {
+    mode: "web",
+    log: { level: "error" },
+  });
+  assert.equal(parseCliArgs(["--log-level=bogus"]).mode, "help");
+  assert.deepEqual(parseCliArgs(["--log-level ", "trace"]), {
+    mode: "web",
+    log: { level: "trace" },
+  });
 });
 
 test("applyLogEnv writes the expected environment variables", () => {

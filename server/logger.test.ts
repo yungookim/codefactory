@@ -60,6 +60,25 @@ test("logger writes file and redacts tokens in serialized output", async () => {
   assert.doesNotMatch(content, /abcdef0123456789xyzfoo/);
 });
 
+test("logger preserves Error details and handles circular records", async () => {
+  const circular: Record<string, unknown> = { label: "cycle" };
+  circular.self = circular;
+  logger.error({ err: new Error("failed with ghp_abcdefghijklmnopqrstuvwxyz0123456789"), circular }, "boom");
+
+  const content = await flushAndRead();
+  assert.match(content, /failed with ghp_\[REDACTED\]/);
+  assert.match(content, /"self":"\[Circular\]"/);
+  assert.doesNotMatch(content, /abcdefghijklmnopqrstuvwxyz0123456789/);
+});
+
+test("logger redacts printf-style interpolation arguments", async () => {
+  logger.info("token is %s", "ghs_secret12345678901234567890");
+
+  const content = await flushAndRead();
+  assert.match(content, /ghs_\[REDACTED\]/);
+  assert.doesNotMatch(content, /secret12345678901234567890/);
+});
+
 test("redact paths censor structured token fields", async () => {
   logger.info({ headers: { authorization: "Bearer ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" } }, "request");
   const content = await flushAndRead();

@@ -13,6 +13,9 @@ oh-my-pr is configured through environment variables and the dashboard settings 
 | `CODEFACTORY_PORT` | `5001` | Legacy port the MCP server connects to when `OH_MY_PR_PORT` is not set |
 | `DATABASE_URL` | (SQLite) | PostgreSQL connection string (optional) |
 | `GITHUB_TOKEN` | — | Fallback GitHub token when no dashboard token is configured; `gh auth` is used after that |
+| `LOG_LEVEL` | `debug` in development, `info` in production | Server log level: `trace`, `debug`, `info`, `warn`, `error`, or `fatal` |
+| `OH_MY_PR_LOG_FILE` | `~/.oh-my-pr/log/server.log` | Override the structured server log file path |
+| `OH_MY_PR_NO_LOG_FILE` | — | Set to `1` to disable structured server log file output |
 
 `CODEFACTORY_PORT` is still accepted by the MCP server as a legacy fallback, but new MCP configurations should use `OH_MY_PR_PORT`.
 
@@ -37,6 +40,19 @@ oh-my-pr writes daily activity logs to:
 ```
 
 These logs mirror the dashboard activity feed and are useful for debugging or auditing agent behavior.
+
+The server also writes structured runtime logs to `~/.oh-my-pr/log/server.log` by default. Use `LOG_LEVEL`, `OH_MY_PR_LOG_FILE`, or `OH_MY_PR_NO_LOG_FILE=1` to tune file output.
+
+CLI flags can override the same logging settings for a single run:
+
+```
+oh-my-pr --quiet
+oh-my-pr --verbose
+oh-my-pr --log-level warn
+oh-my-pr --log-level=trace
+oh-my-pr --log-file /tmp/oh-my-pr.log
+oh-my-pr --no-log-file
+```
 
 ## Dashboard Settings
 

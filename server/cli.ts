@@ -23,7 +23,7 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
   let i = 0;
 
   while (i < argv.length) {
-    const tok = argv[i];
+    const tok = argv[i].trimEnd();
 
     if (tok === "--help" || tok === "-h") {
       return { mode: "help" };
@@ -71,14 +71,16 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
       i += 1;
       continue;
     }
-    if (tok === "--log-level") {
-      const next = argv[i + 1];
+    if (tok === "--log-level" || tok.startsWith("--log-level=")) {
+      const next = tok.startsWith("--log-level=")
+        ? tok.slice("--log-level=".length)
+        : argv[i + 1];
       const valid = ["trace", "debug", "info", "warn", "error", "fatal"];
       if (!next || !valid.includes(next)) {
         return { mode: "help", error: `--log-level must be one of ${valid.join(", ")}` };
       }
       log.level = next as CliLogOptions["level"];
-      i += 2;
+      i += tok.startsWith("--log-level=") ? 1 : 2;
       continue;
     }
 

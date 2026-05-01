@@ -26,14 +26,30 @@ export function sanitizeString(s: string): string {
   return out;
 }
 
-function sanitizeDeep(value: unknown): unknown {
+function sanitizeDeep(value: unknown, seen = new WeakSet<object>()): unknown {
   if (typeof value === "string") return sanitizeString(value);
-  if (Array.isArray(value)) return value.map(sanitizeDeep);
+  if (Array.isArray(value)) return value.map((item) => sanitizeDeep(item, seen));
   if (value && typeof value === "object") {
+    if (seen.has(value)) return "[Circular]";
+    seen.add(value);
+    if (value instanceof Error) {
+      const out: Record<string, unknown> = {
+        name: value.name,
+        message: sanitizeString(value.message),
+      };
+      if (value.stack) out.stack = sanitizeString(value.stack);
+      if ("cause" in value) out.cause = sanitizeDeep(value.cause, seen);
+      for (const [k, v] of Object.entries(value)) {
+        out[k] = sanitizeDeep(v, seen);
+      }
+      seen.delete(value);
+      return out;
+    }
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = sanitizeDeep(v);
+      out[k] = sanitizeDeep(v, seen);
     }
+    seen.delete(value);
     return out;
   }
   return value;
@@ -139,7 +155,7 @@ function buildStreams(): StreamEntry[] {
   const logFile = resolveLogFilePath();
   if (logFile) {
     streams.push({
-      stream: fs.createWriteStream(logFile, { flags: "a" }),
+      stream: pino.destination(logFile),
     });
   }
 
@@ -161,11 +177,10 @@ export const logger: Logger = pino(
     },
     hooks: {
       logMethod(args, method) {
-        // pino call shapes: (msg), (mergeObj, msg), (mergeObj, msg, ...interp)
-        if (typeof args[0] === "string") {
-          args[0] = sanitizeString(args[0]);
-        } else if (args.length >= 2 && typeof args[1] === "string") {
-          args[1] = sanitizeString(args[1] as string);
+        for (let i = 0; i < args.length; i += 1) {
+          if (typeof args[i] === "string") {
+            args[i] = sanitizeString(args[i] as string);
+          }
         }
         return method.apply(this, args as Parameters<typeof method>);
       },
