@@ -567,6 +567,89 @@ test("syncAndBabysitTrackedRepos enqueues babysit_pr jobs when a background sche
   assert.equal(jobs[0].payload.activityTargetUrl, pr.url);
 });
 
+test("syncAndBabysitTrackedRepos skips same-head dependency preflight failures", async () => {
+  const storage = new MemStorage();
+  const backgroundJobQueue = new BackgroundJobQueue(storage);
+  const pr = await storage.addPR({
+    number: 42,
+    title: "Needs deps",
+    repo: "octo/example",
+    branch: "feature/example",
+    author: "octocat",
+    url: "https://github.com/octo/example/pull/42",
+    status: "error",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+    watchEnabled: true,
+  });
+  const now = new Date().toISOString();
+  await storage.upsertAgentRun({
+    id: "failed-preflight-run",
+    prId: pr.id,
+    preferredAgent: "codex",
+    resolvedAgent: "codex",
+    status: "failed",
+    phase: "run.failed",
+    prompt: null,
+    initialHeadSha: "head-same",
+    metadata: {
+      deterministicFailure: {
+        kind: "dependency_preflight",
+        headSha: "head-same",
+        reason: "node_modules missing",
+        firstSeenAt: now,
+        lastSeenAt: now,
+        count: 1,
+      },
+    },
+    lastError: "Dependency preflight failed: node_modules missing",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    makeWatcherGitHubService({
+      listOpenPullsForRepo: async () => [{
+        number: 42,
+        title: "Needs deps",
+        branch: "feature/example",
+        author: "octocat",
+        url: "https://github.com/octo/example/pull/42",
+        headSha: "head-same",
+      }],
+    }),
+    {
+      resolveAgent: async () => "codex",
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+    },
+    undefined,
+    async (...args) => backgroundJobQueue.enqueue(...args),
+  );
+
+  babysitter.babysitPR = async () => {
+    throw new Error("watcher should not invoke babysitPR directly when a scheduler is provided");
+  };
+
+  await babysitter.syncAndBabysitTrackedRepos();
+
+  const jobs = await storage.listBackgroundJobs({
+    kind: "babysit_pr",
+    targetId: pr.id,
+  });
+  const logs = await storage.getLogs(pr.id);
+  assert.equal(jobs.length, 0);
+  assert.ok(logs.some((log) => log.message.includes("Dependency preflight previously failed")));
+});
+
 test("syncAndBabysitTrackedRepos repairs missing review-thread metadata on archived PRs", async () => {
   const storage = new MemStorage();
   const pr = await storage.addPR({
@@ -1550,7 +1633,11 @@ test("babysitPR blocks remediation when dependency preflight fails", async () =>
 
   const updated = await storage.getPR(pr.id);
   const runs = await storage.listAgentRuns({ prId: pr.id });
+  const deterministicFailure = runs[0]?.metadata?.deterministicFailure as Record<string, unknown> | undefined;
   assert.equal(updated?.status, "error");
+  assert.equal(runs[0]?.initialHeadSha, "abc123");
+  assert.equal(deterministicFailure?.kind, "dependency_preflight");
+  assert.equal(deterministicFailure?.headSha, "abc123");
   assert.match(runs[0]?.lastError ?? "", /node_modules missing/);
 
   delete process.env.CODEFACTORY_HOME;
@@ -2572,6 +2659,74 @@ test("babysitPR treats audit-trail replies as non-actionable follow-up comments"
   assert.match(updatedReply?.statusReason || "", /audit trail/i);
   assert.ok(logs.some((log) => log.phase === "evaluate.comments" && log.message.includes("Ignored audit-trail follow-up comment")));
   assert.ok(logs.some((log) => log.phase === "run" && log.message.includes("no necessary fixes identified")));
+});
+
+test("babysitPR treats footerless status replies as non-actionable", async () => {
+  const storage = new MemStorage();
+  await storage.updateConfig({ autoUpdateDocs: false });
+  const statusReply = makeFeedbackItem({
+    author: "octocat",
+    body: "\ud83e\uddf0 **Agent running** \u2014 `codex` is working on the fix...",
+    bodyHtml: "<p><strong>Agent running</strong> - <code>codex</code> is working on the fix...</p>",
+    decision: null,
+    status: "pending",
+  });
+  const pr = await storage.addPR({
+    number: 106,
+    title: "Verbose PR",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "watching",
+    feedbackItems: [statusReply],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    {
+      buildOctokit: async () => ({}) as never,
+      fetchFeedbackItemsForPR: async () => [statusReply],
+      fetchPullSummary: async () => makePullSummary(pr),
+      listFailingStatuses: async () => [],
+      checkCISettled: async () => true,
+      listOpenPullsForRepo: async () => [],
+      postFollowUpForFeedbackItem: async () => undefined,
+      resolveReviewThread: async () => undefined,
+      resolveGitHubAuthToken: async () => undefined,
+      addReactionToComment: async () => {},
+      postPRComment: async () => undefined,
+      postStatusReplyForFeedbackItem: async () => null,
+      updateStatusReply: async () => undefined,
+    },
+    {
+      resolveAgent: async () => "codex",
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async () => {
+        throw new Error("status replies should not be evaluated");
+      },
+      applyFixesWithAgent: async () => {
+        throw new Error("status replies should not trigger fixes");
+      },
+      runCommand: makeGitRunCommand({
+        localHeadSha: "abc123",
+        remoteHeadSha: "abc123",
+      }),
+    },
+  );
+
+  await babysitter.babysitPR(pr.id, "codex");
+
+  const updated = await storage.getPR(pr.id);
+  assert.equal(updated?.feedbackItems[0]?.status, "rejected");
+  assert.equal(updated?.feedbackItems[0]?.decision, "reject");
+  assert.match(updated?.feedbackItems[0]?.statusReason ?? "", /oh-my-pr status comment/i);
 });
 
 test("babysitPR does not auto-ignore audit-trail replies when referenced timestamps are invalid", async () => {
@@ -4721,6 +4876,119 @@ test("babysitPR resolves merge conflicts when PR is not mergeable", async () => 
   assert.match(conflictAgentPrompt, /src\/example\.ts/);
   assert.ok(logs.some((log) => log.phase === "conflict" && log.message.includes("merge conflicts")));
   assert.ok(logs.some((log) => log.phase === "conflict.agent" && log.message.includes("merge conflict resolution")));
+
+  delete process.env.CODEFACTORY_HOME;
+});
+
+test("babysitPR escalates repeated conflict repair for same head and unresolved paths", async () => {
+  const storage = new MemStorage();
+  const pr = await storage.addPR({
+    number: 106,
+    title: "Verbose PR",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+  const now = new Date().toISOString();
+  for (const id of ["prior-conflict-1", "prior-conflict-2"]) {
+    await storage.upsertAgentRun({
+      id,
+      prId: pr.id,
+      preferredAgent: "codex",
+      resolvedAgent: "codex",
+      status: "failed",
+      phase: "run.failed",
+      prompt: null,
+      initialHeadSha: "abc123",
+      metadata: {
+        conflictRepairFailure: {
+          kind: "merge_conflict_repair",
+          headSha: "abc123",
+          baseRef: "main",
+          conflictFiles: ["src/example.ts"],
+          reason: "Agent left unresolved merge conflicts: src/example.ts",
+          firstSeenAt: now,
+          lastSeenAt: now,
+          count: 1,
+        },
+      },
+      lastError: "Agent left unresolved merge conflicts: src/example.ts",
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "codefactory-home-"));
+  process.env.CODEFACTORY_HOME = worktreeRoot;
+
+  const pullSummary = makePullSummary(pr, { mergeable: false, headSha: "abc123" });
+  const gitRunner = makeGitRunCommand({
+    localHeadSha: "abc123",
+    remoteHeadSha: "abc123",
+  });
+  let conflictAgentCalled = false;
+
+  const babysitter = new PRBabysitter(
+    storage,
+    {
+      buildOctokit: async () => ({}) as never,
+      fetchFeedbackItemsForPR: async () => [],
+      fetchPullSummary: async () => pullSummary,
+      listFailingStatuses: async () => [],
+      checkCISettled: async () => true,
+      listOpenPullsForRepo: async () => [],
+      postFollowUpForFeedbackItem: async () => undefined,
+      resolveReviewThread: async () => undefined,
+      resolveGitHubAuthToken: async () => "test-token",
+      addReactionToComment: async () => {},
+      postStatusReplyForFeedbackItem: async () => null,
+      updateStatusReply: async () => {},
+    },
+    {
+      resolveAgent: async () => "codex",
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async () => ({
+        needsFix: false,
+        reason: "No fix needed",
+      }),
+      applyFixesWithAgent: async () => {
+        conflictAgentCalled = true;
+        throw new Error("conflict agent should not run after retry budget is exhausted");
+      },
+      runCommand: async (command: string, args: string[], opts?: Record<string, unknown>) => {
+        if (command === "git" && args[0] === "merge") {
+          return { code: 1, stdout: "", stderr: "CONFLICT (content): Merge conflict in src/example.ts" };
+        }
+        if (command === "git" && args[0] === "diff" && args[1] === "--name-only" && args[2] === "--diff-filter=U") {
+          return { code: 0, stdout: "src/example.ts\n", stderr: "" };
+        }
+        return gitRunner(command, args, opts);
+      },
+    },
+  );
+
+  await babysitter.babysitPR(pr.id, "codex");
+
+  const updated = await storage.getPR(pr.id);
+  const logs = await storage.getLogs(pr.id);
+  const runs = await storage.listAgentRuns({ prId: pr.id });
+  const currentRun = runs.find((run) => run.id !== "prior-conflict-1" && run.id !== "prior-conflict-2");
+
+  assert.equal(conflictAgentCalled, false);
+  assert.equal(updated?.status, "error");
+  assert.equal(currentRun?.status, "failed");
+  assert.equal(currentRun?.phase, "conflict.retry");
+  assert.match(currentRun?.lastError ?? "", /retry budget exhausted/i);
+  assert.ok(logs.some((log) => log.phase === "conflict.retry" && log.message.includes("retry budget exhausted")));
 
   delete process.env.CODEFACTORY_HOME;
 });
