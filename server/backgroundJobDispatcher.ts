@@ -5,6 +5,7 @@ import { BackgroundJobQueue } from "./backgroundJobQueue";
 import { childLogger } from "./logger";
 
 const log = childLogger("jobs");
+const DRAIN_ALLOWED_KINDS: ReadonlySet<BackgroundJobKind> = new Set<BackgroundJobKind>(["sync_watched_repos"]);
 
 export type BackgroundJobHandler = (job: BackgroundJob) => Promise<void>;
 
@@ -141,7 +142,10 @@ export class BackgroundJobDispatcher {
       }
 
       const runtimeState = await this.storage.getRuntimeState();
-      if (runtimeState.drainMode) {
+      const claimableKinds = runtimeState.drainMode
+        ? this.handledKinds.filter((kind) => DRAIN_ALLOWED_KINDS.has(kind))
+        : this.handledKinds;
+      if (claimableKinds.length === 0) {
         return;
       }
 
@@ -151,7 +155,7 @@ export class BackgroundJobDispatcher {
         workerId: this.workerId,
         leaseMs: this.leaseMs,
         now: this.now(),
-        kinds: this.handledKinds,
+        kinds: claimableKinds,
       });
 
       if (!job) {

@@ -317,8 +317,9 @@ Provide `repo` plus one or both of `ownPrsOnly` and `autoCreateReleases`.
 
 Queue an immediate durable watcher pass across all watched repos. The queued
 sync job performs GitHub reconciliation and then enqueues follow-up babysit and
-release work as needed. It does not enqueue social changelog generation.
-Returns `409` when drain mode is active.
+release work as needed. It does not enqueue social changelog generation. During
+drain mode, the sync job still refreshes repository status but does not enqueue
+new automation work.
 
 **Response** `200`
 ```json
@@ -707,10 +708,11 @@ Get the current runtime state.
 #### `POST /api/runtime/drain`
 
 Enable or disable drain mode. When enabled, the dispatcher stops claiming new
-queued jobs but leaves queued rows intact in SQLite. Already-running handlers
-are allowed to finish, and `waitForIdle` also waits on any started babysitter
-or release work before reporting success. Endpoints that explicitly gate manual
-work, such as `POST /api/repos/sync`, `POST /api/prs/:id/apply`, and
+automation jobs but still claims `sync_watched_repos` jobs so repository status
+can refresh. Other queued rows remain intact in SQLite. Already-running
+handlers are allowed to finish, and `waitForIdle` also waits on any started
+babysitter or release work before reporting success. Endpoints that explicitly
+gate manual automation work, such as `POST /api/prs/:id/apply` and
 `POST /api/prs/:id/babysit`, return `409` while drain mode is active; other
 APIs may still enqueue work that remains pending until drain mode is disabled.
 

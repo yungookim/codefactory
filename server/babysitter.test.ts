@@ -490,7 +490,11 @@ test("syncAndBabysitTrackedRepos does not enqueue social changelog generation", 
       applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
       runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
     },
-    undefined,
+    {
+      enqueueMergedPullReleaseEvaluation: async () => {
+        throw new Error("drained status refresh should not queue release automation");
+      },
+    },
     async (...args) => backgroundJobQueue.enqueue(...args),
   );
 
@@ -565,6 +569,63 @@ test("syncAndBabysitTrackedRepos enqueues babysit_pr jobs when a background sche
   assert.equal(jobs[0].payload.activityLabel, "Babysitting PR #42");
   assert.equal(jobs[0].payload.activityDetail, "octo/example - Example PR");
   assert.equal(jobs[0].payload.activityTargetUrl, pr.url);
+});
+
+test("syncAndBabysitTrackedRepos refreshes repository status during drain without queueing babysits", async () => {
+  const storage = new MemStorage();
+  const backgroundJobQueue = new BackgroundJobQueue(storage);
+  await storage.updateRuntimeState({
+    drainMode: true,
+    drainRequestedAt: "2026-05-02T10:00:00.000Z",
+    drainReason: "maintenance",
+  });
+
+  const pr = await storage.addPR({
+    number: 42,
+    title: "Example PR",
+    repo: "octo/example",
+    branch: "feature/example",
+    author: "octocat",
+    url: "https://github.com/octo/example/pull/42",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+    watchEnabled: true,
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    makeWatcherGitHubService(),
+    {
+      resolveAgent: async () => "codex",
+      checkAgentHealth: async () => {
+        throw new Error("drained status refresh should not check agent health");
+      },
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+    },
+    undefined,
+    async (...args) => backgroundJobQueue.enqueue(...args),
+  );
+
+  await babysitter.syncAndBabysitTrackedRepos();
+
+  const updated = await storage.getPR(pr.id);
+  const logs = await storage.getLogs(pr.id);
+  const jobs = await storage.listBackgroundJobs({
+    kind: "babysit_pr",
+    targetId: pr.id,
+  });
+  assert.equal(updated?.status, "archived");
+  assert.equal(jobs.length, 0);
+  assert.ok(logs.some((log) => log.message.includes("archived")));
 });
 
 test("syncAndBabysitTrackedRepos repairs missing review-thread metadata on archived PRs", async () => {

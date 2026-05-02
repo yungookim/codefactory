@@ -1379,9 +1379,7 @@ export class PRBabysitter {
 
   async syncAndBabysitTrackedRepos(): Promise<void> {
     const runtimeState = await this.storage.getRuntimeState();
-    if (runtimeState.drainMode) {
-      return;
-    }
+    const automationBlocked = runtimeState.drainMode;
 
     const repairCandidates = [
       ...(await this.storage.getPRs()),
@@ -1410,7 +1408,7 @@ export class PRBabysitter {
     const watchedPrIds = tracked
       .filter((pr) => pr.watchEnabled !== false && pr.status !== "archived")
       .map((pr) => pr.id);
-    if (repoCandidates.size > 0) {
+    if (!automationBlocked && repoCandidates.size > 0) {
       try {
         await this.ensureAgentHealthy(selectedAgent, watchedPrIds);
       } catch {
@@ -1504,7 +1502,7 @@ export class PRBabysitter {
           });
 
           const repoAutoCreateReleases = repoSettingsByRepo.get(repoSlug)?.autoCreateReleases ?? false;
-          if (closeState?.merged && this.releaseManager && config.autoCreateReleases) {
+          if (!automationBlocked && closeState?.merged && this.releaseManager && config.autoCreateReleases) {
             if (!repoAutoCreateReleases) {
               await this.storage.addLog(pr.id, "info", `PR #${pr.number} was merged, but auto-release is disabled for ${repoSlug}`, {
                 phase: "watcher",
@@ -1566,7 +1564,7 @@ export class PRBabysitter {
             });
           }
 
-          if (closeState?.merged && this.deploymentHealingManager && this.scheduleBackgroundJob && config.autoHealDeployments) {
+          if (!automationBlocked && closeState?.merged && this.deploymentHealingManager && this.scheduleBackgroundJob && config.autoHealDeployments) {
             const depBaseBranch = closeState.baseRef.trim();
             const depMergeSha = closeState.mergeCommitSha || closeState.headSha;
             if (depBaseBranch && depMergeSha) {
@@ -1638,6 +1636,10 @@ export class PRBabysitter {
         }
 
         if (!automationScopeNumbers.has(pull.number)) {
+          continue;
+        }
+
+        if (automationBlocked) {
           continue;
         }
 
