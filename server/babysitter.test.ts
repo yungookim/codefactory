@@ -4899,6 +4899,7 @@ test("babysitPR escalates repeated conflict repair for same head and unresolved 
     lastChecked: null,
   });
   const now = new Date().toISOString();
+  const retryCheckedAt = "2026-05-01T12:34:56.000Z";
   for (const id of ["prior-conflict-1", "prior-conflict-2"]) {
     await storage.upsertAgentRun({
       id,
@@ -4956,6 +4957,7 @@ test("babysitPR escalates repeated conflict repair for same head and unresolved 
     {
       resolveAgent: async () => "codex",
       ciPollIntervalMs: 0,
+      now: () => new Date(retryCheckedAt),
       evaluateFixNecessityWithAgent: async () => ({
         needsFix: false,
         reason: "No fix needed",
@@ -4985,6 +4987,7 @@ test("babysitPR escalates repeated conflict repair for same head and unresolved 
 
   assert.equal(conflictAgentCalled, false);
   assert.equal(updated?.status, "error");
+  assert.equal(updated?.lastChecked, retryCheckedAt);
   assert.equal(currentRun?.status, "failed");
   assert.equal(currentRun?.phase, "conflict.retry");
   assert.match(currentRun?.lastError ?? "", /retry budget exhausted/i);
@@ -5200,6 +5203,33 @@ test("babysitPR errors when conflict resolution agent fails", async () => {
 
   const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "codefactory-home-"));
   process.env.CODEFACTORY_HOME = worktreeRoot;
+  const firstSeenAt = "2026-05-01T10:00:00.000Z";
+  const currentSeenAt = "2026-05-01T10:05:00.000Z";
+  await storage.upsertAgentRun({
+    id: "prior-conflict-agent-failure",
+    prId: pr.id,
+    preferredAgent: "codex",
+    resolvedAgent: "codex",
+    status: "failed",
+    phase: "run.failed",
+    prompt: null,
+    initialHeadSha: "abc123",
+    metadata: {
+      conflictRepairFailure: {
+        kind: "merge_conflict_repair",
+        headSha: "abc123",
+        baseRef: "main",
+        conflictFiles: ["src/conflict.ts"],
+        reason: "Agent failed to resolve merge conflicts: agent crashed",
+        firstSeenAt,
+        lastSeenAt: firstSeenAt,
+        count: 1,
+      },
+    },
+    lastError: "Agent failed to resolve merge conflicts: agent crashed",
+    createdAt: firstSeenAt,
+    updatedAt: firstSeenAt,
+  });
   const pullSummary = makePullSummary(pr, { mergeable: false });
 
   const gitRunner = makeGitRunCommand({
@@ -5226,6 +5256,7 @@ test("babysitPR errors when conflict resolution agent fails", async () => {
     {
       resolveAgent: async () => "codex",
       ciPollIntervalMs: 0,
+      now: () => new Date(currentSeenAt),
       evaluateFixNecessityWithAgent: async () => ({
         needsFix: false,
         reason: "No fix needed",
@@ -5249,8 +5280,15 @@ test("babysitPR errors when conflict resolution agent fails", async () => {
 
   const updated = await storage.getPR(pr.id);
   const logs = await storage.getLogs(pr.id);
+  const runs = await storage.listAgentRuns({ prId: pr.id });
+  const currentRun = runs.find((run) => run.id !== "prior-conflict-agent-failure");
+  const conflictMarker = currentRun?.metadata?.conflictRepairFailure as Record<string, unknown> | undefined;
 
   assert.equal(updated?.status, "error");
+  assert.equal(conflictMarker?.firstSeenAt, firstSeenAt);
+  assert.equal(conflictMarker?.lastSeenAt, currentSeenAt);
+  assert.equal(conflictMarker?.count, 2);
+  assert.match(String(conflictMarker?.reason ?? ""), /codex/);
   assert.ok(logs.some((log) => log.level === "error" && log.message.includes("merge conflicts")));
 
   delete process.env.CODEFACTORY_HOME;

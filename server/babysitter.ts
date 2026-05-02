@@ -1168,6 +1168,32 @@ export class PRBabysitter {
     }, 0);
   }
 
+  private async findLatestConflictRepairFailure(
+    prId: string,
+    headSha: string,
+    baseRef: string,
+    conflictFiles: string[],
+  ): Promise<ConflictRepairFailureMarker | null> {
+    const normalizedFiles = normalizeConflictFiles(conflictFiles);
+    const failedRuns = (await this.storage.listAgentRuns({ prId, status: "failed" }))
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+
+    for (const run of failedRuns) {
+      const marker = readConflictRepairFailure(run.metadata);
+      if (!marker
+        || marker.headSha !== headSha
+        || marker.baseRef !== baseRef
+        || !sameStrings(marker.conflictFiles, normalizedFiles)
+      ) {
+        continue;
+      }
+
+      return marker;
+    }
+
+    return null;
+  }
+
   private async readAgentHealth(agent: CodingAgent): Promise<AgentHealthResult> {
     const nowMs = this.now().getTime();
     const cached = this.agentHealthCache.get(agent);
@@ -3088,6 +3114,13 @@ export class PRBabysitter {
                   pullSummary.baseRef,
                   conflictFilesForMarker,
                 );
+                const previousFailure = await this.findLatestConflictRepairFailure(
+                  pr.id,
+                  pullSummary.headSha,
+                  pullSummary.baseRef,
+                  conflictFilesForMarker,
+                );
+                const failureFirstSeenAt = previousFailure?.firstSeenAt || seenAt;
                 const failureCount = previousFailures + 1;
                 await updateRunRecord({
                   metadata: {
@@ -3098,7 +3131,7 @@ export class PRBabysitter {
                       baseRef: pullSummary.baseRef,
                       conflictFiles: conflictFilesForMarker,
                       reason,
-                      firstSeenAt: seenAt,
+                      firstSeenAt: failureFirstSeenAt,
                       lastSeenAt: seenAt,
                       count: failureCount,
                     },
@@ -3122,7 +3155,7 @@ export class PRBabysitter {
                 });
                 await this.storage.updatePR(pr.id, {
                   status: "error",
-                  lastChecked: new Date().toISOString(),
+                  lastChecked: this.now().toISOString(),
                 });
                 await queueLog(pr.id, "warn", reason, {
                   phase: "conflict.retry",
@@ -3173,9 +3206,10 @@ export class PRBabysitter {
               await conflictStderr.flush();
 
               if (conflictResult.code !== 0) {
-                const failureReason = formatConciseFailureReason(conflictResult.stderr || conflictResult.stdout);
+                const failureDetail = formatConciseFailureReason(conflictResult.stderr || conflictResult.stdout);
+                const failureReason = `${agent} failed to resolve merge conflicts: ${failureDetail}`;
                 await recordConflictRepairFailure(normalizedConflictFiles, failureReason, "conflict.agent", priorConflictFailures);
-                throw new Error(`Agent failed to resolve merge conflicts (${conflictResult.code}): ${failureReason}`);
+                throw new Error(`${agent} failed to resolve merge conflicts (${conflictResult.code}): ${failureDetail}`);
               }
 
               await queueLog(pr.id, "info", "Agent completed merge conflict resolution", {
@@ -3192,7 +3226,7 @@ export class PRBabysitter {
               }
               const unresolvedFiles = normalizeConflictFiles(unresolvedAfterAgent.stdout.trim().split("\n"));
               if (unresolvedFiles.length > 0) {
-                const failureReason = `Agent left unresolved merge conflicts: ${unresolvedFiles.join(", ")}`;
+                const failureReason = `${agent} left unresolved merge conflicts: ${unresolvedFiles.join(", ")}`;
                 await recordConflictRepairFailure(unresolvedFiles, failureReason);
                 throw new Error(failureReason);
               }
