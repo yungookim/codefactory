@@ -3,7 +3,7 @@ import { chmod, copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { evaluateFixNecessityWithAgent, resolveAgent, resolveCommandPath, runCommand } from "./agentRunner";
+import { checkAgentHealth, evaluateFixNecessityWithAgent, resolveAgent, resolveCommandPath, runCommand } from "./agentRunner";
 
 test("runCommand reports a timeout even when the child exits 0 after SIGTERM", async () => {
   const result = await runCommand(
@@ -71,6 +71,43 @@ test("evaluateFixNecessityWithAgent throws a clear error when codex writes no ou
     } else {
       process.env.NODE_OPTIONS = originalNodeOptions;
     }
+    process.env.PATH = originalPath;
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("checkAgentHealth surfaces actionable codex session permission errors", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "fake-codex-health-bin-"));
+  const fakeCodexPath = path.join(
+    tempRoot,
+    process.platform === "win32" ? "codex.cmd" : "codex",
+  );
+  const originalPath = process.env.PATH;
+
+  try {
+    await writeFile(
+      fakeCodexPath,
+      [
+        "#!/bin/sh",
+        "echo 'Reading additional input from stdin...' >&2",
+        "echo 'ERROR codex_core::session: Failed to create session: Operation not permitted' >&2",
+        "echo 'Error: thread/start: Codex cannot access session files at /Users/dgyk/.codex/sessions (permission denied)' >&2",
+        "exit 1",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(fakeCodexPath, 0o755);
+    process.env.PATH = [tempRoot, originalPath].filter(Boolean).join(path.delimiter);
+
+    const result = await checkAgentHealth("codex");
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.match(result.reason, /cannot access session files/i);
+      assert.doesNotMatch(result.reason, /Reading additional input from stdin/);
+    }
+  } finally {
     process.env.PATH = originalPath;
     await rm(tempRoot, { recursive: true, force: true });
   }

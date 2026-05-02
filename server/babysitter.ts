@@ -34,6 +34,7 @@ import {
   resolveReviewThread,
   resolveGitHubAuthToken,
   updateStatusReply,
+  APP_STATUS_COMMENT_PATTERN,
   type GitHubPullSummary,
   type GitHubStatusFailure,
   type ParsedPRUrl,
@@ -66,6 +67,10 @@ import {
 const DEFAULT_GIT_USER_NAME = "PR Babysitter";
 const DEFAULT_GIT_USER_EMAIL = "pr-babysitter@local";
 const AGENT_HEALTH_CACHE_TTL_MS = 60_000;
+const DEPENDENCY_PREFLIGHT_FAILURE_PREFIX = "Dependency preflight failed:";
+const DEPENDENCY_PREFLIGHT_FAILURE_KIND = "dependency_preflight";
+const CONFLICT_REPAIR_FAILURE_KIND = "merge_conflict_repair";
+const CONFLICT_REPAIR_RETRY_BUDGET = 2;
 const APP_NAME = "oh-my-pr";
 const APP_REPOSITORY_URL = "https://github.com/yungookim/oh-my-pr";
 const APP_REPOSITORY_LINK = `[${APP_NAME}](${APP_REPOSITORY_URL})`;
@@ -89,6 +94,26 @@ type GitHubService = {
   resolveReviewThread: typeof resolveReviewThread;
   resolveGitHubAuthToken: typeof resolveGitHubAuthToken;
   updateStatusReply: typeof updateStatusReply;
+};
+
+type DeterministicFailureMarker = {
+  kind: typeof DEPENDENCY_PREFLIGHT_FAILURE_KIND;
+  headSha: string;
+  reason: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  count: number;
+};
+
+type ConflictRepairFailureMarker = {
+  kind: typeof CONFLICT_REPAIR_FAILURE_KIND;
+  headSha: string;
+  baseRef: string;
+  conflictFiles: string[];
+  reason: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  count: number;
 };
 
 type BabysitterRuntime = {
@@ -565,11 +590,67 @@ function hasAuditTrail(
 }
 
 function looksLikeStatusReply(body: string): boolean {
-  return body.includes("**Accepted**")
-    || body.includes("**Agent running**")
-    || body.includes("**Agent failed**")
-    || body.includes("**Agent completed**")
-    || body.includes("**Resolved**");
+  return APP_STATUS_COMMENT_PATTERN.test(body);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readDependencyPreflightFailure(metadata: AgentRun["metadata"]): DeterministicFailureMarker | null {
+  const marker = metadata?.deterministicFailure;
+  if (isRecord(marker)
+    && marker.kind === DEPENDENCY_PREFLIGHT_FAILURE_KIND
+    && typeof marker.headSha === "string"
+    && typeof marker.reason === "string"
+  ) {
+    return {
+      kind: DEPENDENCY_PREFLIGHT_FAILURE_KIND,
+      headSha: marker.headSha,
+      reason: marker.reason,
+      firstSeenAt: typeof marker.firstSeenAt === "string" ? marker.firstSeenAt : "",
+      lastSeenAt: typeof marker.lastSeenAt === "string" ? marker.lastSeenAt : "",
+      count: typeof marker.count === "number" ? marker.count : 1,
+    };
+  }
+
+  return null;
+}
+
+function normalizeConflictFiles(files: string[]): string[] {
+  return Array.from(new Set(files.map((file) => file.trim()).filter(Boolean))).sort();
+}
+
+function sameStrings(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function readConflictRepairFailure(metadata: AgentRun["metadata"]): ConflictRepairFailureMarker | null {
+  const marker = metadata?.conflictRepairFailure;
+  if (!isRecord(marker)
+    || marker.kind !== CONFLICT_REPAIR_FAILURE_KIND
+    || typeof marker.headSha !== "string"
+    || typeof marker.baseRef !== "string"
+    || typeof marker.reason !== "string"
+    || !Array.isArray(marker.conflictFiles)
+  ) {
+    return null;
+  }
+
+  return {
+    kind: CONFLICT_REPAIR_FAILURE_KIND,
+    headSha: marker.headSha,
+    baseRef: marker.baseRef,
+    conflictFiles: normalizeConflictFiles(marker.conflictFiles.filter((file): file is string => typeof file === "string")),
+    reason: marker.reason,
+    firstSeenAt: typeof marker.firstSeenAt === "string" ? marker.firstSeenAt : "",
+    lastSeenAt: typeof marker.lastSeenAt === "string" ? marker.lastSeenAt : "",
+    count: typeof marker.count === "number" ? marker.count : 1,
+  };
+}
+
+function isDependencyPreflightFailureMessage(message: string): boolean {
+  return message.trim().startsWith(DEPENDENCY_PREFLIGHT_FAILURE_PREFIX);
 }
 
 function readStatusReplyRefs(metadata: AgentRun["metadata"]): Record<string, StatusReplyRef> {
@@ -1051,6 +1132,66 @@ export class PRBabysitter {
 
   private now(): Date {
     return this.clock();
+  }
+
+  private async findLatestDependencyPreflightFailure(prId: string, headSha: string): Promise<DeterministicFailureMarker | null> {
+    const failedRuns = (await this.storage.listAgentRuns({ prId, status: "failed" }))
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+
+    for (const run of failedRuns) {
+      const marker = readDependencyPreflightFailure(run.metadata);
+      const runHeadSha = marker?.headSha ?? run.initialHeadSha;
+      if (runHeadSha !== headSha) {
+        continue;
+      }
+
+      return marker?.kind === DEPENDENCY_PREFLIGHT_FAILURE_KIND ? marker : null;
+    }
+
+    return null;
+  }
+
+  private async countConflictRepairFailures(prId: string, headSha: string, baseRef: string, conflictFiles: string[]): Promise<number> {
+    const normalizedFiles = normalizeConflictFiles(conflictFiles);
+    const failedRuns = await this.storage.listAgentRuns({ prId, status: "failed" });
+    return failedRuns.reduce((count, run) => {
+      const marker = readConflictRepairFailure(run.metadata);
+      if (!marker
+        || marker.headSha !== headSha
+        || marker.baseRef !== baseRef
+        || !sameStrings(marker.conflictFiles, normalizedFiles)
+      ) {
+        return count;
+      }
+
+      return count + 1;
+    }, 0);
+  }
+
+  private async findLatestConflictRepairFailure(
+    prId: string,
+    headSha: string,
+    baseRef: string,
+    conflictFiles: string[],
+  ): Promise<ConflictRepairFailureMarker | null> {
+    const normalizedFiles = normalizeConflictFiles(conflictFiles);
+    const failedRuns = (await this.storage.listAgentRuns({ prId, status: "failed" }))
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+
+    for (const run of failedRuns) {
+      const marker = readConflictRepairFailure(run.metadata);
+      if (!marker
+        || marker.headSha !== headSha
+        || marker.baseRef !== baseRef
+        || !sameStrings(marker.conflictFiles, normalizedFiles)
+      ) {
+        continue;
+      }
+
+      return marker;
+    }
+
+    return null;
   }
 
   private async readAgentHealth(agent: CodingAgent): Promise<AgentHealthResult> {
@@ -1645,6 +1786,22 @@ export class PRBabysitter {
           continue;
         }
 
+        const priorDependencyFailure = pull.headSha
+          ? await this.findLatestDependencyPreflightFailure(local.id, pull.headSha)
+          : null;
+        if (priorDependencyFailure) {
+          await this.storage.addLog(local.id, "warn", "Dependency preflight previously failed for this PR head; skipping automatic babysitter run until the head changes", {
+            phase: "watcher",
+            metadata: {
+              repo: repoSlug,
+              headSha: pull.headSha,
+              reason: priorDependencyFailure.reason,
+              count: priorDependencyFailure.count,
+            },
+          });
+          continue;
+        }
+
         await this.storage.addLog(local.id, "info", "Watcher queued autonomous babysitter run", {
           phase: "watcher",
           metadata: { repo: repoSlug },
@@ -2136,6 +2293,12 @@ export class PRBabysitter {
       };
 
       const pullSummary = await this.github.fetchPullSummary(octokit, parsedPr);
+      const runInitialHeadSha = replayInitialHeadSha || pullSummary.headSha;
+      if (runInitialHeadSha && runRecord.initialHeadSha !== runInitialHeadSha) {
+        await updateRunRecord({
+          initialHeadSha: runInitialHeadSha,
+        });
+      }
       if (forcedFixPrompt && replayInitialHeadSha && pullSummary.headSha !== replayInitialHeadSha) {
         skipForcedReplay = true;
         await queueLog(pr.id, "warn", `Skipping forced prompt replay because PR head moved (${replayInitialHeadSha.slice(0, 7)} -> ${pullSummary.headSha.slice(0, 7)})`, {
@@ -2381,6 +2544,19 @@ export class PRBabysitter {
           const reason = "oh-my-pr-authored agent command comment; no code change required";
           evaluatedItems.set(item.id, applyEvaluationDecision(item, false, reason));
           await queueLog(pr.id, "info", `Ignored self-authored agent command comment ${item.id}`, {
+            phase: "evaluate.comments",
+            metadata: {
+              feedbackId: item.id,
+              decision: "reject",
+            },
+          });
+          continue;
+        }
+
+        if (looksLikeStatusReply(item.body)) {
+          const reason = "oh-my-pr status comment; no code change required";
+          evaluatedItems.set(item.id, applyEvaluationDecision(item, false, reason));
+          await queueLog(pr.id, "info", `Ignored self-authored status comment ${item.id}`, {
             phase: "evaluate.comments",
             metadata: {
               feedbackId: item.id,
@@ -2717,14 +2893,33 @@ export class PRBabysitter {
             runCommand: this.runtime.runCommand,
           });
           if (!dependencyPreflight.ok) {
-            await queueLog(pr.id, "error", `Dependency preflight failed: ${dependencyPreflight.reason}`, {
+            const seenAt = this.now().toISOString();
+            if (pullSummary.headSha) {
+              const previousFailure = await this.findLatestDependencyPreflightFailure(pr.id, pullSummary.headSha);
+              const failureCount = (previousFailure?.count ?? 0) + 1;
+              const failureFirstSeenAt = previousFailure?.firstSeenAt || seenAt;
+              await updateRunRecord({
+                metadata: {
+                  ...(runRecord.metadata ?? {}),
+                  deterministicFailure: {
+                    kind: DEPENDENCY_PREFLIGHT_FAILURE_KIND,
+                    headSha: pullSummary.headSha,
+                    reason: dependencyPreflight.reason,
+                    firstSeenAt: failureFirstSeenAt,
+                    lastSeenAt: seenAt,
+                    count: failureCount,
+                  },
+                },
+              });
+            }
+            await queueLog(pr.id, "error", `${DEPENDENCY_PREFLIGHT_FAILURE_PREFIX} ${dependencyPreflight.reason}`, {
               phase: "preflight.dependencies",
               metadata: {
                 headSha: pullSummary.headSha,
                 reason: dependencyPreflight.reason,
               },
             });
-            throw new Error(`Dependency preflight failed: ${dependencyPreflight.reason}`);
+            throw new Error(`${DEPENDENCY_PREFLIGHT_FAILURE_PREFIX} ${dependencyPreflight.reason}`);
           }
           await queueLog(pr.id, "info", "Dependency preflight passed", {
             phase: "preflight.dependencies",
@@ -2899,19 +3094,80 @@ export class PRBabysitter {
                 cwd: worktreePath,
                 timeoutMs: 10000,
               });
-              const conflictFiles = conflictListResult.stdout
-                .trim()
-                .split("\n")
-                .filter((f) => f.trim().length > 0);
+              const normalizedConflictFiles = normalizeConflictFiles(conflictListResult.stdout.trim().split("\n"));
 
-              if (conflictFiles.length === 0) {
+              if (normalizedConflictFiles.length === 0) {
                 throw new Error(`Merge failed but no conflict files detected: ${mergeResult.stderr || mergeResult.stdout}`);
               }
 
-              await queueLog(pr.id, "info", `Found ${conflictFiles.length} file(s) with merge conflicts`, {
+              await queueLog(pr.id, "info", `Found ${normalizedConflictFiles.length} file(s) with merge conflicts`, {
                 phase: "conflict",
-                metadata: { conflictFiles },
+                metadata: { conflictFiles: normalizedConflictFiles },
               });
+
+              const recordConflictRepairFailure = async (files: string[], reason: string, phase = "conflict.agent", priorFailures?: number) => {
+                const conflictFilesForMarker = normalizeConflictFiles(files);
+                const seenAt = this.now().toISOString();
+                const previousFailures = priorFailures ?? await this.countConflictRepairFailures(
+                  pr.id,
+                  pullSummary.headSha,
+                  pullSummary.baseRef,
+                  conflictFilesForMarker,
+                );
+                const previousFailure = await this.findLatestConflictRepairFailure(
+                  pr.id,
+                  pullSummary.headSha,
+                  pullSummary.baseRef,
+                  conflictFilesForMarker,
+                );
+                const failureFirstSeenAt = previousFailure?.firstSeenAt || seenAt;
+                const failureCount = previousFailures + 1;
+                await updateRunRecord({
+                  metadata: {
+                    ...(runRecord.metadata ?? {}),
+                    conflictRepairFailure: {
+                      kind: CONFLICT_REPAIR_FAILURE_KIND,
+                      headSha: pullSummary.headSha,
+                      baseRef: pullSummary.baseRef,
+                      conflictFiles: conflictFilesForMarker,
+                      reason,
+                      firstSeenAt: failureFirstSeenAt,
+                      lastSeenAt: seenAt,
+                      count: failureCount,
+                    },
+                  },
+                  phase,
+                });
+              };
+
+              const priorConflictFailures = await this.countConflictRepairFailures(
+                pr.id,
+                pullSummary.headSha,
+                pullSummary.baseRef,
+                normalizedConflictFiles,
+              );
+              if (priorConflictFailures >= CONFLICT_REPAIR_RETRY_BUDGET) {
+                const reason = `Merge conflict repair retry budget exhausted for ${normalizedConflictFiles.join(", ")}`;
+                await updateRunRecord({
+                  status: "failed",
+                  phase: "conflict.retry",
+                  lastError: reason,
+                });
+                await this.storage.updatePR(pr.id, {
+                  status: "error",
+                  lastChecked: this.now().toISOString(),
+                });
+                await queueLog(pr.id, "warn", reason, {
+                  phase: "conflict.retry",
+                  metadata: {
+                    headSha: pullSummary.headSha,
+                    baseRef: pullSummary.baseRef,
+                    conflictFiles: normalizedConflictFiles,
+                    priorFailures: priorConflictFailures,
+                  },
+                });
+                return;
+              }
 
               const conflictStdout = createChunkLogger(pr.id, "conflict.agent", "stdout", "info");
               const conflictStderr = createChunkLogger(pr.id, "conflict.agent", "stderr", "warn");
@@ -2928,7 +3184,7 @@ export class PRBabysitter {
                 pr,
                 pullSummary,
                 remoteName,
-                conflictFiles,
+                conflictFiles: normalizedConflictFiles,
               });
 
               await queueLog(pr.id, "info", `Launching ${agent} to resolve merge conflicts`, {
@@ -2950,8 +3206,10 @@ export class PRBabysitter {
               await conflictStderr.flush();
 
               if (conflictResult.code !== 0) {
-                const failureReason = formatConciseFailureReason(conflictResult.stderr || conflictResult.stdout);
-                throw new Error(`Agent failed to resolve merge conflicts (${conflictResult.code}): ${failureReason}`);
+                const failureDetail = formatConciseFailureReason(conflictResult.stderr || conflictResult.stdout);
+                const failureReason = `${agent} failed to resolve merge conflicts: ${failureDetail}`;
+                await recordConflictRepairFailure(normalizedConflictFiles, failureReason, "conflict.agent", priorConflictFailures);
+                throw new Error(`${agent} failed to resolve merge conflicts (${conflictResult.code}): ${failureDetail}`);
               }
 
               await queueLog(pr.id, "info", "Agent completed merge conflict resolution", {
@@ -2966,8 +3224,11 @@ export class PRBabysitter {
               if (unresolvedAfterAgent.code !== 0) {
                 throw new Error(formatGitFailure("checking unresolved merge conflicts", unresolvedAfterAgent));
               }
-              if (unresolvedAfterAgent.stdout.trim()) {
-                throw new Error(`Agent left unresolved merge conflicts: ${unresolvedAfterAgent.stdout.trim()}`);
+              const unresolvedFiles = normalizeConflictFiles(unresolvedAfterAgent.stdout.trim().split("\n"));
+              if (unresolvedFiles.length > 0) {
+                const failureReason = `${agent} left unresolved merge conflicts: ${unresolvedFiles.join(", ")}`;
+                await recordConflictRepairFailure(unresolvedFiles, failureReason);
+                throw new Error(failureReason);
               }
 
               await commitDirtyWorktree({
@@ -3672,7 +3933,7 @@ export class PRBabysitter {
       if (error instanceof Error && error.stack) {
         log.debug({ stack: error.stack, prId }, "Babysitter failure stack");
       }
-      if (options?.rethrowOnFailure) {
+      if (options?.rethrowOnFailure && !isDependencyPreflightFailureMessage(message)) {
         throw error;
       }
     } finally {

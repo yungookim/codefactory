@@ -31,6 +31,7 @@ const AGENT_AUTH_PATTERNS = [
   "authentication_error",
   "invalid authentication credentials",
   "api error: 401",
+  "cannot access session files",
 ];
 
 const AGENT_CLI_MISSING_PATTERNS = [
@@ -328,11 +329,15 @@ function firstOutputLine(output: string): string | null {
 }
 
 function summarizeHealthFailure(result: CommandResult): string {
-  const raw = (result.stderr.trim() || result.stdout.trim() || "no output")
+  const lines = (result.stderr.trim() || result.stdout.trim() || "no output")
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .find((line) => line.length > 0)
-    ?? "no output";
+    .filter((line) => line.length > 0);
+  const actionable = lines.findLast((line) =>
+    /cannot access session files|permission denied|failed to create session|failed|error:/i.test(line)
+      && !/^reading additional input from stdin/i.test(line)
+  );
+  const raw = actionable ?? lines[0] ?? "no output";
   return raw.length > 220 ? `${raw.slice(0, 217).trimEnd()}...` : raw;
 }
 
