@@ -77,9 +77,7 @@ function recordsToText(records: LogRecord[]): string {
 }
 
 function setUrlParams(updates: { level?: string; source?: string; q?: string; follow?: boolean }) {
-  const hash = window.location.hash || "#/logs";
-  const [path, queryString] = hash.replace(/^#/, "").split("?");
-  const params = new URLSearchParams(queryString ?? "");
+  const params = new URLSearchParams(window.location.search);
   for (const [key, value] of Object.entries(updates)) {
     if (value === "" || value === false || value === undefined) {
       params.delete(key);
@@ -90,7 +88,11 @@ function setUrlParams(updates: { level?: string; source?: string; q?: string; fo
     }
   }
   const next = params.toString();
-  window.location.hash = next ? `${path}?${next}` : path;
+  const url = new URL(window.location.href);
+  url.search = next ? `?${next}` : "";
+  // wouter monkey-patches replaceState to dispatch a "replaceState" event,
+  // which useSearch listens for, so subscribers re-render.
+  history.replaceState(history.state, "", url.href);
 }
 
 export default function Logs() {

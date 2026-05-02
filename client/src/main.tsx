@@ -1,6 +1,16 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { normalizeHashRouteSearch } from "./lib/hashRouteSearch";
 import "./index.css";
+
+// wouter's hash router expects the path in location.hash and the query in
+// location.search. Normalize deep links like #/logs?level=info before mount.
+{
+  const normalizedHref = normalizeHashRouteSearch(window.location.href);
+  if (normalizedHref) {
+    history.replaceState(history.state, "", normalizedHref);
+  }
+}
 
 if (!window.location.hash) {
   window.location.hash = "#/";
