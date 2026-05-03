@@ -241,11 +241,12 @@ oh-my-pr --log-level=trace
 oh-my-pr --log-file /tmp/oh-my-pr.log
 oh-my-pr --no-log-file
 </code></pre>
+<p>The dashboard also exposes a server log viewer at <code>/logs</code>. It shows recent structured server logs from the in-memory ring buffer, supports level/source/search filtering, and tails new log records live while the page is open. The live tail uses Server-Sent Events over the local HTTP server, so keep access local and avoid putting the dashboard behind buffering proxies.</p>
 <h2>Dashboard Settings</h2>
 <p>The settings page in the dashboard provides a UI for:</p>
 <ul>
 <li><strong>GitHub token management</strong> — Add, remove, and reorder saved tokens before falling back to <code>GITHUB_TOKEN</code> or <code>gh auth</code>.</li>
-<li><strong>Agent selection</strong> — Choose whether autonomous runs use Claude Code or OpenAI Codex.</li>
+<li><strong>Agent selection</strong> — Choose whether autonomous runs use Claude Code or OpenAI Codex. If the default run fails and a code-owner fallback is launched, the fallback uses the same resolved agent; enabling <strong>Fallback to next coding agent</strong> lets oh-my-pr resolve that fallback to the other local CLI when needed.</li>
 <li><strong>Babysitter tuning</strong> — Control polling, batching, merge-conflict handling, release automation, and automatic docs assessment.</li>
 <li><strong>Runtime drain mode</strong> — Pause new automation runs from Settings while allowing in-flight runs to finish.</li>
 <li><strong>Ignored bots</strong> — Add or remove bot logins whose comments and reviews should be ignored.</li>

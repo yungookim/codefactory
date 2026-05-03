@@ -49,6 +49,8 @@ For actionable feedback, oh-my-pr:
 3. The agent makes changes, runs tests, and validates the fix.
 4. Changes are **committed and pushed** back to the PR branch.
 
+If a default babysitter run fails outside recovery or forced-prompt mode, oh-my-pr can launch a code-owner fallback agent with a 30-minute timeout. That fallback is allowed to inspect the current GitHub PR state, handle or reject feedback, reply to GitHub comments or review threads, resolve handled conversations, commit any changes, and push back to the PR branch.
+
 ### 5. CI Healing
 
 When **Automatic CI healing** is enabled, the babysitter also watches failing checks and creates a healing session for the current PR head SHA. Each normalized failure fingerprint is classified as one of:

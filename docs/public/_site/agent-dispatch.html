@@ -201,12 +201,13 @@
 <li>The approved <strong>documentation task</strong> summary when the docs assessment says updates are required.</li>
 <li>The PR branch, base/head repository, and remote information needed to commit and push safely.</li>
 </ul>
+<p>If the default queued run fails, oh-my-pr can dispatch a code-owner fallback using the resolved coding agent. This fallback receives a broader PR-owner prompt, has a 30-minute timeout, and may inspect the latest GitHub review comments, unresolved threads, issue comments, and failing checks directly.</p>
 <h3>3. Validation</h3>
 <p>After the agent completes:</p>
 <ul>
 <li>The agent is expected to run relevant verification and commit/push changed files to the PR branch.</li>
 <li>oh-my-pr checks the worktree state, records logs, updates run metadata, and polls CI when needed.</li>
-<li>GitHub follow-up replies and review-thread resolution are handled by oh-my-pr after the agent returns.</li>
+<li>For normal runs, GitHub follow-up replies and review-thread resolution are handled by oh-my-pr after the agent returns. In code-owner fallback mode, the agent may reply to GitHub feedback and resolve handled conversations directly before it returns.</li>
 </ul>
 <h3>4. Commit &amp; Push</h3>
 <p>When the run succeeds, oh-my-pr:</p>
