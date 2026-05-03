@@ -13,6 +13,14 @@ This repository expects development to be test-led, narrow, and proven before a 
 npm run test:all
 ```
 
+- To rerun the browser full-app QA smoke harness, start the app first and then run:
+
+```sh
+QA_TARGET=http://localhost:5001 node .gstack/qa-reports/run-full-app-qa.mjs
+```
+
+  The harness writes its markdown report and screenshots under `.gstack/qa-reports/` by default. Use `QA_REPORT_DIR`, `CHROME_PATH`, `QA_CHROME_PORT`, or `QA_CHROME_PROFILE` when the local browser or artifact location differs.
+
 - When a change affects production bundling, startup behavior, shared contracts, or client/server integration, also run `npm run build`.
 - When a change affects docs output, run the relevant docs build command, usually `npm run build:public-docs` or `npm run build:docs`.
 - When checking coverage locally, use Node's test coverage runner against the tests that exercise the changed area:

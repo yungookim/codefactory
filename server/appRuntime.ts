@@ -204,6 +204,7 @@ const AGENT_FIX_STEPS: Record<AgentLabel, Record<AgentUnavailabilityKind, string
   Codex: {
     auth: [
       "Run `codex login` on this machine.",
+      "Check ownership and permissions for ~/.codex, especially ~/.codex/sessions, so oh-my-pr can access Codex session files.",
       "Restart oh-my-pr if it was launched before you refreshed credentials.",
       "Rerun the babysitter for this PR.",
     ],

@@ -1,5 +1,14 @@
 # Lessons Learned
 
+## 2026-05-02 - Create requested QA plans before running QA gates
+- Pattern: I started the `/qa` clean-tree gate and asked how to handle uncommitted files before honoring the user's requested sequencing to create a full test plan document under `docs/plans` first.
+- Rule: When the user corrects QA workflow order or asks for a planning artifact "first", pause browser execution and fix-loop setup, create the requested plan in the requested location, then resume only after the plan is complete.
+- Prevention checklist:
+  - Before continuing `/qa`, re-check the latest user message for words like "first", "plan", or an explicit `docs/plans` path.
+  - Do not keep pressing the clean-tree QA gate when the immediate task has shifted to documentation.
+  - Make the plan executable: target URL, routes, workflows, evidence, commands, pass/fail criteria, and exit criteria.
+  - After the plan exists, summarize the path and ask or wait before resuming browser QA if the user did not explicitly say to continue.
+
 ## 2026-05-01 - Keep babysitter orchestration thin and delegate repo repair
 - Pattern: Babysitter failures around dependency preflight, merge conflicts, and repository git hooks exposed too much repo-specific behavior inside the app, causing repeated app-side failures instead of letting the selected coding agent repair the checked-out PR environment.
 - Rule: In `oh-my-pr`, keep the app responsible for deterministic orchestration boundaries only: queueing, leases, workspace isolation, credentials, logging, and final git/GitHub state transitions. Delegate repository-specific setup and repair decisions to the underlying coding agent wherever a human developer would normally inspect and fix the repo.

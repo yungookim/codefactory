@@ -895,6 +895,14 @@ test("fetchFeedbackItemsForPR marks oh-my-pr status and audit comments non-actio
             user: { login: "octocat", type: "User" },
           },
           {
+            id: 204,
+            node_id: "IC_kwDO_footerless_status",
+            body: "**Agent running** - oh-my-pr dispatched `codex` to apply the accepted fix.",
+            created_at: "2026-03-15T11:01:30Z",
+            html_url: "https://github.com/yungookim/oh-my-pr/pull/1#issuecomment-204",
+            user: { login: "octocat", type: "User" },
+          },
+          {
             id: 203,
             node_id: "IC_kwDO_user",
             body: "Please fix the retry loop.",
@@ -935,12 +943,14 @@ test("fetchFeedbackItemsForPR marks oh-my-pr status and audit comments non-actio
     config,
   );
 
-  assert.equal(items.length, 3);
+  assert.equal(items.length, 4);
   assert.equal(items[0]?.status, "rejected");
   assert.match(items[0]?.statusReason ?? "", /oh-my-pr/i);
   assert.equal(items[1]?.status, "rejected");
   assert.match(items[1]?.statusReason ?? "", /audit/i);
-  assert.equal(items[2]?.status, "pending");
+  assert.equal(items[2]?.status, "rejected");
+  assert.match(items[2]?.statusReason ?? "", /oh-my-pr/i);
+  assert.equal(items[3]?.status, "pending");
 });
 
 test("fetchFeedbackItemsForPR paginates review thread comments beyond the first page", async () => {

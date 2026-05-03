@@ -652,6 +652,61 @@ test("GET /api/activities warns when a babysitter job fails from agent authentic
   }
 });
 
+test("GET /api/activities warns when a babysitter job fails from Codex session permissions", async () => {
+  const harness = await createHarness();
+  const pr = await seedPR(harness.storage, {
+    title: "fix codex warning",
+    repo: "acme/widgets",
+    number: 78,
+    url: "https://github.com/acme/widgets/pull/78",
+  });
+
+  try {
+    const job = await harness.storage.enqueueBackgroundJob({
+      kind: "babysit_pr",
+      targetId: pr.id,
+      dedupeKey: `babysit_pr:${pr.id}`,
+      payload: { preferredAgent: "codex" },
+      availableAt: "2026-04-26T10:00:00.000Z",
+    });
+    await harness.storage.claimNextBackgroundJob({
+      workerId: "worker-1",
+      leaseToken: "lease-1",
+      leaseExpiresAt: "2026-04-26T10:10:00.000Z",
+      now: "2026-04-26T10:01:00.000Z",
+    });
+    await harness.storage.failBackgroundJob(
+      job.id,
+      "lease-1",
+      "Agent health check failed for codex: codex health check failed: Error: thread/start: Codex cannot access session files at /Users/dgyk/.codex/sessions (permission denied)",
+      "2026-04-26T10:02:00.000Z",
+    );
+    await harness.storage.updatePR(pr.id, {
+      status: "error",
+      lastChecked: "2026-04-26T10:02:00.000Z",
+    });
+
+    const response = await fetch(`${harness.baseUrl}/api/activities`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as {
+      warnings?: Array<{
+        title: string;
+        fixSteps: string[];
+      }>;
+    };
+
+    assert.equal(body.warnings?.[0]?.title, "Codex authentication failed");
+    assert.deepEqual(body.warnings?.[0]?.fixSteps, [
+      "Run `codex login` on this machine.",
+      "Check ownership and permissions for ~/.codex, especially ~/.codex/sessions, so oh-my-pr can access Codex session files.",
+      "Restart oh-my-pr if it was launched before you refreshed credentials.",
+      "Rerun the babysitter for this PR.",
+    ]);
+  } finally {
+    await harness.close();
+  }
+});
+
 for (const agent of [
   { preferredAgent: "codex", label: "Codex", installName: "Codex", prNumber: 78 },
   { preferredAgent: "claude", label: "Claude", installName: "Claude Code", prNumber: 79 },
