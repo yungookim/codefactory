@@ -59,6 +59,7 @@ Then:
 - Watches repositories and tracked PRs for review activity, comments, and failing checks
 - Triages feedback into actionable items
 - Runs `codex` or `claude` in isolated worktrees under `~/.oh-my-pr`
+- Uses a bounded code-owner fallback after failed default babysitter runs so the resolved agent can inspect GitHub feedback, commit, and push when the primary automation path fails
 - Replies to GitHub PR comments on your behalf and resolves conversations to keep the thread clean
 - Pushes verified fixes back to the PR branch
 - Can automatically create a GitHub release when a merged PR is important enough to justify a version bump

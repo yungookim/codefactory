@@ -238,10 +238,11 @@ export async function applyFixesWithAgent(params: {
   cwd: string;
   prompt: string;
   env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
   onStdoutChunk?: (chunk: string) => void;
   onStderrChunk?: (chunk: string) => void;
 }): Promise<CommandResult> {
-  const { agent, cwd, prompt, env, onStdoutChunk, onStderrChunk } = params;
+  const { agent, cwd, prompt, env, timeoutMs = 900000, onStdoutChunk, onStderrChunk } = params;
 
   if (agent === "codex") {
     const result = await runAgentCommand(
@@ -253,7 +254,7 @@ export async function applyFixesWithAgent(params: {
         "workspace-write",
         prompt,
       ],
-      { cwd, env, timeoutMs: 900000, onStdoutChunk, onStderrChunk },
+      { cwd, env, timeoutMs, onStdoutChunk, onStderrChunk },
     );
 
     return result;
@@ -266,7 +267,7 @@ export async function applyFixesWithAgent(params: {
       "--dangerously-skip-permissions",
       prompt,
     ],
-    { cwd, env, timeoutMs: 900000, onStdoutChunk, onStderrChunk },
+    { cwd, env, timeoutMs, onStdoutChunk, onStderrChunk },
   );
 }
 

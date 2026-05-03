@@ -71,6 +71,7 @@ const DEPENDENCY_PREFLIGHT_FAILURE_PREFIX = "Dependency preflight failed:";
 const DEPENDENCY_PREFLIGHT_FAILURE_KIND = "dependency_preflight";
 const CONFLICT_REPAIR_FAILURE_KIND = "merge_conflict_repair";
 const CONFLICT_REPAIR_RETRY_BUDGET = 2;
+const CODE_OWNER_FALLBACK_TIMEOUT_MS = 30 * 60 * 1000;
 const APP_NAME = "oh-my-pr";
 const APP_REPOSITORY_URL = "https://github.com/yungookim/oh-my-pr";
 const APP_REPOSITORY_LINK = `[${APP_NAME}](${APP_REPOSITORY_URL})`;
@@ -492,6 +493,61 @@ function buildAgentFixPrompt(params: {
     "   DOCS_SUMMARY_START <changed|no_change>",
     "   <A concise 1-2 sentence summary of the docs you updated, or why no docs changes were necessary after inspection>",
     "   DOCS_SUMMARY_END",
+  ].join("\n");
+}
+
+function buildCodeOwnerFallbackPrompt(params: {
+  pr: PR;
+  pullSummary: GitHubPullSummary;
+  remoteName: string;
+}): string {
+  const { pr, pullSummary, remoteName } = params;
+
+  return [
+    pr.url,
+    "",
+    "You are acting as code owner of this pull request.",
+    "",
+    "Context:",
+    `- Base repository: ${pullSummary.repoFullName}`,
+    `- Head repository: ${pullSummary.headRepoFullName}`,
+    `- Head branch: ${pullSummary.headRef}`,
+    `- Head remote: ${remoteName}`,
+    "- You are already inside an isolated app-owned worktree under ~/.oh-my-pr, checked out at the current PR head.",
+    "- Do not operate outside this worktree.",
+    "- Review the latest PR review comments, unresolved review threads, issue comments, and failing checks.",
+    "- Treat reviewer feedback as actionable by default, but validate it against the current code before changing anything. You can reject the feedback if it's not a valid feedback.",
+    "",
+    "Task:",
+    "1. Fetch and inspect the current PR state.",
+    "2. For each review comment/thread:",
+    "   - Accept it if it identifies a real bug, missing requirement, unclear code, test gap, maintainability issue, security issue, or reasonable requested cleanup.",
+    "   - Reject it only if it is factually incorrect, already fixed in the current PR head, conflicts with product requirements, would introduce a regression, or is outside the PR scope.",
+    "   - If uncertain, prefer a minimal safe fix or leave a clear explanation instead of guessing.",
+    "3. For accepted feedback:",
+    "   - Make the smallest correct code change.",
+    "   - Avoid unrelated refactors.",
+    "   - Add or update focused tests when behavior changes.",
+    "   - Run the relevant verification commands.",
+    "4. For rejected feedback:",
+    "   - Do not change code just to satisfy an invalid request.",
+    "   - Reply with a concise explanation grounded in the current code or requirements.",
+    "5. When a thread is handled:",
+    "   - Reply directly to the GitHub comment/thread with what was done, or why it was rejected.",
+    "   - Resolve the GitHub conversation after replying.",
+    "   - If the item is not a resolvable review thread, leave the reply/comment and note that there was no thread to resolve.",
+    "6. When all valid feedback is handled:",
+    "   - Confirm the worktree is clean except for intended changes.",
+    "   - Commit changes if any were made.",
+    `   - Push to the PR branch with \`git push ${remoteName} HEAD:${pullSummary.headRef}\`, not main.`,
+    "   - Report the commit SHA, verification commands run, and the disposition of every reviewed comment.",
+    "",
+    "Rules:",
+    "- Never mark feedback complete without proof: code inspection, tests, or a clear factual reason.",
+    "- Do not resolve a conversation silently.",
+    "- Do not batch vague replies like \"fixed\"; each reply should say what changed.",
+    "- Do not overwrite unrelated user changes.",
+    "- If GitHub permissions, tests, or push fail, stop and report the exact blocker with the comments already handled.",
   ].join("\n");
 }
 
@@ -2284,6 +2340,171 @@ export class PRBabysitter {
       return true;
     };
 
+    const runCodeOwnerFallbackAfterFailure = async (params: {
+      pr: PR;
+      failureMessage: string;
+    }): Promise<{ agent: CodingAgent; prompt: string }> => {
+      const { pr, failureMessage } = params;
+      const config = await this.storage.getConfig();
+      const agent = await this.runtime.resolveAgent(preferredAgent, {
+        allowFallback: config.fallbackToNextCodingAgent,
+      });
+      const fallbackStartedAt = this.now().toISOString();
+
+      await updateRunRecord({
+        phase: "code-owner-fallback.preparing",
+        resolvedAgent: agent,
+        metadata: {
+          ...(runRecord.metadata ?? {}),
+          defaultFailure: failureMessage,
+          codeOwnerFallback: {
+            ...(isRecord(runRecord.metadata?.codeOwnerFallback) ? runRecord.metadata.codeOwnerFallback : {}),
+            status: "preparing",
+            agent,
+            timeoutMs: CODE_OWNER_FALLBACK_TIMEOUT_MS,
+            startedAt: fallbackStartedAt,
+          },
+        },
+      });
+
+      const parsedFallbackRepo = parseRepoSlug(pr.repo);
+      if (!parsedFallbackRepo) {
+        throw new Error(`Invalid repository slug for code-owner fallback: ${pr.repo}`);
+      }
+
+      const fallbackOctokit = await this.github.buildOctokit(config);
+      const pullSummary = await this.github.fetchPullSummary(fallbackOctokit, {
+        owner: parsedFallbackRepo.owner,
+        repo: parsedFallbackRepo.repo,
+        number: pr.number,
+      });
+
+      const codeFactoryPaths = getCodeFactoryPaths();
+      await queueLog(pr.id, "info", `Preparing code-owner fallback worktree in ${codeFactoryPaths.rootDir}`, {
+        phase: "code-owner-fallback",
+      });
+      const { repoCacheDir, worktreePath, healed, remoteName } = await preparePrWorktree({
+        rootDir: codeFactoryPaths.rootDir,
+        repoFullName: pullSummary.repoFullName,
+        repoCloneUrl: pullSummary.repoCloneUrl,
+        headRepoFullName: pullSummary.headRepoFullName,
+        headRepoCloneUrl: pullSummary.headRepoCloneUrl,
+        headRef: pullSummary.headRef,
+        prNumber: pr.number,
+        runId: `${runId}-code-owner-fallback`,
+        runCommand: this.runtime.runCommand,
+      });
+
+      try {
+        await queueLog(pr.id, "info", `Code-owner fallback worktree ready at ${worktreePath}`, {
+          phase: "code-owner-fallback",
+          metadata: { remoteName, healed },
+        });
+        await ensureGitIdentity(worktreePath, this.runtime.runCommand);
+
+        const prompt = buildCodeOwnerFallbackPrompt({
+          pr,
+          pullSummary,
+          remoteName,
+        });
+
+        await updateRunRecord({
+          phase: "code-owner-fallback.running",
+          resolvedAgent: agent,
+          prompt,
+          metadata: {
+            ...(runRecord.metadata ?? {}),
+            defaultFailure: failureMessage,
+            codeOwnerFallback: {
+              ...(isRecord(runRecord.metadata?.codeOwnerFallback) ? runRecord.metadata.codeOwnerFallback : {}),
+              status: "running",
+              agent,
+              timeoutMs: CODE_OWNER_FALLBACK_TIMEOUT_MS,
+              cwd: worktreePath,
+              remoteName,
+            },
+          },
+        });
+
+        let agentEnv: NodeJS.ProcessEnv | undefined;
+        try {
+          const githubToken = await this.github.resolveGitHubAuthToken(config);
+          agentEnv = githubToken
+            ? {
+                ...process.env,
+                GITHUB_TOKEN: githubToken,
+                GH_TOKEN: githubToken,
+              }
+            : undefined;
+        } catch (error) {
+          await queueLog(pr.id, "warn", `Could not resolve GitHub token for code-owner fallback: ${summarizeUnknownError(error)}`, {
+            phase: "code-owner-fallback",
+          });
+        }
+
+        const cwd = worktreePath;
+        const stdoutLogger = createChunkLogger(pr.id, "code-owner-fallback", "stdout", "info");
+        const stderrLogger = createChunkLogger(pr.id, "code-owner-fallback", "stderr", "warn");
+
+        try {
+          await queueLog(pr.id, "info", `Launching ${agent} code-owner fallback after default run failure`, {
+            phase: "code-owner-fallback",
+            metadata: {
+              agent,
+              cwd,
+              timeoutMs: CODE_OWNER_FALLBACK_TIMEOUT_MS,
+              prompt,
+            },
+          });
+
+          const result = await this.runtime.applyFixesWithAgent({
+            agent,
+            cwd,
+            prompt,
+            env: agentEnv,
+            timeoutMs: CODE_OWNER_FALLBACK_TIMEOUT_MS,
+            onStdoutChunk: stdoutLogger.onChunk,
+            onStderrChunk: stderrLogger.onChunk,
+          });
+          await stdoutLogger.flush();
+          await stderrLogger.flush();
+
+          if (result.code !== 0) {
+            const fallbackReason = formatConciseFailureReason(result.stderr || result.stdout);
+            throw new Error(`${agent} code-owner fallback failed (${result.code}): ${fallbackReason}`);
+          }
+
+          await queueLog(pr.id, "info", `${agent} code-owner fallback completed successfully`, {
+            phase: "code-owner-fallback",
+            metadata: { agent, cwd },
+          });
+
+          return { agent, prompt };
+        } finally {
+          await stdoutLogger.flush();
+          await stderrLogger.flush();
+        }
+      } finally {
+        try {
+          await queueLog(pr.id, "info", "Cleaning up code-owner fallback worktree", {
+            phase: "code-owner-fallback",
+          });
+          await removePrWorktree({
+            repoCacheDir,
+            worktreePath,
+            runCommand: this.runtime.runCommand,
+          });
+          await queueLog(pr.id, "info", "Code-owner fallback worktree cleanup complete", {
+            phase: "code-owner-fallback",
+          });
+        } catch (cleanupError) {
+          await queueLog(pr.id, "error", `Code-owner fallback worktree cleanup failed: ${summarizeUnknownError(cleanupError)}`, {
+            phase: "code-owner-fallback",
+          });
+        }
+      }
+    };
+
     let followUpTasks: FeedbackItem[] = [];
     const forcedFixPrompt = options?.forceAgentPrompt ?? null;
     const forcedResolvedAgent = options?.forceResolvedAgent ?? null;
@@ -4069,25 +4290,82 @@ export class PRBabysitter {
       return;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await updateRunRecord({
-        status: "failed",
-        phase: runRecord.status === "failed" ? runRecord.phase : "run.failed",
-        lastError: message,
-      });
       const currentPr = await this.storage.getPR(prId);
+      const isGitHubError = error instanceof GitHubIntegrationError;
+      const isNonCritical = isGitHubError && branchMoved;
+      let finalMessage = message;
+      let rethrowError: unknown = error;
+
       if (currentPr) {
         // Determine if this is a non-critical GitHub integration failure
         // (e.g. couldn't post a comment or resolve a thread) vs a real
         // agent/processing failure. GitHub errors that happen *after* the
         // app successfully pushed code are warnings, not failures.
-        const isGitHubError = error instanceof GitHubIntegrationError;
-        const isNonCritical = isGitHubError && branchMoved;
         const logLevel = isNonCritical ? "warn" : "error";
         const logPrefix = isNonCritical ? "Babysitter warning" : "Babysitter error";
 
         await queueLog(currentPr.id, logLevel, `${logPrefix}: ${message}`, {
           phase: "run",
         });
+
+        const shouldRunCodeOwnerFallback = Boolean(
+          options?.rethrowOnFailure
+          && !recoveryMode
+          && !forcedFixPrompt
+          && !isNonCritical
+          && !isAgentUnavailableError(error),
+        );
+
+        if (shouldRunCodeOwnerFallback) {
+          try {
+            const fallback = await runCodeOwnerFallbackAfterFailure({
+              pr: currentPr,
+              failureMessage: message,
+            });
+            await updateRunRecord({
+              status: "completed",
+              phase: "code-owner-fallback.completed",
+              resolvedAgent: fallback.agent,
+              prompt: fallback.prompt,
+              metadata: {
+                ...(runRecord.metadata ?? {}),
+                defaultFailure: message,
+                codeOwnerFallback: {
+                  ...(isRecord(runRecord.metadata?.codeOwnerFallback) ? runRecord.metadata.codeOwnerFallback : {}),
+                  status: "completed",
+                  agent: fallback.agent,
+                  timeoutMs: CODE_OWNER_FALLBACK_TIMEOUT_MS,
+                  completedAt: this.now().toISOString(),
+                },
+              },
+              lastError: null,
+            });
+            await this.storage.updatePR(currentPr.id, {
+              status: "watching",
+              lastChecked: this.now().toISOString(),
+            });
+            return;
+          } catch (fallbackError) {
+            const fallbackMessage = summarizeUnknownError(fallbackError);
+            finalMessage = `${message}; code-owner fallback failed: ${fallbackMessage}`;
+            rethrowError = new Error(finalMessage);
+            await queueLog(currentPr.id, "error", `Code-owner fallback failed: ${fallbackMessage}`, {
+              phase: "code-owner-fallback",
+            });
+            await updateRunRecord({
+              phase: "code-owner-fallback.failed",
+              metadata: {
+                ...(runRecord.metadata ?? {}),
+                codeOwnerFallback: {
+                  ...(isRecord(runRecord.metadata?.codeOwnerFallback) ? runRecord.metadata.codeOwnerFallback : {}),
+                  status: "failed",
+                  failedAt: this.now().toISOString(),
+                  error: fallbackMessage,
+                },
+              },
+            });
+          }
+        }
 
         if (followUpTasks.length > 0) {
           const affectedIds = new Set(followUpTasks.map((item) => item.id));
@@ -4096,7 +4374,7 @@ export class PRBabysitter {
             if (isNonCritical) {
               return markWarning(item, `GitHub comment could not be posted: ${message}`);
             }
-            return markFailed(item, message);
+            return markFailed(item, finalMessage);
           });
           const updatedCounters = countDecisions(updatedItems);
           await this.storage.updatePR(currentPr.id, {
@@ -4114,13 +4392,22 @@ export class PRBabysitter {
           });
         }
       }
-      const failureMsg = error instanceof Error ? error.message : String(error);
-      log.warn({ err: failureMsg, prId }, "Babysitter failure");
+
+      await updateRunRecord({
+        status: "failed",
+        phase: runRecord.status === "failed"
+          ? runRecord.phase
+          : runRecord.phase.startsWith("code-owner-fallback")
+            ? "code-owner-fallback.failed"
+            : "run.failed",
+        lastError: finalMessage,
+      });
+      log.warn({ err: finalMessage, prId }, "Babysitter failure");
       if (error instanceof Error && error.stack) {
         log.debug({ stack: error.stack, prId }, "Babysitter failure stack");
       }
       if (options?.rethrowOnFailure && !isDependencyPreflightFailureMessage(message)) {
-        throw error;
+        throw rethrowError;
       }
     } finally {
       await logQueue;
