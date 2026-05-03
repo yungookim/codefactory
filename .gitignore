@@ -5,4 +5,4 @@ server/public
 vite.config.ts.*
 *.tar.gz
 .worktrees
-
+.gstack/qa-reports/screenshots/
