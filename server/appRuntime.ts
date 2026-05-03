@@ -816,11 +816,6 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     },
 
     async syncRepos() {
-      const runtime = await storage.getRuntimeState();
-      if (runtime.drainMode) {
-        throw new AppRuntimeError(409, "Drain mode is enabled. Sync-triggered runs are blocked until drain mode is disabled.");
-      }
-
       await watcherScheduler.runAndReportErrors();
       notifyChange();
       return { ok: true as const };

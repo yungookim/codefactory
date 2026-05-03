@@ -5,6 +5,7 @@ import { BackgroundJobQueue } from "./backgroundJobQueue";
 import { childLogger } from "./logger";
 
 const log = childLogger("jobs");
+const DRAIN_ALLOWED_KINDS: ReadonlySet<BackgroundJobKind> = new Set<BackgroundJobKind>(["sync_watched_repos"]);
 
 export type BackgroundJobHandler = (job: BackgroundJob) => Promise<void>;
 
@@ -22,6 +23,7 @@ export class BackgroundJobDispatcher {
   private readonly queue: BackgroundJobQueue;
   private readonly handlers: BackgroundJobHandlers;
   private readonly handledKinds: BackgroundJobKind[];
+  private readonly drainClaimableKinds: BackgroundJobKind[];
   private readonly workerId: string;
   private readonly pollIntervalMs: number;
   private readonly leaseMs: number;
@@ -55,6 +57,7 @@ export class BackgroundJobDispatcher {
     this.queue = params.queue;
     this.handlers = params.handlers;
     this.handledKinds = Object.keys(params.handlers) as BackgroundJobKind[];
+    this.drainClaimableKinds = this.handledKinds.filter((kind) => DRAIN_ALLOWED_KINDS.has(kind));
     this.workerId = params.workerId ?? randomUUID();
     this.pollIntervalMs = params.pollIntervalMs ?? 1_000;
     this.leaseMs = params.leaseMs ?? 30_000;
@@ -141,7 +144,8 @@ export class BackgroundJobDispatcher {
       }
 
       const runtimeState = await this.storage.getRuntimeState();
-      if (runtimeState.drainMode) {
+      const claimableKinds = runtimeState.drainMode ? this.drainClaimableKinds : this.handledKinds;
+      if (claimableKinds.length === 0) {
         return;
       }
 
@@ -151,7 +155,7 @@ export class BackgroundJobDispatcher {
         workerId: this.workerId,
         leaseMs: this.leaseMs,
         now: this.now(),
-        kinds: this.handledKinds,
+        kinds: claimableKinds,
       });
 
       if (!job) {

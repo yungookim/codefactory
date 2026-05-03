@@ -134,6 +134,51 @@ test("BackgroundJobDispatcher does not claim new jobs while drain mode is enable
   }
 });
 
+test("BackgroundJobDispatcher claims sync_watched_repos but not babysit_pr while drain mode is enabled", async () => {
+  const storage = new MemStorage();
+  const queue = new BackgroundJobQueue(storage);
+
+  await storage.updateRuntimeState({
+    drainMode: true,
+    drainRequestedAt: "2026-05-02T10:00:00.000Z",
+    drainReason: "maintenance",
+  });
+
+  const babysitJob = await queue.enqueue("babysit_pr", "pr-1", "babysit_pr:pr-1", { prId: "pr-1" });
+  const syncJob = await queue.enqueue("sync_watched_repos", "runtime:1", "sync_watched_repos", {});
+  let babysitHandled = 0;
+  let syncHandled = 0;
+  const dispatcher = new BackgroundJobDispatcher({
+    storage,
+    queue,
+    workerId: "dispatcher-1",
+    pollIntervalMs: 5,
+    leaseMs: 30_000,
+    heartbeatIntervalMs: 10,
+    handlers: {
+      babysit_pr: async () => {
+        babysitHandled += 1;
+      },
+      sync_watched_repos: async () => {
+        syncHandled += 1;
+      },
+    },
+  });
+
+  try {
+    await dispatcher.start();
+    await waitForCondition(() => syncHandled === 1);
+    assert.equal(await dispatcher.waitForIdle(250), true);
+
+    assert.equal(syncHandled, 1);
+    assert.equal(babysitHandled, 0);
+    assert.equal((await storage.getBackgroundJob(syncJob.id))?.status, "completed");
+    assert.equal((await storage.getBackgroundJob(babysitJob.id))?.status, "queued");
+  } finally {
+    dispatcher.stop();
+  }
+});
+
 test("BackgroundJobDispatcher waitForIdle reflects active queue handlers", async () => {
   const storage = new MemStorage();
   const queue = new BackgroundJobQueue(storage);
