@@ -247,7 +247,7 @@ oh-my-pr --no-log-file
 <li><strong>GitHub token management</strong> — Add, remove, and reorder saved tokens before falling back to <code>GITHUB_TOKEN</code> or <code>gh auth</code>.</li>
 <li><strong>Agent selection</strong> — Choose whether autonomous runs use Claude Code or OpenAI Codex.</li>
 <li><strong>Babysitter tuning</strong> — Control polling, batching, merge-conflict handling, release automation, and automatic docs assessment.</li>
-<li><strong>Runtime drain mode</strong> — Pause new automation runs from Settings while allowing in-flight runs to finish.</li>
+<li><strong>Runtime drain mode</strong> — Pause new background automation and manual agent-triggering actions from Settings while allowing in-flight work to finish. During drain mode, the dashboard disables Run now/apply, feedback retry, Ask Agent, manual Release, and release retry actions; matching API calls return <code>409</code> instead of queueing new agent work.</li>
 <li><strong>Ignored bots</strong> — Add or remove bot logins whose comments and reviews should be ignored.</li>
 <li><strong>PR comment branding</strong> — Toggle whether agent-authored GitHub PR comments link back to oh-my-pr and include the <code>Posted by oh-my-pr</code> footer.</li>
 <li><strong>GitHub progress replies</strong> — Toggle whether the babysitter posts public Accepted/running/completed status replies while working through review comments.</li>
@@ -286,6 +286,7 @@ oh-my-pr --no-log-file
 <h2>Manual Repository Releases</h2>
 <p>Each watched repository row in the dashboard includes a <strong>Release</strong> button. Pressing it queues a manual release run for the latest unreleased merged PR in that repository, using the same release evaluation, version bump, notes, and GitHub publishing flow as automatic release creation.</p>
 <p>Manual release runs are allowed even when <code>autoCreateReleases</code> is disabled, so you can keep automatic publishing off and still publish releases on demand. If the repository has no unreleased merged PRs, the API returns <code>409</code> and no release run is created.</p>
+<p>Runtime drain mode also blocks manual release creation and release retries until drain mode is disabled. Release work already in flight is allowed to finish.</p>
 <h2>App Update Banner</h2>
 <p>On builds where <code>APP_VERSION</code> is a stable semver string, the dashboard calls
 <code>GET /api/app-update</code> and compares the running version to the latest stable

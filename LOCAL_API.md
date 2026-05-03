@@ -328,6 +328,24 @@ new automation work.
 
 ---
 
+#### `POST /api/repos/release`
+
+Queue a manual release run for the latest unreleased merged PR in a watched
+repository. The route returns once the durable release job has been stored, not
+when the release finishes. Returns `409` when drain mode is active.
+
+**Body**
+```json
+{ "repo": "owner/repo" }
+```
+Accepts `"owner/repo"` slugs or full `https://github.com/owner/repo` URLs.
+
+**Response** `201` — [ReleaseRun object](#releaserun)
+**Response** `400` — invalid body or repository slug
+**Response** `409` — drain mode is active, or no unreleased merged PR exists
+
+---
+
 ### Pull Requests
 
 #### `GET /api/prs`
@@ -465,11 +483,13 @@ Valid values: `"accept"` | `"reject"` | `"flag"`
 #### `POST /api/prs/:id/feedback/:feedbackId/retry`
 
 Re-queue a failed or warned feedback item by scheduling another durable
-babysit pass for the PR.
+babysit pass for the PR. Returns `409` when drain mode is active; the feedback
+item is left unchanged and no babysit job is queued.
 
 **Response** `200` — updated [PR object](#pr)
 **Response** `404` — PR or feedback item not found
 **Response** `400` — item is not in a retryable state
+**Response** `409` — drain mode is active
 
 ---
 
@@ -488,7 +508,8 @@ List the full question/answer history for a PR.
 Ask the configured AI agent a question about the PR.  The question is stored
 immediately; a durable background job fills in the answer asynchronously. Both
 the question row and the queued answer job persist in SQLite, so pending
-questions survive app restarts.
+questions survive app restarts. Returns `409` when drain mode is active, before
+storing the question or queueing the answer job.
 
 **Body**
 ```json
@@ -497,6 +518,7 @@ questions survive app restarts.
 Maximum 2000 characters.
 
 **Response** `201` — [PRQuestion object](#prquestion) (answer will be `null` until the agent responds)
+**Response** `409` — drain mode is active
 
 ---
 
@@ -711,10 +733,14 @@ Enable or disable drain mode. When enabled, the dispatcher stops claiming new
 automation jobs but still claims `sync_watched_repos` jobs so repository status
 can refresh. Other queued rows remain intact in SQLite. Already-running
 handlers are allowed to finish, and `waitForIdle` also waits on any started
-babysitter or release work before reporting success. Endpoints that explicitly
-gate manual automation work, such as `POST /api/prs/:id/apply` and
-`POST /api/prs/:id/babysit`, return `409` while drain mode is active; other
-APIs may still enqueue work that remains pending until drain mode is disabled.
+babysitter or release work before reporting success.
+
+Manual agent-triggering endpoints return `409` instead of storing new work
+while drain mode is active. This includes dashboard **Run now**
+(`POST /api/prs/:id/apply`), `POST /api/prs/:id/babysit`, feedback retry,
+PR Q&A, manual repository release, and release retry. Drain-safe routes such
+as `POST /api/repos/sync` may still enqueue status refresh work that does not
+start new agent automation.
 
 **Body**
 ```json
@@ -787,11 +813,12 @@ Get one release run by its internal oh-my-pr ID.
 #### `POST /api/releases/:id/retry`
 
 Reset an existing release run to `detected` and queue it for durable
-reprocessing. The retry request itself is accepted during drain mode, but the
-queued job will not be claimed until drain mode is disabled.
+reprocessing. Returns `409` when drain mode is active; the release run is left
+unchanged and no release job is queued.
 
 **Response** `200` — updated [ReleaseRun object](#releaserun)
 **Response** `404` — not found
+**Response** `409` — drain mode is active
 
 ---
 
