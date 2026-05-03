@@ -655,6 +655,43 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     );
   };
 
+  const buildManualDrainBlockMessage = (runtimeState: RuntimeState): string => {
+    const base = "Drain mode is enabled. Manual runs are blocked until drain mode is disabled.";
+    return runtimeState.drainReason ? `${base} Reason: ${runtimeState.drainReason}` : base;
+  };
+
+  const rejectManualRunDuringDrain = async (
+    runtimeState: RuntimeState,
+    options: {
+      pr?: PR;
+      logMessageBase?: string;
+      metadata?: Record<string, unknown>;
+    } = {},
+  ): Promise<never> => {
+    const message = buildManualDrainBlockMessage(runtimeState);
+    const logMessageBase = options.logMessageBase ?? "Manual run blocked because drain mode is enabled";
+    const logMessage = runtimeState.drainReason
+      ? `${logMessageBase}. Reason: ${runtimeState.drainReason}`
+      : `${logMessageBase}.`;
+    const metadata = {
+      drainReason: runtimeState.drainReason,
+      drainRequestedAt: runtimeState.drainRequestedAt,
+      ...options.metadata,
+    };
+
+    if (options.pr) {
+      await storage.addLog(options.pr.id, "warn", logMessage, {
+        phase: "run",
+        metadata,
+      });
+      notifyChange();
+    } else {
+      log.warn(metadata, logMessageBase);
+    }
+
+    throw new AppRuntimeError(409, message);
+  };
+
   const runtime: AppRuntime = {
     async start() {
       if (started) {
@@ -734,6 +771,16 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
         drainRequestedAt: input.enabled ? new Date().toISOString() : null,
         drainReason: input.enabled ? input.reason ?? null : null,
       });
+
+      if (input.enabled) {
+        log.warn({
+          drainRequestedAt: updated.drainRequestedAt,
+          drainReason: updated.drainReason,
+          waitForIdle: Boolean(input.waitForIdle),
+        }, "Drain mode enabled");
+      } else {
+        log.info("Drain mode disabled");
+      }
 
       if (input.enabled && input.waitForIdle) {
         const drained = await waitForBackgroundIdle(input.timeoutMs ?? 120_000);
@@ -828,6 +875,14 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
       }
 
       const canonical = formatRepoSlug(parsedRepo);
+      const runtimeState = await storage.getRuntimeState();
+      if (runtimeState.drainMode) {
+        await rejectManualRunDuringDrain(runtimeState, {
+          logMessageBase: "Manual release run blocked because drain mode is enabled",
+          metadata: { repo: canonical },
+        });
+      }
+
       const release = await releaseManager.enqueueManualRepoRelease(canonical);
       if (!release) {
         throw new AppRuntimeError(409, `No unreleased merged pull requests found for ${canonical}`);
@@ -1004,7 +1059,10 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
       const pr = assertFound(await storage.getPR(id), "PR not found");
       const runtime = await storage.getRuntimeState();
       if (runtime.drainMode) {
-        throw new AppRuntimeError(409, "Drain mode is enabled. Manual runs are blocked until drain mode is disabled.");
+        await rejectManualRunDuringDrain(runtime, {
+          pr,
+          logMessageBase: "Manual babysitter run blocked because drain mode is enabled",
+        });
       }
 
       const config = await storage.getConfig();
@@ -1021,7 +1079,10 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
       const pr = assertFound(await storage.getPR(id), "PR not found");
       const runtime = await storage.getRuntimeState();
       if (runtime.drainMode) {
-        throw new AppRuntimeError(409, "Drain mode is enabled. Manual runs are blocked until drain mode is disabled.");
+        await rejectManualRunDuringDrain(runtime, {
+          pr,
+          logMessageBase: "Manual babysitter run blocked because drain mode is enabled",
+        });
       }
 
       const config = await storage.getConfig();
@@ -1050,6 +1111,25 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     },
 
     async retryFeedback(prId, feedbackId) {
+      const pr = assertFound(await storage.getPR(prId), "PR not found");
+      const item = pr.feedbackItems.find((candidate) => candidate.id === feedbackId);
+      if (!item) {
+        throw new AppRuntimeError(404, "Feedback item not found");
+      }
+
+      if (item.status !== "failed" && item.status !== "warning") {
+        throw new AppRuntimeError(400, "Only failed or warning items can be retried");
+      }
+
+      const runtimeState = await storage.getRuntimeState();
+      if (runtimeState.drainMode) {
+        await rejectManualRunDuringDrain(runtimeState, {
+          pr,
+          logMessageBase: "Manual feedback retry blocked because drain mode is enabled",
+          metadata: { feedbackId },
+        });
+      }
+
       const result = await babysitter.retryFeedbackItem(prId, feedbackId);
       if (result.kind === "pr_not_found") {
         throw new AppRuntimeError(404, "PR not found");
@@ -1086,8 +1166,16 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
         }
         throw error;
       }
-      const entry = await storage.addQuestion(prId, parsed.question);
 
+      const runtimeState = await storage.getRuntimeState();
+      if (runtimeState.drainMode) {
+        await rejectManualRunDuringDrain(runtimeState, {
+          pr,
+          logMessageBase: "Manual question run blocked because drain mode is enabled",
+        });
+      }
+
+      const entry = await storage.addQuestion(prId, parsed.question);
       try {
         await scheduleBackgroundJob(
           "answer_pr_question",
@@ -1178,6 +1266,18 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
     },
 
     async retryReleaseRun(id) {
+      const existing = assertFound(await storage.getReleaseRun(id), "Release run not found");
+      const runtimeState = await storage.getRuntimeState();
+      if (runtimeState.drainMode) {
+        await rejectManualRunDuringDrain(runtimeState, {
+          logMessageBase: "Manual release retry blocked because drain mode is enabled",
+          metadata: {
+            releaseRunId: id,
+            repo: existing.repo,
+          },
+        });
+      }
+
       const release = await releaseManager.retryReleaseRun(id);
       if (!release) {
         throw new AppRuntimeError(404, "Release run not found");

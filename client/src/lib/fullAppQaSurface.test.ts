@@ -300,6 +300,7 @@ test("dashboard keeps the QA-tested PR, repo, feedback, and side-panel workflows
     ["repo settings API", "/api/repos/settings"],
     ["activity API", "/api/activities"],
     ["config API", "/api/config"],
+    ["runtime API", "/api/runtime"],
     ["healing session API", "/api/healing-sessions"],
   ] satisfies SourceExpectation[]) {
     assertHasQueryKey(sourceFile, label, endpoint);
@@ -311,6 +312,15 @@ test("dashboard keeps the QA-tested PR, repo, feedback, and side-panel workflows
   assertHasApiRequest(sourceFile, "manual release mutation", "POST", "/api/repos/release");
   assertHasApiRequest(sourceFile, "failed activity clear mutation", "DELETE", "/api/activities/failed");
   assertHasApiRequest(sourceFile, "ask agent mutation", "POST", /`\/api\/prs\/\$\{prId\}\/questions`/);
+  assertHasTestId(sourceFile, "dashboard drain banner", "dashboard-drain-banner");
+  assertHasTestId(sourceFile, "dashboard drain reason", "dashboard-drain-reason");
+  assertHasTestId(sourceFile, "activity drain note", "activity-drain-note");
+  assertHasStringValue(sourceFile, "drain mode action label", "Paused by drain mode");
+  assertHasStringValue(sourceFile, "blocked manual copy", "Manual runs are blocked while global automation is paused.");
+  assertHasStringValue(sourceFile, "drained PR copy", "Background and manual runs are paused by drain mode.");
+  assertHasStringValue(sourceFile, "drained ask copy", "Ask Agent is paused by drain mode.");
+  assertHasStringValue(sourceFile, "queued drain copy", "Queued automation is paused until drain mode is disabled.");
+  assertHasExpression(sourceFile, "dashboard drain state", /\bglobalDrainMode\b/);
 });
 
 test("dashboard finds latest target activity without sorting the full activity list", async () => {

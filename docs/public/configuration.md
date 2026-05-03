@@ -63,7 +63,7 @@ The settings page in the dashboard provides a UI for:
 - **GitHub token management** — Add, remove, and reorder saved tokens before falling back to `GITHUB_TOKEN` or `gh auth`.
 - **Agent selection** — Choose whether autonomous runs use Claude Code or OpenAI Codex.
 - **Babysitter tuning** — Control polling, batching, merge-conflict handling, release automation, and automatic docs assessment.
-- **Runtime drain mode** — Pause new automation runs from Settings while allowing in-flight runs to finish.
+- **Runtime drain mode** — Pause new background automation and manual agent-triggering actions from Settings while allowing in-flight work to finish. During drain mode, the dashboard disables Run now/apply, feedback retry, Ask Agent, manual Release, and release retry actions; matching API calls return `409` instead of queueing new agent work.
 - **Ignored bots** — Add or remove bot logins whose comments and reviews should be ignored.
 - **PR comment branding** — Toggle whether agent-authored GitHub PR comments link back to oh-my-pr and include the `Posted by oh-my-pr` footer.
 - **GitHub progress replies** — Toggle whether the babysitter posts public Accepted/running/completed status replies while working through review comments.
@@ -90,6 +90,8 @@ PRs added directly by URL stay tracked regardless of a repo's `ownPrsOnly` setti
 Each watched repository row in the dashboard includes a **Release** button. Pressing it queues a manual release run for the latest unreleased merged PR in that repository, using the same release evaluation, version bump, notes, and GitHub publishing flow as automatic release creation.
 
 Manual release runs are allowed even when `autoCreateReleases` is disabled, so you can keep automatic publishing off and still publish releases on demand. If the repository has no unreleased merged PRs, the API returns `409` and no release run is created.
+
+Runtime drain mode also blocks manual release creation and release retries until drain mode is disabled. Release work already in flight is allowed to finish.
 
 ## App Update Banner
 

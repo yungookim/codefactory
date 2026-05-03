@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { NewPR } from "@shared/schema";
 import { createAppRuntime, mapMergedPullsToReleaseSummaries } from "./appRuntime";
+import { _resetRingBufferForTests, readRingBuffer } from "./logger";
 import { MemStorage } from "./memoryStorage";
 
 async function seedPR(storage: MemStorage, overrides: Partial<NewPR> = {}) {
@@ -98,6 +99,32 @@ test("runtime setWatchEnabled updates the PR and emits a change event", async ()
   } finally {
     unsubscribe();
   }
+});
+
+test("runtime setDrainMode logs enable and disable transitions", async () => {
+  const storage = new MemStorage();
+  const runtime = createAppRuntime({
+    storage,
+    startBackgroundServices: false,
+    startWatcher: false,
+  });
+
+  _resetRingBufferForTests();
+
+  await runtime.setDrainMode({
+    enabled: true,
+    reason: "Agent health check failed for codex",
+  });
+  await runtime.setDrainMode({
+    enabled: false,
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await new Promise<void>((resolve) => setTimeout(resolve, 30));
+
+  const ring = readRingBuffer().join("\n");
+  assert.match(ring, /Drain mode enabled/);
+  assert.match(ring, /Agent health check failed for codex/);
+  assert.match(ring, /Drain mode disabled/);
 });
 
 test("runtime askQuestion persists the question and enqueues a durable job", async () => {
