@@ -17,6 +17,13 @@ export class CancelBackgroundJobError extends Error {
   }
 }
 
+export class TerminalBackgroundJobError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TerminalBackgroundJobError";
+  }
+}
+
 export class BackgroundJobDispatcher {
   private readonly storage: IStorage;
   private readonly queue: BackgroundJobQueue;
@@ -280,6 +287,9 @@ export class BackgroundJobDispatcher {
   private resolveFailureAction(job: BackgroundJob, error: unknown): "cancel" | "retry" | "fail" {
     if (error instanceof CancelBackgroundJobError) {
       return "cancel";
+    }
+    if (error instanceof TerminalBackgroundJobError) {
+      return "fail";
     }
     return job.attemptCount < this.maxAttempts ? "retry" : "fail";
   }

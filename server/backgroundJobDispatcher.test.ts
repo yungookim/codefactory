@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BackgroundJobDispatcher, CancelBackgroundJobError } from "./backgroundJobDispatcher";
+import { BackgroundJobDispatcher, CancelBackgroundJobError, TerminalBackgroundJobError } from "./backgroundJobDispatcher";
 import { BackgroundJobQueue } from "./backgroundJobQueue";
 import { MemStorage } from "./memoryStorage";
 
@@ -304,6 +304,45 @@ test("BackgroundJobDispatcher retries transient handler errors before completing
     assert.equal(stored?.status, "completed");
     assert.equal(stored?.attemptCount, 2);
     assert.equal(stored?.lastError, null);
+  } finally {
+    dispatcher.stop();
+  }
+});
+
+test("BackgroundJobDispatcher fails terminal handler errors without retrying", async () => {
+  const storage = new MemStorage();
+  const queue = new BackgroundJobQueue(storage);
+  const job = await queue.enqueue("babysit_pr", "pr-1", "babysit_pr:pr-1", {
+    prId: "pr-1",
+  });
+
+  let attempts = 0;
+  const dispatcher = new BackgroundJobDispatcher({
+    storage,
+    queue,
+    workerId: "dispatcher-1",
+    pollIntervalMs: 5,
+    leaseMs: 30_000,
+    heartbeatIntervalMs: 10,
+    maxAttempts: 3,
+    retryBackoffMs: 0,
+    handlers: {
+      babysit_pr: async () => {
+        attempts += 1;
+        throw new TerminalBackgroundJobError("merge conflict repair failed twice");
+      },
+    },
+  });
+
+  try {
+    await dispatcher.start();
+    await waitForCondition(async () => (await storage.getBackgroundJob(job.id))?.status === "failed", 500);
+
+    const stored = await storage.getBackgroundJob(job.id);
+    assert.equal(attempts, 1);
+    assert.equal(stored?.status, "failed");
+    assert.equal(stored?.attemptCount, 1);
+    assert.match(stored?.lastError ?? "", /merge conflict repair failed twice/);
   } finally {
     dispatcher.stop();
   }

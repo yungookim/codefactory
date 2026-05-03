@@ -315,7 +315,7 @@ export default function Logs() {
               <span className="shrink-0 text-muted-foreground">{formatTime(r.time)}</span>
               <span className={`shrink-0 w-12 ${LEVEL_COLOR[r.level]}`}>{r.level}</span>
               {r.source && <span className="shrink-0 text-muted-foreground">[{r.source}]</span>}
-              <span className="grow">
+              <span className={`grow ${r.level === "error" || r.level === "fatal" ? "text-destructive" : ""}`}>
                 {r.msg}
                 {Object.keys(r.fields).length > 0 && (
                   <span className="text-muted-foreground"> {JSON.stringify(r.fields)}</span>

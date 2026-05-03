@@ -1,7 +1,7 @@
 import type { BackgroundJob, DeploymentPlatform } from "@shared/schema";
 import type { CodingAgent } from "./agentRunner";
-import type { PRBabysitter } from "./babysitter";
-import { CancelBackgroundJobError, type BackgroundJobHandlers } from "./backgroundJobDispatcher";
+import { TerminalBabysitterError, type PRBabysitter } from "./babysitter";
+import { CancelBackgroundJobError, TerminalBackgroundJobError, type BackgroundJobHandlers } from "./backgroundJobDispatcher";
 import { createAdapter } from "./deploymentAdapters";
 import type { DeploymentHealingManager } from "./deploymentHealingManager";
 import { runDeploymentHealingRepair } from "./deploymentHealingAgent";
@@ -69,7 +69,14 @@ export function createBackgroundJobHandlers(params: {
 
         const preferredAgent = readCodingAgentPayload(job, "preferredAgent")
           ?? (await storage.getConfig()).codingAgent;
-        await babysitter.runQueuedBabysitPR(pr.id, preferredAgent);
+        try {
+          await babysitter.runQueuedBabysitPR(pr.id, preferredAgent);
+        } catch (error) {
+          if (error instanceof TerminalBabysitterError) {
+            throw new TerminalBackgroundJobError(error.message);
+          }
+          throw error;
+        }
       }
       : undefined,
 
