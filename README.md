@@ -180,6 +180,7 @@ The dashboard is available at `http://localhost:5001` by default. All `/api/*` r
 | `npm run check` | Run TypeScript checks |
 | `npm run lint` | Run ESLint |
 | `npm run test` | Run the server test suite |
+| `npm run test:all` | Run server tests plus client library tests |
 | `npm run tauri:dev` | Start the Tauri desktop app in development |
 | `npm run tauri:build` | Build the Tauri desktop app |
 
