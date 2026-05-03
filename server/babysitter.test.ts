@@ -751,6 +751,100 @@ test("syncAndBabysitTrackedRepos skips terminal conflict repair failures for the
   assert.ok(logs.some((log) => log.phase === "watcher" && log.message.includes("failed twice")));
 });
 
+test("syncAndBabysitTrackedRepos does not repeat terminal conflict logs for PRs already in error", async () => {
+  const storage = new MemStorage();
+  const backgroundJobQueue = new BackgroundJobQueue(storage);
+  const pr = await storage.addPR({
+    number: 42,
+    title: "Same conflict",
+    repo: "octo/example",
+    branch: "feature/conflict",
+    author: "octocat",
+    url: "https://github.com/octo/example/pull/42",
+    status: "error",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+    watchEnabled: true,
+  });
+  const now = new Date().toISOString();
+  const checkedAt = "2026-05-03T12:00:00.000Z";
+  await storage.upsertAgentRun({
+    id: "terminal-conflict-run",
+    prId: pr.id,
+    preferredAgent: "codex",
+    resolvedAgent: "codex",
+    status: "failed",
+    phase: "run.failed",
+    prompt: null,
+    initialHeadSha: "head-same",
+    metadata: {
+      conflictRepairFailure: {
+        kind: "merge_conflict_repair",
+        headSha: "head-same",
+        baseRef: "main",
+        baseSha: "base-same",
+        conflictFiles: ["src/example.ts"],
+        reason: "codex left unresolved merge conflicts: src/example.ts",
+        firstSeenAt: now,
+        lastSeenAt: now,
+        count: 2,
+      },
+    },
+    lastError: "codex left unresolved merge conflicts: src/example.ts",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    makeWatcherGitHubService({
+      listOpenPullsForRepo: async () => [{
+        number: 42,
+        title: "Same conflict",
+        branch: "feature/conflict",
+        author: "octocat",
+        url: "https://github.com/octo/example/pull/42",
+        headSha: "head-same",
+        baseRef: "main",
+        baseSha: "base-same",
+      }],
+    }),
+    {
+      resolveAgent: async () => "codex",
+      ciPollIntervalMs: 0,
+      now: () => new Date(checkedAt),
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+    },
+    undefined,
+    async (...args) => backgroundJobQueue.enqueue(...args),
+  );
+
+  babysitter.babysitPR = async () => {
+    throw new Error("watcher should not invoke babysitPR directly when a scheduler is provided");
+  };
+
+  await babysitter.syncAndBabysitTrackedRepos();
+
+  const jobs = await storage.listBackgroundJobs({
+    kind: "babysit_pr",
+    targetId: pr.id,
+  });
+  const updated = await storage.getPR(pr.id);
+  const logs = await storage.getLogs(pr.id);
+
+  assert.equal(jobs.length, 0);
+  assert.equal(updated?.status, "error");
+  assert.equal(updated?.lastChecked, checkedAt);
+  assert.equal(logs.filter((log) => log.phase === "watcher" && log.message.includes("failed twice")).length, 0);
+});
+
 test("syncAndBabysitTrackedRepos resumes after terminal conflict repair when head or base changes", async () => {
   const storage = new MemStorage();
   const backgroundJobQueue = new BackgroundJobQueue(storage);
@@ -5523,6 +5617,7 @@ test("babysitPR records conflict repair failure when agent leaves conflict marke
     remoteHeadSha: "abc123",
   });
   let conflictDiffChecks = 0;
+  let gitGrepArgs: string[] | null = null;
   let commitAttempted = false;
 
   const babysitter = new PRBabysitter(
@@ -5557,16 +5652,15 @@ test("babysitPR records conflict repair failure when agent leaves conflict marke
         }
         if (command === "git" && args[0] === "diff" && args[1] === "--name-only" && args[2] === "--diff-filter=U") {
           conflictDiffChecks += 1;
-          if (conflictDiffChecks > 1) {
-            const cwd = String(opts?.cwd ?? worktreeRoot);
-            await mkdir(path.join(cwd, "src"), { recursive: true });
-            await writeFile(path.join(cwd, "src/conflict.ts"), "<<<<<<< HEAD\nconst value = 1;\n=======\nconst value = 2;\n>>>>>>> branch\n");
-          }
           return {
             code: 0,
             stdout: conflictDiffChecks === 1 ? "src/conflict.ts\n" : "",
             stderr: "",
           };
+        }
+        if (command === "git" && args[0] === "grep") {
+          gitGrepArgs = args;
+          return { code: 0, stdout: "src/conflict.ts\0", stderr: "" };
         }
         if (command === "git" && args[0] === "commit") {
           commitAttempted = true;
@@ -5583,6 +5677,7 @@ test("babysitPR records conflict repair failure when agent leaves conflict marke
   const currentRun = runs[0];
   const conflictMarker = currentRun?.metadata?.conflictRepairFailure as Record<string, unknown> | undefined;
 
+  assert.deepEqual(gitGrepArgs?.slice(-2), ["--", "src/conflict.ts"]);
   assert.equal(commitAttempted, false);
   assert.equal(updated?.status, "error");
   assert.equal(currentRun?.status, "failed");

@@ -66,9 +66,15 @@ function formatPollInterval(pollIntervalMs?: number): string {
 }
 
 function latestActivityForTarget(activities: ActivityItem[], targetId: string): ActivityItem | undefined {
-  return activities
-    .filter((activity) => activity.targetId === targetId)
-    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
+  return activities.reduce((latest, activity) => {
+    if (activity.targetId !== targetId) {
+      return latest;
+    }
+    if (!latest || Date.parse(activity.updatedAt) > Date.parse(latest.updatedAt)) {
+      return activity;
+    }
+    return latest;
+  }, undefined as ActivityItem | undefined);
 }
 
 function getPRFeedbackFailureReason(pr: PR): string | null {

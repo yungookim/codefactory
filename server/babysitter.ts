@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { access, readFile } from "fs/promises";
+import { access } from "fs/promises";
 import path from "path";
 import type { AgentRun, CheckSnapshot, FeedbackItem, HealingSession, PR } from "@shared/schema";
 import type { IStorage } from "./storage";
@@ -629,29 +629,33 @@ function normalizeConflictFiles(files: string[]): string[] {
   return Array.from(new Set(files.map((file) => file.trim()).filter(Boolean))).sort();
 }
 
-function isMissingFileError(error: unknown): boolean {
-  return isRecord(error) && error.code === "ENOENT";
-}
-
-async function findFilesWithConflictMarkers(worktreePath: string, files: string[]): Promise<string[]> {
-  const filesWithMarkers: string[] = [];
-  const markerPattern = /^(<<<<<<<|=======|>>>>>>>|\|\|\|\|\|\|\|)/m;
-
-  for (const file of normalizeConflictFiles(files)) {
-    try {
-      const content = await readFile(path.join(worktreePath, file), "utf8");
-      if (markerPattern.test(content)) {
-        filesWithMarkers.push(file);
-      }
-    } catch (error) {
-      if (isMissingFileError(error)) {
-        continue;
-      }
-      throw error;
-    }
+async function findFilesWithConflictMarkers(
+  runGitCommand: typeof runCommand,
+  worktreePath: string,
+  files: string[],
+): Promise<string[]> {
+  const normalizedFiles = normalizeConflictFiles(files);
+  if (normalizedFiles.length === 0) {
+    return [];
   }
 
-  return filesWithMarkers;
+  const markerPattern = "^(<<<<<<<|=======|>>>>>>>|\\|\\|\\|\\|\\|\\|\\|)";
+  const result = await runGitCommand(
+    "git",
+    ["grep", "-z", "-l", "-I", "-E", markerPattern, "--", ...normalizedFiles],
+    {
+      cwd: worktreePath,
+      timeoutMs: 5000,
+    },
+  );
+  if (result.code === 1) {
+    return [];
+  }
+  if (result.code !== 0) {
+    throw new Error(formatGitFailure("checking merge conflict markers", result));
+  }
+
+  return normalizeConflictFiles(result.stdout.split("\0"));
 }
 
 function buildTerminalConflictRepairReason(params: {
@@ -1904,29 +1908,34 @@ export class PRBabysitter {
           ? await this.findTerminalConflictRepairFailureForHead(local.id, pull.headSha, pull.baseSha)
           : null;
         if (terminalConflictFailure) {
-          const reason = buildTerminalConflictRepairReason({
-            conflictFiles: terminalConflictFailure.conflictFiles,
-            headSha: terminalConflictFailure.headSha,
-            baseRef: terminalConflictFailure.baseRef,
-            baseSha: terminalConflictFailure.baseSha,
-            lastReason: terminalConflictFailure.reason,
-          });
-          await this.storage.updatePR(local.id, {
-            status: "error",
-            lastChecked: this.now().toISOString(),
-          });
-          await this.storage.addLog(local.id, "warn", reason, {
-            phase: "watcher",
-            metadata: {
-              repo: repoSlug,
-              headSha: pull.headSha,
-              baseSha: pull.baseSha,
-              baseRef: pull.baseRef,
+          const lastChecked = this.now().toISOString();
+          if (local.status !== "error") {
+            const reason = buildTerminalConflictRepairReason({
               conflictFiles: terminalConflictFailure.conflictFiles,
-              count: terminalConflictFailure.count,
-              priorReason: terminalConflictFailure.reason,
-            },
-          });
+              headSha: terminalConflictFailure.headSha,
+              baseRef: terminalConflictFailure.baseRef,
+              baseSha: terminalConflictFailure.baseSha,
+              lastReason: terminalConflictFailure.reason,
+            });
+            await this.storage.updatePR(local.id, {
+              status: "error",
+              lastChecked,
+            });
+            await this.storage.addLog(local.id, "warn", reason, {
+              phase: "watcher",
+              metadata: {
+                repo: repoSlug,
+                headSha: pull.headSha,
+                baseSha: pull.baseSha,
+                baseRef: pull.baseRef,
+                conflictFiles: terminalConflictFailure.conflictFiles,
+                count: terminalConflictFailure.count,
+                priorReason: terminalConflictFailure.reason,
+              },
+            });
+          } else {
+            await this.storage.updatePR(local.id, { lastChecked });
+          }
           continue;
         }
 
@@ -3386,7 +3395,11 @@ export class PRBabysitter {
                 throw new Error(failureReason);
               }
 
-              const markerFiles = await findFilesWithConflictMarkers(worktreePath, normalizedConflictFiles);
+              const markerFiles = await findFilesWithConflictMarkers(
+                this.runtime.runCommand,
+                worktreePath,
+                normalizedConflictFiles,
+              );
               if (markerFiles.length > 0) {
                 const failureReason = `${agent} left merge conflict markers in ${markerFiles.join(", ")}`;
                 const failureCount = await recordConflictRepairFailure(markerFiles, failureReason);

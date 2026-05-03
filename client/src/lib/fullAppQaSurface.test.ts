@@ -132,6 +132,17 @@ function assertSourceDoesNotMatch(source: string, label: string, unexpected: Reg
   assert.ok(!unexpected.test(source), `Expected ${label} not to match ${unexpected}`);
 }
 
+function getFunctionText(sourceFile: ts.SourceFile, name: string) {
+  let functionText: string | undefined;
+  walk(sourceFile, (node) => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === name) {
+      functionText = node.getText(sourceFile);
+    }
+  });
+  assert.ok(functionText, `Expected ${name} function to exist`);
+  return functionText;
+}
+
 function assertHasJsxTag(sourceFile: ts.SourceFile, label: string, tagName: string) {
   let found = false;
   walk(sourceFile, (node) => {
@@ -300,6 +311,16 @@ test("dashboard keeps the QA-tested PR, repo, feedback, and side-panel workflows
   assertHasApiRequest(sourceFile, "manual release mutation", "POST", "/api/repos/release");
   assertHasApiRequest(sourceFile, "failed activity clear mutation", "DELETE", "/api/activities/failed");
   assertHasApiRequest(sourceFile, "ask agent mutation", "POST", /`\/api\/prs\/\$\{prId\}\/questions`/);
+});
+
+test("dashboard finds latest target activity without sorting the full activity list", async () => {
+  const { sourceFile } = await parseProjectFile("client/src/pages/dashboard.tsx");
+  const helper = getFunctionText(sourceFile, "latestActivityForTarget");
+
+  assert.match(helper, /\.reduce\(/);
+  assert.doesNotMatch(helper, /\.filter\(/);
+  assert.doesNotMatch(helper, /\.sort\(/);
+  assert.match(helper, /Date\.parse/);
 });
 
 test("settings keeps the QA-tested configuration, token, and runtime controls wired", async () => {
