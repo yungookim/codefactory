@@ -65,6 +65,26 @@ function formatPollInterval(pollIntervalMs?: number): string {
   return `${seconds}s`;
 }
 
+function latestActivityForTarget(activities: ActivityItem[], targetId: string): ActivityItem | undefined {
+  return activities.reduce((latest, activity) => {
+    if (activity.targetId !== targetId) {
+      return latest;
+    }
+    if (!latest || Date.parse(activity.updatedAt) > Date.parse(latest.updatedAt)) {
+      return activity;
+    }
+    return latest;
+  }, undefined as ActivityItem | undefined);
+}
+
+function getPRFeedbackFailureReason(pr: PR): string | null {
+  const failedItem = pr.feedbackItems.find((item) =>
+    (item.status === "failed" || item.status === "warning") && Boolean(item.statusReason),
+  );
+
+  return failedItem?.statusReason ?? null;
+}
+
 const WATCH_SCOPE_OPTIONS = [
   { value: "mine", label: "My PRs only" },
   { value: "team", label: "My PRs + teammates" },
@@ -204,7 +224,12 @@ function ActivityRow({ activity }: { activity: ActivityItem }) {
           <span className="block truncate text-[11px] leading-4 text-muted-foreground">{activity.detail}</span>
         )}
         {activity.status === "failed" && activity.lastError && (
-          <span className="block truncate text-[11px] leading-4 text-destructive">{activity.lastError}</span>
+          <span
+            className="block whitespace-pre-wrap break-words text-[11px] leading-4 text-destructive"
+            title={activity.lastError}
+          >
+            {activity.lastError}
+          </span>
         )}
       </span>
       {timeLabel && (
@@ -433,10 +458,12 @@ const PRRow = memo(function PRRow({
   pr,
   isSelected,
   onSelect,
+  failureMessage,
 }: {
   pr: PR;
   isSelected: boolean;
   onSelect: (id: string) => void;
+  failureMessage?: string | null;
 }) {
   const checkedAt = formatClock(pr.lastChecked);
   const watchEnabled = isPRWatchEnabled(pr);
@@ -482,6 +509,12 @@ const PRRow = memo(function PRRow({
               dotClassName="h-1.5 w-1.5"
               hintClassName="text-[10px] normal-case tracking-normal text-success-foreground/75"
             />
+          )}
+          {pr.status === "error" && failureMessage && (
+            <div className="mt-2 ml-[3.75rem] border border-destructive/40 bg-destructive/10 px-2 py-1 text-[11px] leading-4 text-destructive">
+              <span className="font-medium uppercase tracking-wider">Error:</span>{" "}
+              <span className="break-words">{failureMessage}</span>
+            </div>
           )}
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 pl-[3.75rem] text-[11px] text-muted-foreground">
             <a
@@ -551,6 +584,9 @@ function FeedbackRow({
 
   const createdAt = formatClock(item.createdAt);
   const collapsedByDefault = isFeedbackCollapsedByDefault(item.status);
+  const prominentStatusReason = (item.status === "failed" || item.status === "warning") && item.statusReason
+    ? item.statusReason
+    : null;
 
   return (
     <Collapsible.Root defaultOpen={!collapsedByDefault} className="border-b border-border">
@@ -571,6 +607,12 @@ function FeedbackRow({
               <span className="text-[11px] text-muted-foreground">{item.type.replace("_", " ")}</span>
               {createdAt && <span className="text-[11px] text-muted-foreground">{createdAt}</span>}
             </div>
+            {prominentStatusReason && (
+              <div className="mt-1 whitespace-pre-wrap break-words border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] leading-4 text-destructive">
+                <span className="font-medium uppercase tracking-wider">Failure reason:</span>{" "}
+                {prominentStatusReason}
+              </div>
+            )}
           </div>
           <div className="flex shrink-0 items-center gap-1">
             {!readOnly && (item.status === "failed" || item.status === "warning") && (
@@ -624,9 +666,16 @@ function FeedbackRow({
           ) : (
             <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-foreground/80">{item.body}</p>
           )}
-          {(item.statusReason || item.decisionReason) && (
-            <p className="mt-2 text-[11px] text-muted-foreground">
-              {item.statusReason || item.decisionReason}
+          {item.statusReason && !prominentStatusReason && (
+            <p className="mt-2 whitespace-pre-wrap break-words text-[11px] text-muted-foreground">
+              <span className="font-medium uppercase tracking-wider text-foreground/70">Status reason:</span>{" "}
+              {item.statusReason}
+            </p>
+          )}
+          {item.decisionReason && (
+            <p className="mt-2 whitespace-pre-wrap break-words text-[11px] text-muted-foreground">
+              <span className="font-medium uppercase tracking-wider text-foreground/70">Decision reason:</span>{" "}
+              {item.decisionReason}
             </p>
           )}
         </div>
@@ -692,7 +741,9 @@ function LogPanel({ prId }: { prId: string | null }) {
                     {log.phase && <span className="border border-border px-1 py-0">{log.phase}</span>}
                     {log.runId && <span className="normal-case text-foreground/45">run {log.runId.slice(0, 8)}</span>}
                   </div>
-                  <div className="mt-1 break-words text-foreground/75">{log.message}</div>
+                  <div className={`mt-1 break-words ${log.level === "error" ? "text-destructive" : "text-foreground/75"}`}>
+                    {log.message}
+                  </div>
                   {metadataText && (
                     <pre className="mt-1 whitespace-pre-wrap break-all text-[10px] text-muted-foreground">
                       {metadataText}
@@ -799,8 +850,14 @@ function HealingPanel({
   );
 }
 
-function RightPanel({ prId }: { prId: string | null }) {
+function RightPanel({ prId, prStatus }: { prId: string | null; prStatus?: PR["status"] | null }) {
   const [tab, setTab] = useState<"activity" | "ask">("ask");
+
+  useEffect(() => {
+    if (prStatus === "error") {
+      setTab("activity");
+    }
+  }, [prId, prStatus]);
 
   return (
     <div className="flex min-h-[24rem] w-full shrink-0 flex-col border-t border-border lg:min-h-0 lg:w-80 lg:border-l lg:border-t-0">
@@ -1051,6 +1108,10 @@ export default function Dashboard() {
 
   const selectedPR = displayedPRs.find((pr) => pr.id === selectedPRId) ?? null;
   const selectedPRWatchEnabled = selectedPR ? isPRWatchEnabled(selectedPR) : true;
+  const selectedFailedActivity = selectedPR ? latestActivityForTarget(activities.failed, selectedPR.id) : undefined;
+  const selectedPRErrorMessage = selectedPR?.status === "error"
+    ? selectedFailedActivity?.lastError ?? getPRFeedbackFailureReason(selectedPR) ?? "Automation stopped on this PR. Check the activity log for the full failure context."
+    : null;
   const repoAddControlsOpen = getRepoAddControlsOpen(addControlsOpen, repos.length);
 
   const addMutation = useMutation({
@@ -1526,6 +1587,11 @@ export default function Dashboard() {
                   pr={pr}
                   isSelected={pr.id === selectedPRId}
                   onSelect={setSelectedPRId}
+                  failureMessage={
+                    pr.status === "error"
+                      ? latestActivityForTarget(activities.failed, pr.id)?.lastError ?? getPRFeedbackFailureReason(pr)
+                      : null
+                  }
                 />
               ))
             )}
@@ -1610,6 +1676,15 @@ export default function Dashboard() {
                     hintClassName="text-[11px] normal-case tracking-normal text-success-foreground/75"
                   />
                 )}
+                {selectedPRErrorMessage && (
+                  <div
+                    className="mt-2 border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive"
+                    data-testid="selected-pr-error"
+                  >
+                    <div className="text-[10px] font-medium uppercase tracking-wider">Automation error</div>
+                    <div className="mt-1 whitespace-pre-wrap break-words">{selectedPRErrorMessage}</div>
+                  </div>
+                )}
                 <div className="text-[11px] text-muted-foreground">
                   {selectedPRWatchEnabled
                     ? "Background watcher syncs GitHub feedback and pushes approved fixes automatically."
@@ -1640,7 +1715,7 @@ export default function Dashboard() {
           )}
         </div>
 
-        <RightPanel prId={selectedPRId} />
+        <RightPanel prId={selectedPRId} prStatus={selectedPR?.status ?? null} />
       </div>
     </div>
   );

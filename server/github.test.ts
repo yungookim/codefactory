@@ -701,6 +701,7 @@ test("listOpenPullsForRepo retries transient GitHub connection resets", async ()
           },
           base: {
             ref: "main",
+            sha: "base123",
             repo: {
               full_name: "owner/repo",
               clone_url: "https://github.com/owner/repo.git",
@@ -719,6 +720,7 @@ test("listOpenPullsForRepo retries transient GitHub connection resets", async ()
 
   assert.equal(attempts, 2);
   assert.equal(pulls[0]?.number, 42);
+  assert.equal(pulls[0]?.baseSha, "base123");
 });
 
 test("fetchFeedbackItemsForPR keeps review bots that are not explicitly ignored", async () => {
@@ -1501,6 +1503,7 @@ test("fetchPullSummary falls back to the repo default branch when the base ref i
           user: { login: "alice" },
           base: {
             ref: null,
+            sha: "base124",
             repo: {
               full_name: "octo/example",
               clone_url: "https://github.com/octo/example.git",
@@ -1527,6 +1530,7 @@ test("fetchPullSummary falls back to the repo default branch when the base ref i
   );
 
   assert.equal(summary.baseRef, "develop");
+  assert.equal(summary.baseSha, "base124");
 });
 
 test("fetchPullCloseState falls back to the repo default branch when the base ref is missing", async () => {

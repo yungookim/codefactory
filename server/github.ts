@@ -42,6 +42,7 @@ export type GitHubPullSummary = {
   headRepoFullName: string;
   headRepoCloneUrl: string;
   baseRef: string;
+  baseSha: string;
   mergeable: boolean | null;
 };
 
@@ -1009,6 +1010,7 @@ export async function fetchPullSummary(
     headRepoFullName: pull.head?.repo?.full_name || `${parsed.owner}/${parsed.repo}`,
     headRepoCloneUrl: pull.head?.repo?.clone_url || `https://github.com/${parsed.owner}/${parsed.repo}.git`,
     baseRef,
+    baseSha: pull.base?.sha || "",
     mergeable: typeof pull.mergeable === "boolean" ? pull.mergeable : null,
   };
 }
@@ -1635,6 +1637,7 @@ export async function listOpenPullsForRepo(
     headRepoFullName: pull.head?.repo?.full_name || `${repo.owner}/${repo.repo}`,
     headRepoCloneUrl: pull.head?.repo?.clone_url || `https://github.com/${repo.owner}/${repo.repo}.git`,
     baseRef: pull.base?.ref || pull.base?.repo?.default_branch || "",
+    baseSha: pull.base?.sha || "",
     mergeable: null,
   }));
 }

@@ -77,6 +77,13 @@ const APP_REPOSITORY_LINK = `[${APP_NAME}](${APP_REPOSITORY_URL})`;
 export const APP_COMMENT_FOOTER = `Posted by ${APP_REPOSITORY_LINK}`;
 const AUDIT_TOKEN_PATTERN = /\bcodefactory-feedback:[^\s<>()[\]{}"']+/g;
 
+export class TerminalBabysitterError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TerminalBabysitterError";
+  }
+}
+
 type GitHubService = {
   addReactionToComment: typeof addReactionToComment;
   buildOctokit: typeof buildOctokit;
@@ -109,6 +116,7 @@ type ConflictRepairFailureMarker = {
   kind: typeof CONFLICT_REPAIR_FAILURE_KIND;
   headSha: string;
   baseRef: string;
+  baseSha: string;
   conflictFiles: string[];
   reason: string;
   firstSeenAt: string;
@@ -621,6 +629,51 @@ function normalizeConflictFiles(files: string[]): string[] {
   return Array.from(new Set(files.map((file) => file.trim()).filter(Boolean))).sort();
 }
 
+async function findFilesWithConflictMarkers(
+  runGitCommand: typeof runCommand,
+  worktreePath: string,
+  files: string[],
+): Promise<string[]> {
+  const normalizedFiles = normalizeConflictFiles(files);
+  if (normalizedFiles.length === 0) {
+    return [];
+  }
+
+  const markerPattern = "^(<<<<<<<|=======|>>>>>>>|\\|\\|\\|\\|\\|\\|\\|)";
+  const result = await runGitCommand(
+    "git",
+    ["grep", "-z", "-l", "-I", "-E", markerPattern, "--", ...normalizedFiles],
+    {
+      cwd: worktreePath,
+      timeoutMs: 5000,
+    },
+  );
+  if (result.code === 1) {
+    return [];
+  }
+  if (result.code !== 0) {
+    throw new Error(formatGitFailure("checking merge conflict markers", result));
+  }
+
+  return normalizeConflictFiles(result.stdout.split("\0"));
+}
+
+function buildTerminalConflictRepairReason(params: {
+  conflictFiles: string[];
+  headSha: string;
+  baseRef: string;
+  baseSha: string;
+  lastReason?: string;
+}): string {
+  const headLabel = params.headSha ? params.headSha.slice(0, 7) : "unknown head";
+  const baseLabel = params.baseSha
+    ? `${params.baseRef} (${params.baseSha.slice(0, 7)})`
+    : params.baseRef || "unknown base";
+  const files = params.conflictFiles.length > 0 ? params.conflictFiles.join(", ") : "the same conflict paths";
+  const suffix = params.lastReason ? ` Last failure: ${params.lastReason}` : "";
+  return `Merge conflict repair failed twice for ${files} at head ${headLabel} against base ${baseLabel}; stopping automatic babysitter runs until the PR head or base changes.${suffix}`;
+}
+
 function sameStrings(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
@@ -631,6 +684,7 @@ function readConflictRepairFailure(metadata: AgentRun["metadata"]): ConflictRepa
     || marker.kind !== CONFLICT_REPAIR_FAILURE_KIND
     || typeof marker.headSha !== "string"
     || typeof marker.baseRef !== "string"
+    || typeof marker.baseSha !== "string"
     || typeof marker.reason !== "string"
     || !Array.isArray(marker.conflictFiles)
   ) {
@@ -641,6 +695,7 @@ function readConflictRepairFailure(metadata: AgentRun["metadata"]): ConflictRepa
     kind: CONFLICT_REPAIR_FAILURE_KIND,
     headSha: marker.headSha,
     baseRef: marker.baseRef,
+    baseSha: marker.baseSha,
     conflictFiles: normalizeConflictFiles(marker.conflictFiles.filter((file): file is string => typeof file === "string")),
     reason: marker.reason,
     firstSeenAt: typeof marker.firstSeenAt === "string" ? marker.firstSeenAt : "",
@@ -1151,14 +1206,14 @@ export class PRBabysitter {
     return null;
   }
 
-  private async countConflictRepairFailures(prId: string, headSha: string, baseRef: string, conflictFiles: string[]): Promise<number> {
+  private async countConflictRepairFailures(prId: string, headSha: string, baseSha: string, conflictFiles: string[]): Promise<number> {
     const normalizedFiles = normalizeConflictFiles(conflictFiles);
     const failedRuns = await this.storage.listAgentRuns({ prId, status: "failed" });
     return failedRuns.reduce((count, run) => {
       const marker = readConflictRepairFailure(run.metadata);
       if (!marker
         || marker.headSha !== headSha
-        || marker.baseRef !== baseRef
+        || marker.baseSha !== baseSha
         || !sameStrings(marker.conflictFiles, normalizedFiles)
       ) {
         return count;
@@ -1171,7 +1226,7 @@ export class PRBabysitter {
   private async findLatestConflictRepairFailure(
     prId: string,
     headSha: string,
-    baseRef: string,
+    baseSha: string,
     conflictFiles: string[],
   ): Promise<ConflictRepairFailureMarker | null> {
     const normalizedFiles = normalizeConflictFiles(conflictFiles);
@@ -1182,13 +1237,60 @@ export class PRBabysitter {
       const marker = readConflictRepairFailure(run.metadata);
       if (!marker
         || marker.headSha !== headSha
-        || marker.baseRef !== baseRef
+        || marker.baseSha !== baseSha
         || !sameStrings(marker.conflictFiles, normalizedFiles)
       ) {
         continue;
       }
 
       return marker;
+    }
+
+    return null;
+  }
+
+  private async findTerminalConflictRepairFailureForHead(
+    prId: string,
+    headSha: string,
+    baseSha: string,
+  ): Promise<ConflictRepairFailureMarker | null> {
+    const failedRuns = (await this.storage.listAgentRuns({ prId, status: "failed" }))
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+    const grouped = new Map<string, { marker: ConflictRepairFailureMarker; count: number }>();
+
+    for (const run of failedRuns) {
+      const marker = readConflictRepairFailure(run.metadata);
+      if (!marker
+        || marker.headSha !== headSha
+        || marker.baseSha !== baseSha
+      ) {
+        continue;
+      }
+
+      const key = JSON.stringify(marker.conflictFiles);
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.count += 1;
+        existing.marker = {
+          ...existing.marker,
+          count: Math.max(existing.marker.count, marker.count, existing.count),
+        };
+      } else {
+        grouped.set(key, {
+          marker,
+          count: 1,
+        });
+      }
+    }
+
+    for (const group of Array.from(grouped.values())) {
+      const count = Math.max(group.count, group.marker.count);
+      if (count >= CONFLICT_REPAIR_RETRY_BUDGET) {
+        return {
+          ...group.marker,
+          count,
+        };
+      }
     }
 
     return null;
@@ -1801,6 +1903,41 @@ export class PRBabysitter {
               count: priorDependencyFailure.count,
             },
           });
+          continue;
+        }
+
+        const terminalConflictFailure = pull.headSha && pull.baseSha
+          ? await this.findTerminalConflictRepairFailureForHead(local.id, pull.headSha, pull.baseSha)
+          : null;
+        if (terminalConflictFailure) {
+          const lastChecked = this.now().toISOString();
+          if (local.status !== "error") {
+            const reason = buildTerminalConflictRepairReason({
+              conflictFiles: terminalConflictFailure.conflictFiles,
+              headSha: terminalConflictFailure.headSha,
+              baseRef: terminalConflictFailure.baseRef,
+              baseSha: terminalConflictFailure.baseSha,
+              lastReason: terminalConflictFailure.reason,
+            });
+            await this.storage.updatePR(local.id, {
+              status: "error",
+              lastChecked,
+            });
+            await this.storage.addLog(local.id, "warn", reason, {
+              phase: "watcher",
+              metadata: {
+                repo: repoSlug,
+                headSha: pull.headSha,
+                baseSha: pull.baseSha,
+                baseRef: pull.baseRef,
+                conflictFiles: terminalConflictFailure.conflictFiles,
+                count: terminalConflictFailure.count,
+                priorReason: terminalConflictFailure.reason,
+              },
+            });
+          } else {
+            await this.storage.updatePR(local.id, { lastChecked });
+          }
           continue;
         }
 
@@ -3113,13 +3250,13 @@ export class PRBabysitter {
                 const previousFailures = priorFailures ?? await this.countConflictRepairFailures(
                   pr.id,
                   pullSummary.headSha,
-                  pullSummary.baseRef,
+                  pullSummary.baseSha,
                   conflictFilesForMarker,
                 );
                 const previousFailure = await this.findLatestConflictRepairFailure(
                   pr.id,
                   pullSummary.headSha,
-                  pullSummary.baseRef,
+                  pullSummary.baseSha,
                   conflictFilesForMarker,
                 );
                 const failureFirstSeenAt = previousFailure?.firstSeenAt || seenAt;
@@ -3131,6 +3268,7 @@ export class PRBabysitter {
                       kind: CONFLICT_REPAIR_FAILURE_KIND,
                       headSha: pullSummary.headSha,
                       baseRef: pullSummary.baseRef,
+                      baseSha: pullSummary.baseSha,
                       conflictFiles: conflictFilesForMarker,
                       reason,
                       firstSeenAt: failureFirstSeenAt,
@@ -3140,16 +3278,23 @@ export class PRBabysitter {
                   },
                   phase,
                 });
+                return failureCount;
               };
 
               const priorConflictFailures = await this.countConflictRepairFailures(
                 pr.id,
                 pullSummary.headSha,
-                pullSummary.baseRef,
+                pullSummary.baseSha,
                 normalizedConflictFiles,
               );
               if (priorConflictFailures >= CONFLICT_REPAIR_RETRY_BUDGET) {
-                const reason = `Merge conflict repair retry budget exhausted for ${normalizedConflictFiles.join(", ")}`;
+                const reason = buildTerminalConflictRepairReason({
+                  conflictFiles: normalizedConflictFiles,
+                  headSha: pullSummary.headSha,
+                  baseRef: pullSummary.baseRef,
+                  baseSha: pullSummary.baseSha,
+                });
+                await recordConflictRepairFailure(normalizedConflictFiles, reason, "conflict.retry", priorConflictFailures);
                 await updateRunRecord({
                   status: "failed",
                   phase: "conflict.retry",
@@ -3164,11 +3309,12 @@ export class PRBabysitter {
                   metadata: {
                     headSha: pullSummary.headSha,
                     baseRef: pullSummary.baseRef,
+                    baseSha: pullSummary.baseSha,
                     conflictFiles: normalizedConflictFiles,
                     priorFailures: priorConflictFailures,
                   },
                 });
-                return;
+                throw new TerminalBabysitterError(reason);
               }
 
               const conflictStdout = createChunkLogger(pr.id, "conflict.agent", "stdout", "info");
@@ -3210,7 +3356,16 @@ export class PRBabysitter {
               if (conflictResult.code !== 0) {
                 const failureDetail = formatConciseFailureReason(conflictResult.stderr || conflictResult.stdout);
                 const failureReason = `${agent} failed to resolve merge conflicts: ${failureDetail}`;
-                await recordConflictRepairFailure(normalizedConflictFiles, failureReason, "conflict.agent", priorConflictFailures);
+                const failureCount = await recordConflictRepairFailure(normalizedConflictFiles, failureReason, "conflict.agent", priorConflictFailures);
+                if (failureCount >= CONFLICT_REPAIR_RETRY_BUDGET) {
+                  throw new TerminalBabysitterError(buildTerminalConflictRepairReason({
+                    conflictFiles: normalizedConflictFiles,
+                    headSha: pullSummary.headSha,
+                    baseRef: pullSummary.baseRef,
+                    baseSha: pullSummary.baseSha,
+                    lastReason: failureReason,
+                  }));
+                }
                 throw new Error(`${agent} failed to resolve merge conflicts (${conflictResult.code}): ${failureDetail}`);
               }
 
@@ -3229,7 +3384,36 @@ export class PRBabysitter {
               const unresolvedFiles = normalizeConflictFiles(unresolvedAfterAgent.stdout.trim().split("\n"));
               if (unresolvedFiles.length > 0) {
                 const failureReason = `${agent} left unresolved merge conflicts: ${unresolvedFiles.join(", ")}`;
-                await recordConflictRepairFailure(unresolvedFiles, failureReason);
+                const failureCount = await recordConflictRepairFailure(unresolvedFiles, failureReason);
+                if (failureCount >= CONFLICT_REPAIR_RETRY_BUDGET) {
+                  throw new TerminalBabysitterError(buildTerminalConflictRepairReason({
+                    conflictFiles: unresolvedFiles,
+                    headSha: pullSummary.headSha,
+                    baseRef: pullSummary.baseRef,
+                    baseSha: pullSummary.baseSha,
+                    lastReason: failureReason,
+                  }));
+                }
+                throw new Error(failureReason);
+              }
+
+              const markerFiles = await findFilesWithConflictMarkers(
+                this.runtime.runCommand,
+                worktreePath,
+                normalizedConflictFiles,
+              );
+              if (markerFiles.length > 0) {
+                const failureReason = `${agent} left merge conflict markers in ${markerFiles.join(", ")}`;
+                const failureCount = await recordConflictRepairFailure(markerFiles, failureReason);
+                if (failureCount >= CONFLICT_REPAIR_RETRY_BUDGET) {
+                  throw new TerminalBabysitterError(buildTerminalConflictRepairReason({
+                    conflictFiles: markerFiles,
+                    headSha: pullSummary.headSha,
+                    baseRef: pullSummary.baseRef,
+                    baseSha: pullSummary.baseSha,
+                    lastReason: failureReason,
+                  }));
+                }
                 throw new Error(failureReason);
               }
 
@@ -3887,7 +4071,7 @@ export class PRBabysitter {
       const message = error instanceof Error ? error.message : String(error);
       await updateRunRecord({
         status: "failed",
-        phase: "run.failed",
+        phase: runRecord.status === "failed" ? runRecord.phase : "run.failed",
         lastError: message,
       });
       const currentPr = await this.storage.getPR(prId);
@@ -3921,12 +4105,12 @@ export class PRBabysitter {
             rejected: updatedCounters.rejected,
             flagged: updatedCounters.flagged,
             status: isNonCritical ? "watching" : "error",
-            lastChecked: new Date().toISOString(),
+            lastChecked: this.now().toISOString(),
           });
         } else {
           await this.storage.updatePR(currentPr.id, {
             status: isNonCritical ? "watching" : "error",
-            lastChecked: new Date().toISOString(),
+            lastChecked: this.now().toISOString(),
           });
         }
       }

@@ -48,6 +48,7 @@ function makePullSummary(pr: { url: string }, overrides?: Record<string, unknown
     headRepoFullName: "alex-morgan-o/lolodex",
     headRepoCloneUrl: "https://github.com/alex-morgan-o/lolodex.git",
     baseRef: "main",
+    baseSha: "base123",
     mergeable: true as boolean | null,
     ...overrides,
   };
@@ -115,6 +116,10 @@ function makeGitRunCommand(params?: {
 
     if (args[0] === "-C" && args[2] === "worktree" && args[3] === "remove") {
       return { code: 0, stdout: "worktree removed\n", stderr: "" };
+    }
+
+    if (args[0] === "grep" && args[1] === "-n" && args[2] === "-E") {
+      return { code: 1, stdout: "", stderr: "" };
     }
 
     return { code: 0, stdout: "", stderr: "" };
@@ -540,6 +545,9 @@ test("syncAndBabysitTrackedRepos enqueues babysit_pr jobs when a background sche
         branch: "feature/example",
         author: "octocat",
         url: "https://github.com/octo/example/pull/42",
+        headSha: "head123",
+        baseRef: "main",
+        baseSha: "base123",
       }],
     }),
     {
@@ -683,6 +691,8 @@ test("syncAndBabysitTrackedRepos skips same-head dependency preflight failures",
         author: "octocat",
         url: "https://github.com/octo/example/pull/42",
         headSha: "head-same",
+        baseRef: "main",
+        baseSha: "base123",
       }],
     }),
     {
@@ -709,6 +719,290 @@ test("syncAndBabysitTrackedRepos skips same-head dependency preflight failures",
   const logs = await storage.getLogs(pr.id);
   assert.equal(jobs.length, 0);
   assert.ok(logs.some((log) => log.message.includes("Dependency preflight previously failed")));
+});
+
+test("syncAndBabysitTrackedRepos skips terminal conflict repair failures for the same head and base", async () => {
+  const storage = new MemStorage();
+  const backgroundJobQueue = new BackgroundJobQueue(storage);
+  const pr = await storage.addPR({
+    number: 42,
+    title: "Same conflict",
+    repo: "octo/example",
+    branch: "feature/conflict",
+    author: "octocat",
+    url: "https://github.com/octo/example/pull/42",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+    watchEnabled: true,
+  });
+  const now = new Date().toISOString();
+  await storage.upsertAgentRun({
+    id: "terminal-conflict-run",
+    prId: pr.id,
+    preferredAgent: "codex",
+    resolvedAgent: "codex",
+    status: "failed",
+    phase: "run.failed",
+    prompt: null,
+    initialHeadSha: "head-same",
+    metadata: {
+      conflictRepairFailure: {
+        kind: "merge_conflict_repair",
+        headSha: "head-same",
+        baseRef: "main",
+        baseSha: "base-same",
+        conflictFiles: ["src/example.ts"],
+        reason: "codex left unresolved merge conflicts: src/example.ts",
+        firstSeenAt: now,
+        lastSeenAt: now,
+        count: 2,
+      },
+    },
+    lastError: "codex left unresolved merge conflicts: src/example.ts",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    makeWatcherGitHubService({
+      listOpenPullsForRepo: async () => [{
+        number: 42,
+        title: "Same conflict",
+        branch: "feature/conflict",
+        author: "octocat",
+        url: "https://github.com/octo/example/pull/42",
+        headSha: "head-same",
+        baseRef: "main",
+        baseSha: "base-same",
+      }],
+    }),
+    {
+      resolveAgent: async () => "codex",
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+    },
+    undefined,
+    async (...args) => backgroundJobQueue.enqueue(...args),
+  );
+
+  babysitter.babysitPR = async () => {
+    throw new Error("watcher should not invoke babysitPR directly when a scheduler is provided");
+  };
+
+  await babysitter.syncAndBabysitTrackedRepos();
+
+  const jobs = await storage.listBackgroundJobs({
+    kind: "babysit_pr",
+    targetId: pr.id,
+  });
+  const updated = await storage.getPR(pr.id);
+  const logs = await storage.getLogs(pr.id);
+
+  assert.equal(jobs.length, 0);
+  assert.equal(updated?.status, "error");
+  assert.ok(logs.some((log) => log.phase === "watcher" && log.message.includes("failed twice")));
+});
+
+test("syncAndBabysitTrackedRepos does not repeat terminal conflict logs for PRs already in error", async () => {
+  const storage = new MemStorage();
+  const backgroundJobQueue = new BackgroundJobQueue(storage);
+  const pr = await storage.addPR({
+    number: 42,
+    title: "Same conflict",
+    repo: "octo/example",
+    branch: "feature/conflict",
+    author: "octocat",
+    url: "https://github.com/octo/example/pull/42",
+    status: "error",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+    watchEnabled: true,
+  });
+  const now = new Date().toISOString();
+  const checkedAt = "2026-05-03T12:00:00.000Z";
+  await storage.upsertAgentRun({
+    id: "terminal-conflict-run",
+    prId: pr.id,
+    preferredAgent: "codex",
+    resolvedAgent: "codex",
+    status: "failed",
+    phase: "run.failed",
+    prompt: null,
+    initialHeadSha: "head-same",
+    metadata: {
+      conflictRepairFailure: {
+        kind: "merge_conflict_repair",
+        headSha: "head-same",
+        baseRef: "main",
+        baseSha: "base-same",
+        conflictFiles: ["src/example.ts"],
+        reason: "codex left unresolved merge conflicts: src/example.ts",
+        firstSeenAt: now,
+        lastSeenAt: now,
+        count: 2,
+      },
+    },
+    lastError: "codex left unresolved merge conflicts: src/example.ts",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    makeWatcherGitHubService({
+      listOpenPullsForRepo: async () => [{
+        number: 42,
+        title: "Same conflict",
+        branch: "feature/conflict",
+        author: "octocat",
+        url: "https://github.com/octo/example/pull/42",
+        headSha: "head-same",
+        baseRef: "main",
+        baseSha: "base-same",
+      }],
+    }),
+    {
+      resolveAgent: async () => "codex",
+      ciPollIntervalMs: 0,
+      now: () => new Date(checkedAt),
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+    },
+    undefined,
+    async (...args) => backgroundJobQueue.enqueue(...args),
+  );
+
+  babysitter.babysitPR = async () => {
+    throw new Error("watcher should not invoke babysitPR directly when a scheduler is provided");
+  };
+
+  await babysitter.syncAndBabysitTrackedRepos();
+
+  const jobs = await storage.listBackgroundJobs({
+    kind: "babysit_pr",
+    targetId: pr.id,
+  });
+  const updated = await storage.getPR(pr.id);
+  const logs = await storage.getLogs(pr.id);
+
+  assert.equal(jobs.length, 0);
+  assert.equal(updated?.status, "error");
+  assert.equal(updated?.lastChecked, checkedAt);
+  assert.equal(logs.filter((log) => log.phase === "watcher" && log.message.includes("failed twice")).length, 0);
+});
+
+test("syncAndBabysitTrackedRepos resumes after terminal conflict repair when head or base changes", async () => {
+  const storage = new MemStorage();
+  const backgroundJobQueue = new BackgroundJobQueue(storage);
+  const now = new Date().toISOString();
+  const prs = await Promise.all([43, 44].map((number) => storage.addPR({
+    number,
+    title: `Conflict changed ${number}`,
+    repo: "octo/example",
+    branch: `feature/conflict-${number}`,
+    author: "octocat",
+    url: `https://github.com/octo/example/pull/${number}`,
+    status: "error",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+    watchEnabled: true,
+  })));
+
+  for (const pr of prs) {
+    await storage.upsertAgentRun({
+      id: `terminal-conflict-run-${pr.number}`,
+      prId: pr.id,
+      preferredAgent: "codex",
+      resolvedAgent: "codex",
+      status: "failed",
+      phase: "run.failed",
+      prompt: null,
+      initialHeadSha: "head-old",
+      metadata: {
+        conflictRepairFailure: {
+          kind: "merge_conflict_repair",
+          headSha: "head-old",
+          baseRef: "main",
+          baseSha: "base-old",
+          conflictFiles: ["src/example.ts"],
+          reason: "codex left unresolved merge conflicts: src/example.ts",
+          firstSeenAt: now,
+          lastSeenAt: now,
+          count: 2,
+        },
+      },
+      lastError: "codex left unresolved merge conflicts: src/example.ts",
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  const babysitter = new PRBabysitter(
+    storage,
+    makeWatcherGitHubService({
+      listOpenPullsForRepo: async () => [
+        {
+          number: 43,
+          title: "Conflict changed 43",
+          branch: "feature/conflict-43",
+          author: "octocat",
+          url: "https://github.com/octo/example/pull/43",
+          headSha: "head-new",
+          baseRef: "main",
+          baseSha: "base-old",
+        },
+        {
+          number: 44,
+          title: "Conflict changed 44",
+          branch: "feature/conflict-44",
+          author: "octocat",
+          url: "https://github.com/octo/example/pull/44",
+          headSha: "head-old",
+          baseRef: "main",
+          baseSha: "base-new",
+        },
+      ],
+    }),
+    {
+      resolveAgent: async () => "codex",
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+    },
+    undefined,
+    async (...args) => backgroundJobQueue.enqueue(...args),
+  );
+
+  babysitter.babysitPR = async () => {
+    throw new Error("watcher should not invoke babysitPR directly when a scheduler is provided");
+  };
+
+  await babysitter.syncAndBabysitTrackedRepos();
+
+  const queued = await storage.listBackgroundJobs({ kind: "babysit_pr", status: "queued" });
+
+  assert.deepEqual(queued.map((job) => job.targetId).sort(), prs.map((pr) => pr.id).sort());
 });
 
 test("syncAndBabysitTrackedRepos repairs missing review-thread metadata on archived PRs", async () => {
@@ -4976,6 +5270,7 @@ test("babysitPR escalates repeated conflict repair for same head and unresolved 
           kind: "merge_conflict_repair",
           headSha: "abc123",
           baseRef: "main",
+          baseSha: "base123",
           conflictFiles: ["src/example.ts"],
           reason: "Agent left unresolved merge conflicts: src/example.ts",
           firstSeenAt: now,
@@ -5051,8 +5346,8 @@ test("babysitPR escalates repeated conflict repair for same head and unresolved 
   assert.equal(updated?.lastChecked, retryCheckedAt);
   assert.equal(currentRun?.status, "failed");
   assert.equal(currentRun?.phase, "conflict.retry");
-  assert.match(currentRun?.lastError ?? "", /retry budget exhausted/i);
-  assert.ok(logs.some((log) => log.phase === "conflict.retry" && log.message.includes("retry budget exhausted")));
+  assert.match(currentRun?.lastError ?? "", /failed twice/i);
+  assert.ok(logs.some((log) => log.phase === "conflict.retry" && log.message.includes("failed twice")));
 
   delete process.env.CODEFACTORY_HOME;
 });
@@ -5280,6 +5575,7 @@ test("babysitPR errors when conflict resolution agent fails", async () => {
         kind: "merge_conflict_repair",
         headSha: "abc123",
         baseRef: "main",
+        baseSha: "base123",
         conflictFiles: ["src/conflict.ts"],
         reason: "Agent failed to resolve merge conflicts: agent crashed",
         firstSeenAt,
@@ -5351,6 +5647,103 @@ test("babysitPR errors when conflict resolution agent fails", async () => {
   assert.equal(conflictMarker?.count, 2);
   assert.match(String(conflictMarker?.reason ?? ""), /codex/);
   assert.ok(logs.some((log) => log.level === "error" && log.message.includes("merge conflicts")));
+
+  delete process.env.CODEFACTORY_HOME;
+});
+
+test("babysitPR records conflict repair failure when agent leaves conflict markers", async () => {
+  const storage = new MemStorage();
+  const pr = await storage.addPR({
+    number: 106,
+    title: "Verbose PR",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+
+  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "codefactory-home-"));
+  process.env.CODEFACTORY_HOME = worktreeRoot;
+  const pullSummary = makePullSummary(pr, { mergeable: false });
+  const gitRunner = makeGitRunCommand({
+    localHeadSha: "abc123",
+    remoteHeadSha: "abc123",
+  });
+  let conflictDiffChecks = 0;
+  let gitGrepArgs: string[] | null = null;
+  let commitAttempted = false;
+
+  const babysitter = new PRBabysitter(
+    storage,
+    {
+      buildOctokit: async () => ({}) as never,
+      fetchFeedbackItemsForPR: async () => [],
+      fetchPullSummary: async () => pullSummary,
+      listFailingStatuses: async () => [],
+      checkCISettled: async () => true,
+      listOpenPullsForRepo: async () => [],
+      postFollowUpForFeedbackItem: async () => undefined,
+      resolveReviewThread: async () => undefined,
+      resolveGitHubAuthToken: async () => "test-token",
+      addReactionToComment: async () => {},
+      postStatusReplyForFeedbackItem: async () => null,
+      updateStatusReply: async () => {},
+    },
+    {
+      resolveAgent: async () => "codex",
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async () => ({
+        needsFix: false,
+        reason: "No fix needed",
+      }),
+      applyFixesWithAgent: async () => {
+        return { code: 0, stdout: "resolved\n", stderr: "" };
+      },
+      runCommand: async (command: string, args: string[], opts?: Record<string, unknown>) => {
+        if (command === "git" && args[0] === "merge") {
+          return { code: 1, stdout: "", stderr: "CONFLICT" };
+        }
+        if (command === "git" && args[0] === "diff" && args[1] === "--name-only" && args[2] === "--diff-filter=U") {
+          conflictDiffChecks += 1;
+          return {
+            code: 0,
+            stdout: conflictDiffChecks === 1 ? "src/conflict.ts\n" : "",
+            stderr: "",
+          };
+        }
+        if (command === "git" && args[0] === "grep") {
+          gitGrepArgs = args;
+          return { code: 0, stdout: "src/conflict.ts\0", stderr: "" };
+        }
+        if (command === "git" && args[0] === "commit") {
+          commitAttempted = true;
+        }
+        return gitRunner(command, args, opts);
+      },
+    },
+  );
+
+  await babysitter.babysitPR(pr.id, "codex");
+
+  const updated = await storage.getPR(pr.id);
+  const runs = await storage.listAgentRuns({ prId: pr.id });
+  const currentRun = runs[0];
+  const conflictMarker = currentRun?.metadata?.conflictRepairFailure as Record<string, unknown> | undefined;
+
+  assert.deepEqual(gitGrepArgs?.slice(-2), ["--", "src/conflict.ts"]);
+  assert.equal(commitAttempted, false);
+  assert.equal(updated?.status, "error");
+  assert.equal(currentRun?.status, "failed");
+  assert.match(currentRun?.lastError ?? "", /left merge conflict markers/i);
+  assert.deepEqual(conflictMarker?.conflictFiles, ["src/conflict.ts"]);
 
   delete process.env.CODEFACTORY_HOME;
 });

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CancelBackgroundJobError } from "./backgroundJobDispatcher";
+import { TerminalBabysitterError } from "./babysitter";
+import { CancelBackgroundJobError, TerminalBackgroundJobError } from "./backgroundJobDispatcher";
 import { createBackgroundJobHandlers } from "./backgroundJobHandlers";
 import { BackgroundJobQueue } from "./backgroundJobQueue";
 import { MemStorage } from "./memoryStorage";
@@ -135,6 +136,34 @@ test("babysit_pr handler cancels jobs whose PR row is missing", async () => {
     handlers.babysit_pr!(job),
     (error: unknown) => error instanceof CancelBackgroundJobError
       && error.message.includes("missing-pr"),
+  );
+});
+
+test("babysit_pr handler marks terminal babysitter failures as terminal background failures", async () => {
+  const storage = new MemStorage();
+  const prId = await seedPR(storage);
+  const queue = new BackgroundJobQueue(storage);
+  const job = await queue.enqueue(
+    "babysit_pr",
+    prId,
+    `babysit_pr:${prId}`,
+    { preferredAgent: "codex" },
+  );
+
+  const handlers = createBackgroundJobHandlers({
+    storage,
+    babysitter: {
+      syncAndBabysitTrackedRepos: async () => undefined,
+      runQueuedBabysitPR: async () => {
+        throw new TerminalBabysitterError("merge conflict repair failed twice");
+      },
+    },
+  });
+
+  await assert.rejects(
+    handlers.babysit_pr!(job),
+    (error: unknown) => error instanceof TerminalBackgroundJobError
+      && error.message.includes("failed twice"),
   );
 });
 
