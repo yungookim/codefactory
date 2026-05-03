@@ -4887,6 +4887,88 @@ test("runQueuedBabysitPR falls back during agent apply when enabled", async () =
   assert.ok(logs.some((log) => log.level === "warn" && log.message.includes("Falling back from claude to codex")));
 });
 
+test("runQueuedBabysitPR launches code-owner fallback after the default run fails", async () => {
+  const storage = new MemStorage();
+  await storage.updateConfig({ autoUpdateDocs: false });
+  const pr = await storage.addPR({
+    number: 106,
+    title: "Verbose PR",
+    repo: "alex-morgan-o/lolodex",
+    branch: "feature/verbose",
+    author: "octocat",
+    url: "https://github.com/alex-morgan-o/lolodex/pull/106",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "codefactory-home-"));
+  process.env.CODEFACTORY_HOME = worktreeRoot;
+  const applyCalls: Array<{
+    agent: string;
+    prompt: string;
+    timeoutMs?: number;
+  }> = [];
+
+  try {
+    const babysitter = new PRBabysitter(
+      storage,
+      makeWatcherGitHubService({
+        fetchPullSummary: async () => makePullSummary(pr),
+        listFailingStatuses: async () => [{
+          context: "build",
+          description: "TypeScript compilation failed",
+          targetUrl: "https://github.com/octo/example/actions/runs/1",
+        }],
+      }),
+      {
+        resolveAgent: async () => "claude",
+        ciPollIntervalMs: 0,
+        evaluateFixNecessityWithAgent: async () => ({
+          needsFix: true,
+          reason: "Build failure needs a code change",
+        }),
+        applyFixesWithAgent: async ({ agent, prompt, timeoutMs }) => {
+          applyCalls.push({ agent, prompt, timeoutMs });
+          if (applyCalls.length === 1) {
+            return { code: 1, stdout: "", stderr: "default run failed" };
+          }
+
+          return { code: 0, stdout: "fallback handled the PR", stderr: "" };
+        },
+        runCommand: makeGitRunCommand({
+          localHeadSha: "def456",
+          remoteHeadSha: "def456",
+        }),
+      },
+    );
+
+    await babysitter.runQueuedBabysitPR(pr.id, "claude");
+  } finally {
+    delete process.env.CODEFACTORY_HOME;
+  }
+
+  const updated = await storage.getPR(pr.id);
+  const [run] = await storage.listAgentRuns({ prId: pr.id });
+  const logs = await storage.getLogs(pr.id);
+
+  assert.equal(applyCalls.length, 2);
+  assert.match(applyCalls[0]?.prompt ?? "", /Approved status-check tasks/);
+  assert.match(applyCalls[1]?.prompt ?? "", /^https:\/\/github\.com\/alex-morgan-o\/lolodex\/pull\/106/m);
+  assert.match(applyCalls[1]?.prompt ?? "", /You are acting as code owner of this pull request/);
+  assert.match(applyCalls[1]?.prompt ?? "", /Reply directly to the GitHub comment\/thread/);
+  assert.equal(applyCalls[1]?.timeoutMs, 30 * 60 * 1000);
+  assert.equal(updated?.status, "watching");
+  assert.equal(run?.status, "completed");
+  assert.equal(run?.phase, "code-owner-fallback.completed");
+  assert.match(String(run?.metadata?.defaultFailure ?? ""), /default run failed/);
+  assert.ok(logs.some((log) => log.phase === "code-owner-fallback" && log.message.includes("Launching claude code-owner fallback")));
+});
+
 test("babysitPR resolves lingering review threads without reposting an existing audit trail", async () => {
   const storage = new MemStorage();
   await storage.updateConfig({ autoUpdateDocs: false });
