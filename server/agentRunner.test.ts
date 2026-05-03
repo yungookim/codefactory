@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { chmod, copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { checkAgentHealth, evaluateFixNecessityWithAgent, resolveAgent, resolveCommandPath, runCommand } from "./agentRunner";
+import { applyFixesWithAgent, checkAgentHealth, evaluateFixNecessityWithAgent, resolveAgent, resolveCommandPath, runCommand } from "./agentRunner";
 
 test("runCommand reports a timeout even when the child exits 0 after SIGTERM", async () => {
   const result = await runCommand(
@@ -107,6 +107,83 @@ test("checkAgentHealth surfaces actionable codex session permission errors", asy
       assert.match(result.reason, /cannot access session files/i);
       assert.doesNotMatch(result.reason, /Reading additional input from stdin/);
     }
+  } finally {
+    process.env.PATH = originalPath;
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("checkAgentHealth reports codex timeouts instead of stdin prelude", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "fake-codex-timeout-bin-"));
+  const fakeCodexPath = path.join(
+    tempRoot,
+    process.platform === "win32" ? "codex.cmd" : "codex",
+  );
+  const originalPath = process.env.PATH;
+
+  try {
+    await writeFile(
+      fakeCodexPath,
+      [
+        "#!/bin/sh",
+        "echo 'Reading additional input from stdin...' >&2",
+        "echo 'Command timed out after 30000ms' >&2",
+        "exit 124",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(fakeCodexPath, 0o755);
+    process.env.PATH = [tempRoot, originalPath].filter(Boolean).join(path.delimiter);
+
+    const result = await checkAgentHealth("codex");
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.match(result.reason, /timed out after 30000ms/i);
+      assert.doesNotMatch(result.reason, /Reading additional input from stdin/);
+    }
+  } finally {
+    process.env.PATH = originalPath;
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("applyFixesWithAgent runs codex without deprecated full-auto flag", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "fake-codex-apply-bin-"));
+  const fakeCodexPath = path.join(
+    tempRoot,
+    process.platform === "win32" ? "codex.cmd" : "codex",
+  );
+  const argsPath = path.join(tempRoot, "args.txt");
+  const originalPath = process.env.PATH;
+
+  try {
+    await writeFile(
+      fakeCodexPath,
+      [
+        "#!/bin/sh",
+        `printf '%s\\n' "$@" > "${argsPath}"`,
+        "exit 0",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(fakeCodexPath, 0o755);
+    process.env.PATH = [tempRoot, originalPath].filter(Boolean).join(path.delimiter);
+
+    await applyFixesWithAgent({
+      agent: "codex",
+      cwd: process.cwd(),
+      prompt: "Fix the issue.",
+    });
+
+    const args = (await readFile(argsPath, "utf8"))
+      .split(/\r?\n/)
+      .filter(Boolean);
+    assert.ok(args.includes("--sandbox"));
+    assert.ok(args.includes("workspace-write"));
+    assert.ok(!args.includes("--full-auto"), `unexpected args: ${args.join(" ")}`);
   } finally {
     process.env.PATH = originalPath;
     await rm(tempRoot, { recursive: true, force: true });

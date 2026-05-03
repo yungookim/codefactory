@@ -249,7 +249,6 @@ export async function applyFixesWithAgent(params: {
       [
         "exec",
         "--skip-git-repo-check",
-        "--full-auto",
         "--sandbox",
         "workspace-write",
         prompt,
@@ -334,7 +333,7 @@ function summarizeHealthFailure(result: CommandResult): string {
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
   const actionable = lines.findLast((line) =>
-    /cannot access session files|permission denied|failed to create session|failed|error:/i.test(line)
+    /cannot access session files|permission denied|failed to create session|timed out|failed|error:/i.test(line)
       && !/^reading additional input from stdin/i.test(line)
   );
   const raw = actionable ?? lines[0] ?? "no output";

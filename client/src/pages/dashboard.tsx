@@ -6,7 +6,7 @@ import { Activity as ActivityIcon } from "lucide-react";
 import { queryClient, apiRequest, fetchJson } from "@/lib/queryClient";
 import { getRepoHref } from "@/lib/repoHref";
 import { getRepoAddControlsOpen } from "@/lib/repoAddControls";
-import type { ActivityItem, ActivitySnapshot, Config, FeedbackItem, HealingSession, LogEntry, OperatorWarning, PR, PRQuestion, ReleaseRun, WatchedRepo } from "@shared/schema";
+import type { ActivityItem, ActivitySnapshot, Config, FeedbackItem, HealingSession, LogEntry, OperatorWarning, PR, PRQuestion, ReleaseRun, RuntimeState, WatchedRepo } from "@shared/schema";
 import { OnboardingPanel } from "@/components/OnboardingPanel";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import {
@@ -99,6 +99,12 @@ const EMPTY_ACTIVITY_SNAPSHOT: ActivitySnapshot = {
 };
 const MAX_VISIBLE_LOGS = 200;
 const TRACKED_REPOS_OPEN_KEY = "oh-my-pr:tracked-repos-open";
+const DRAIN_PAUSED_LABEL = "Paused";
+const DRAIN_PAUSED_TITLE = "Paused by drain mode";
+const MANUAL_RUNS_BLOCKED_COPY = "Manual runs are blocked while global automation is paused.";
+const GLOBAL_DRAIN_PR_COPY = "Background and manual runs are paused by drain mode.";
+const ASK_DRAIN_COPY = "Ask Agent is paused by drain mode.";
+const QUEUED_DRAIN_COPY = "Queued automation is paused until drain mode is disabled.";
 
 type WatchScope = (typeof WATCH_SCOPE_OPTIONS)[number]["value"];
 type RepoSettings = WatchedRepo & {
@@ -283,10 +289,12 @@ function ActivityMenu({
   activities,
   onClearFailed,
   isClearingFailed,
+  globalDrainMode,
 }: {
   activities: ActivitySnapshot;
   onClearFailed: () => void;
   isClearingFailed: boolean;
+  globalDrainMode: boolean;
 }) {
   const failedCount = activities.failed.length;
   const inProgressCount = activities.inProgress.length;
@@ -341,8 +349,54 @@ function ActivityMenu({
           items={activities.queued}
           emptyLabel="Queue is empty."
         />
+        {globalDrainMode && queuedCount > 0 && (
+          <div
+            className="border-t border-border px-2 py-2 text-[11px] text-muted-foreground"
+            data-testid="activity-drain-note"
+          >
+            {QUEUED_DRAIN_COPY}
+          </div>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+function DashboardDrainBanner({ runtimeState }: { runtimeState: RuntimeState | undefined }) {
+  if (!runtimeState?.drainMode) {
+    return null;
+  }
+
+  return (
+    <div
+      className="shrink-0 border-b border-destructive/40 bg-destructive/10 px-4 py-2 text-[12px]"
+      data-testid="dashboard-drain-banner"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[10px] font-medium uppercase tracking-wider text-destructive">
+            {DRAIN_PAUSED_TITLE}
+          </div>
+          {runtimeState.drainReason ? (
+            <div
+              className="mt-1 break-words text-foreground/80"
+              data-testid="dashboard-drain-reason"
+            >
+              {runtimeState.drainReason}
+            </div>
+          ) : null}
+          <div className="mt-1 text-[11px] text-muted-foreground">
+            {MANUAL_RUNS_BLOCKED_COPY}
+          </div>
+        </div>
+        <Link
+          href="/settings"
+          className="shrink-0 border border-destructive/50 px-2 py-0.5 text-[10px] uppercase tracking-wider text-destructive transition-colors hover:bg-destructive hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+        >
+          Settings
+        </Link>
+      </div>
+    </div>
   );
 }
 
@@ -550,10 +604,12 @@ function FeedbackRow({
   item,
   prId,
   readOnly,
+  globalDrainMode = false,
 }: {
   item: FeedbackItem;
   prId: string;
   readOnly?: boolean;
+  globalDrainMode?: boolean;
 }) {
   const overrideMutation = useMutation({
     mutationFn: async (decision: string) => {
@@ -619,13 +675,13 @@ function FeedbackRow({
               <button
                 type="button"
                 onClick={() => retryMutation.mutate()}
-                disabled={retryMutation.isPending}
+                disabled={retryMutation.isPending || globalDrainMode}
                 data-testid={`retry-${item.id}`}
                 aria-label={`Retry feedback from ${item.author}`}
-                title="Retry feedback item"
+                title={globalDrainMode ? DRAIN_PAUSED_TITLE : "Retry feedback item"}
                 className="border border-border px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
               >
-                Retry
+                {globalDrainMode ? DRAIN_PAUSED_LABEL : "Retry"}
               </button>
             )}
             <Collapsible.Trigger asChild>
@@ -850,7 +906,15 @@ function HealingPanel({
   );
 }
 
-function RightPanel({ prId, prStatus }: { prId: string | null; prStatus?: PR["status"] | null }) {
+function RightPanel({
+  prId,
+  prStatus,
+  globalDrainMode,
+}: {
+  prId: string | null;
+  prStatus?: PR["status"] | null;
+  globalDrainMode: boolean;
+}) {
   const [tab, setTab] = useState<"activity" | "ask">("ask");
 
   useEffect(() => {
@@ -891,7 +955,7 @@ function RightPanel({ prId, prStatus }: { prId: string | null; prStatus?: PR["st
         {tab === "activity" ? (
           <LogPanel prId={prId} />
         ) : prId ? (
-          <QAPanel prId={prId} />
+          <QAPanel prId={prId} globalDrainMode={globalDrainMode} />
         ) : (
           <div className="flex h-full items-center justify-center text-[12px] text-muted-foreground">
             Select a PR to ask questions.
@@ -902,7 +966,7 @@ function RightPanel({ prId, prStatus }: { prId: string | null; prStatus?: PR["st
   );
 }
 
-function QAPanel({ prId }: { prId: string }) {
+function QAPanel({ prId, globalDrainMode }: { prId: string; globalDrainMode: boolean }) {
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -926,6 +990,8 @@ function QAPanel({ prId }: { prId: string }) {
     if (scroller) scroller.scrollTop = scroller.scrollHeight;
   }, [questions.length, questions[questions.length - 1]?.status]);
 
+  const askDisabled = askMutation.isPending || !input.trim() || globalDrainMode;
+
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-border px-4 py-2 text-[11px] uppercase tracking-wider text-muted-foreground">
@@ -934,7 +1000,9 @@ function QAPanel({ prId }: { prId: string }) {
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
         {questions.length === 0 ? (
           <span className="text-[12px] text-muted-foreground">
-            Ask questions about this PR — the agent will read activity logs, feedback, and status to answer.
+            {globalDrainMode
+              ? ASK_DRAIN_COPY
+              : "Ask questions about this PR — the agent will read activity logs, feedback, and status to answer."}
           </span>
         ) : (
           questions.map((q) => (
@@ -967,7 +1035,7 @@ function QAPanel({ prId }: { prId: string }) {
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (input.trim() && !askMutation.isPending) askMutation.mutate(input.trim());
+          if (!askDisabled) askMutation.mutate(input.trim());
         }}
         className="border-t border-border p-3"
       >
@@ -976,18 +1044,20 @@ function QAPanel({ prId }: { prId: string }) {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Was the review done? Why did this fail?"
+            placeholder={globalDrainMode ? "Drain mode is enabled." : "Was the review done? Why did this fail?"}
             aria-label="Question for selected pull request"
+            disabled={globalDrainMode}
             data-testid="input-question"
             className="flex-1 border border-border bg-transparent px-2 py-1 text-[12px] placeholder:text-muted-foreground/50 focus:border-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
           />
           <button
             type="submit"
-            disabled={askMutation.isPending || !input.trim()}
+            disabled={askDisabled}
+            title={globalDrainMode ? DRAIN_PAUSED_TITLE : "Ask agent"}
             data-testid="button-ask"
             className="border border-border px-2 py-1 text-[11px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
           >
-            {askMutation.isPending ? "..." : "Ask"}
+            {globalDrainMode ? DRAIN_PAUSED_LABEL : askMutation.isPending ? "..." : "Ask"}
           </button>
         </div>
         {askMutation.isError && (
@@ -1085,6 +1155,11 @@ export default function Dashboard() {
     refetchInterval: 3000,
   });
 
+  const { data: runtimeState } = useQuery<RuntimeState>({
+    queryKey: ["/api/runtime"],
+    refetchInterval: 3000,
+  });
+
   const { data: repos = [] } = useQuery<RepoSettings[]>({
     queryKey: ["/api/repos/settings"],
     refetchInterval: 5000,
@@ -1113,6 +1188,7 @@ export default function Dashboard() {
     ? selectedFailedActivity?.lastError ?? getPRFeedbackFailureReason(selectedPR) ?? "Automation stopped on this PR. Check the activity log for the full failure context."
     : null;
   const repoAddControlsOpen = getRepoAddControlsOpen(addControlsOpen, repos.length);
+  const globalDrainMode = runtimeState?.drainMode === true;
 
   const addMutation = useMutation({
     mutationFn: async (url: string) => {
@@ -1332,12 +1408,14 @@ export default function Dashboard() {
             activities={activities}
             onClearFailed={() => clearFailedActivitiesMutation.mutate()}
             isClearingFailed={clearFailedActivitiesMutation.isPending}
+            globalDrainMode={globalDrainMode}
           />
         </div>
       </header>
 
       <OnboardingPanel />
       <OperatorWarningsBanner warnings={activities.warnings} />
+      <DashboardDrainBanner runtimeState={runtimeState} />
 
       <div className="flex flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
         <div className="flex max-h-[42vh] w-full shrink-0 flex-col overflow-y-auto border-b border-border lg:max-h-none lg:min-h-0 lg:w-80 lg:border-b-0 lg:border-r">
@@ -1554,11 +1632,12 @@ export default function Dashboard() {
                                 <button
                                   type="button"
                                   onClick={() => manualReleaseMutation.mutate(repo.repo)}
-                                  disabled={manualReleaseMutation.isPending}
+                                  disabled={manualReleaseMutation.isPending || globalDrainMode}
+                                  title={globalDrainMode ? DRAIN_PAUSED_TITLE : "Queue manual release"}
                                   data-testid={`tracked-repo-manual-release-${repo.repo.replace("/", "-")}`}
                                   className="border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
                                 >
-                                  {manualReleasePending ? "Releasing..." : "Release"}
+                                  {globalDrainMode ? DRAIN_PAUSED_LABEL : manualReleasePending ? "Releasing..." : "Release"}
                                 </button>
                               </div>
                             </div>
@@ -1647,11 +1726,12 @@ export default function Dashboard() {
                       <button
                         type="button"
                         onClick={() => applyMutation.mutate(selectedPR.id)}
-                        disabled={applyMutation.isPending || selectedPR.status === "processing"}
+                        disabled={applyMutation.isPending || selectedPR.status === "processing" || globalDrainMode}
+                        title={globalDrainMode ? DRAIN_PAUSED_TITLE : "Run babysitter now"}
                         data-testid="button-apply"
                         className="border border-border px-2 py-0.5 text-[10px] uppercase tracking-wider transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-30"
                       >
-                        {selectedPR.status === "processing" ? "Running" : "Run now"}
+                        {globalDrainMode ? DRAIN_PAUSED_LABEL : selectedPR.status === "processing" ? "Running" : "Run now"}
                       </button>
                       <button
                         type="button"
@@ -1686,9 +1766,11 @@ export default function Dashboard() {
                   </div>
                 )}
                 <div className="text-[11px] text-muted-foreground">
-                  {selectedPRWatchEnabled
-                    ? "Background watcher syncs GitHub feedback and pushes approved fixes automatically."
-                    : "Background watch is paused for this PR; manual runs still work."}
+                  {globalDrainMode
+                    ? GLOBAL_DRAIN_PR_COPY
+                    : selectedPRWatchEnabled
+                      ? "Background watcher syncs GitHub feedback and pushes approved fixes automatically."
+                      : "Background watch is paused for this PR; manual runs still work."}
                 </div>
               </div>
 
@@ -1703,7 +1785,13 @@ export default function Dashboard() {
                   </div>
                 ) : (
                   selectedPR.feedbackItems.map((item) => (
-                    <FeedbackRow key={item.id} item={item} prId={selectedPR.id} readOnly={isArchived} />
+                    <FeedbackRow
+                      key={item.id}
+                      item={item}
+                      prId={selectedPR.id}
+                      readOnly={isArchived}
+                      globalDrainMode={globalDrainMode}
+                    />
                   ))
                 )}
               </div>
@@ -1715,7 +1803,11 @@ export default function Dashboard() {
           )}
         </div>
 
-        <RightPanel prId={selectedPRId} prStatus={selectedPR?.status ?? null} />
+        <RightPanel
+          prId={selectedPRId}
+          prStatus={selectedPR?.status ?? null}
+          globalDrainMode={globalDrainMode}
+        />
       </div>
     </div>
   );

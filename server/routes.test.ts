@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import test from "node:test";
 import express from "express";
 import type { Octokit } from "@octokit/rest";
-import type { AppUpdateStatus, NewPR } from "@shared/schema";
+import type { AppUpdateStatus, FeedbackItem, NewPR } from "@shared/schema";
 import type { ReleaseAgentPullSummary, ReleaseEvaluationDecision } from "./releaseAgent";
 import { ReleaseManager, type ReleaseGitHubService } from "./releaseManager";
 import { MemStorage } from "./memoryStorage";
@@ -79,6 +79,32 @@ function makeMergedSummary(overrides: Partial<ReleaseAgentPullSummary> = {}): Re
     repo: "acme/widgets",
     mergedAt: "2026-04-24T12:00:00.000Z",
     mergeSha: "manual-release-sha",
+    ...overrides,
+  };
+}
+
+function makeFeedbackItem(overrides: Partial<FeedbackItem> = {}): FeedbackItem {
+  return {
+    id: "feedback-1",
+    author: "reviewer",
+    body: "Please fix this",
+    bodyHtml: "<p>Please fix this</p>",
+    replyKind: "review_thread",
+    sourceId: "review-comment-1",
+    sourceNodeId: "node-1",
+    sourceUrl: "https://github.com/acme/widgets/pull/42#discussion_r1",
+    threadId: "thread-1",
+    threadResolved: false,
+    auditToken: "audit-1",
+    file: "src/widget.ts",
+    line: 12,
+    type: "review_comment",
+    createdAt: "2026-05-03T17:00:00.000Z",
+    decision: "accept",
+    decisionReason: null,
+    action: "Fix the widget",
+    status: "failed",
+    statusReason: "codex health check timed out after 30000ms",
     ...overrides,
   };
 }
@@ -225,6 +251,42 @@ test("POST /api/prs/:id/questions enqueues a durable answer_pr_question job", as
   }
 });
 
+test("POST /api/prs/:id/questions reports drain reason and does not queue an answer job", async () => {
+  const harness = await createHarness();
+  const pr = await seedPR(harness.storage);
+  await harness.storage.updateRuntimeState({
+    drainMode: true,
+    drainRequestedAt: "2026-05-03T17:32:41.034Z",
+    drainReason: "Agent health check failed for codex: codex health check timed out after 30000ms",
+  });
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/api/prs/${pr.id}/questions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ question: "What changed?" }),
+    });
+
+    assert.equal(response.status, 409);
+    const body = await response.json() as { error?: string };
+    assert.match(body.error ?? "", /manual runs are blocked/i);
+    assert.match(body.error ?? "", /codex health check timed out/i);
+
+    const questions = await harness.storage.getQuestions(pr.id);
+    assert.equal(questions.length, 0);
+
+    const jobs = await harness.storage.listBackgroundJobs({
+      kind: "answer_pr_question",
+      status: "queued",
+    });
+    assert.equal(jobs.length, 0);
+  } finally {
+    await harness.close();
+  }
+});
+
 test("POST /api/prs/:id/babysit enqueues a durable babysit_pr job", async () => {
   const harness = await createHarness();
   const pr = await seedPR(harness.storage);
@@ -243,6 +305,80 @@ test("POST /api/prs/:id/babysit enqueues a durable babysit_pr job", async () => 
     assert.equal(jobs.length, 1);
     assert.equal(jobs[0].targetId, pr.id);
     assert.equal(jobs[0].payload.preferredAgent, "claude");
+  } finally {
+    await harness.close();
+  }
+});
+
+for (const endpoint of ["apply", "babysit"] as const) {
+  test(`POST /api/prs/:id/${endpoint} reports drain reason and records blocked manual attempt`, async () => {
+    const harness = await createHarness();
+    const pr = await seedPR(harness.storage);
+    await harness.storage.updateRuntimeState({
+      drainMode: true,
+      drainRequestedAt: "2026-05-03T17:32:41.034Z",
+      drainReason: "Agent health check failed for codex: codex health check timed out after 30000ms",
+    });
+
+    try {
+      const response = await fetch(`${harness.baseUrl}/api/prs/${pr.id}/${endpoint}`, {
+        method: "POST",
+      });
+
+      assert.equal(response.status, 409);
+      const body = await response.json() as { error?: string };
+      assert.match(body.error ?? "", /manual runs are blocked/i);
+      assert.match(body.error ?? "", /codex health check timed out/i);
+
+      const jobs = await harness.storage.listBackgroundJobs({
+        kind: "babysit_pr",
+        status: "queued",
+      });
+      assert.equal(jobs.length, 0);
+
+      const logs = await harness.storage.getLogs(pr.id);
+      assert.ok(logs.some((log) =>
+        log.level === "warn"
+        && log.phase === "run"
+        && log.message.includes("Manual babysitter run blocked because drain mode is enabled")
+        && log.message.includes("codex health check timed out")
+      ));
+    } finally {
+      await harness.close();
+    }
+  });
+}
+
+test("POST /api/prs/:id/feedback/:feedbackId/retry reports drain reason and does not queue a babysit job", async () => {
+  const feedback = makeFeedbackItem();
+  const harness = await createHarness();
+  const pr = await seedPR(harness.storage, {
+    feedbackItems: [feedback],
+  });
+  await harness.storage.updateRuntimeState({
+    drainMode: true,
+    drainRequestedAt: "2026-05-03T17:32:41.034Z",
+    drainReason: "Agent health check failed for codex: codex health check timed out after 30000ms",
+  });
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/api/prs/${pr.id}/feedback/${feedback.id}/retry`, {
+      method: "POST",
+    });
+
+    assert.equal(response.status, 409);
+    const body = await response.json() as { error?: string };
+    assert.match(body.error ?? "", /manual runs are blocked/i);
+    assert.match(body.error ?? "", /codex health check timed out/i);
+
+    const jobs = await harness.storage.listBackgroundJobs({
+      kind: "babysit_pr",
+      status: "queued",
+    });
+    assert.equal(jobs.length, 0);
+
+    const updated = await harness.storage.getPR(pr.id);
+    assert.equal(updated?.feedbackItems[0]?.status, "failed");
   } finally {
     await harness.close();
   }
@@ -859,6 +995,44 @@ test("POST /api/repos/release queues a manual release run for the requested repo
   }
 });
 
+test("POST /api/repos/release reports drain reason and does not queue release work", async () => {
+  const storage = new MemStorage();
+  const harness = await createHarness(storage, {
+    releaseManager: makeReleaseManagerForRoutes(storage),
+  });
+  await harness.storage.updateRuntimeState({
+    drainMode: true,
+    drainRequestedAt: "2026-05-03T17:32:41.034Z",
+    drainReason: "Agent health check failed for codex: codex health check timed out after 30000ms",
+  });
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/api/repos/release`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ repo: "acme/widgets" }),
+    });
+
+    assert.equal(response.status, 409);
+    const body = await response.json() as { error?: string };
+    assert.match(body.error ?? "", /manual runs are blocked/i);
+    assert.match(body.error ?? "", /codex health check timed out/i);
+
+    const releaseRuns = await harness.storage.listReleaseRuns();
+    assert.equal(releaseRuns.length, 0);
+
+    const jobs = await harness.storage.listBackgroundJobs({
+      kind: "process_release_run",
+      status: "queued",
+    });
+    assert.equal(jobs.length, 0);
+  } finally {
+    await harness.close();
+  }
+});
+
 test("POST /api/repos/release returns 409 when the repo has no unreleased merged PRs", async () => {
   const storage = new MemStorage();
   const harness = await createHarness(storage, {
@@ -879,6 +1053,62 @@ test("POST /api/repos/release returns 409 when the repo has no unreleased merged
     assert.equal(response.status, 409);
     const body = await response.json() as { error: string };
     assert.match(body.error, /No unreleased merged pull requests found for acme\/widgets/);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("POST /api/releases/:id/retry reports drain reason and does not queue release work", async () => {
+  const storage = new MemStorage();
+  const harness = await createHarness(storage, {
+    releaseManager: makeReleaseManagerForRoutes(storage),
+  });
+  const release = await storage.createReleaseRun({
+    repo: "acme/widgets",
+    baseBranch: "main",
+    triggerPrNumber: 42,
+    triggerPrTitle: "Manual release",
+    triggerPrUrl: "https://github.com/acme/widgets/pull/42",
+    triggerMergeSha: "manual-release-sha",
+    triggerMergedAt: "2026-04-24T12:00:00.000Z",
+    source: "manual",
+    status: "error",
+    decisionReason: "Manual release requested",
+    recommendedBump: "patch",
+    proposedVersion: "v1.2.4",
+    releaseTitle: "Manual release",
+    releaseNotes: "Manual release notes",
+    includedPrs: [],
+    targetSha: null,
+    githubReleaseId: null,
+    githubReleaseUrl: null,
+    error: "release agent failed",
+    completedAt: null,
+  });
+  await harness.storage.updateRuntimeState({
+    drainMode: true,
+    drainRequestedAt: "2026-05-03T17:32:41.034Z",
+    drainReason: "Agent health check failed for codex: codex health check timed out after 30000ms",
+  });
+
+  try {
+    const response = await fetch(`${harness.baseUrl}/api/releases/${release.id}/retry`, {
+      method: "POST",
+    });
+
+    assert.equal(response.status, 409);
+    const body = await response.json() as { error?: string };
+    assert.match(body.error ?? "", /manual runs are blocked/i);
+    assert.match(body.error ?? "", /codex health check timed out/i);
+
+    const updated = await harness.storage.getReleaseRun(release.id);
+    assert.equal(updated?.status, "error");
+
+    const jobs = await harness.storage.listBackgroundJobs({
+      kind: "process_release_run",
+      status: "queued",
+    });
+    assert.equal(jobs.length, 0);
   } finally {
     await harness.close();
   }
