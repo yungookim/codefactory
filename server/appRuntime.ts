@@ -200,6 +200,11 @@ const AGENT_FIX_STEPS: Record<AgentLabel, Record<AgentUnavailabilityKind, string
       "Rerun the babysitter for this PR.",
     ],
     cli_missing: buildCliMissingFixSteps("Claude", "claude"),
+    unknown_agent: [
+      "Open Settings and choose a supported coding agent.",
+      "Restart oh-my-pr if the agent setting was changed outside the app.",
+      "Rerun the babysitter for this PR.",
+    ],
   },
   Codex: {
     auth: [
@@ -209,6 +214,11 @@ const AGENT_FIX_STEPS: Record<AgentLabel, Record<AgentUnavailabilityKind, string
       "Rerun the babysitter for this PR.",
     ],
     cli_missing: buildCliMissingFixSteps("Codex", "codex"),
+    unknown_agent: [
+      "Open Settings and choose a supported coding agent.",
+      "Restart oh-my-pr if the agent setting was changed outside the app.",
+      "Rerun the babysitter for this PR.",
+    ],
   },
 };
 
