@@ -1938,11 +1938,20 @@ export class PRBabysitter {
           continue;
         }
 
-        if (automationBlocked) {
+        if (!local.watchEnabled) {
           continue;
         }
 
-        if (!local.watchEnabled) {
+        if (automationBlocked) {
+          try {
+            await this.syncFeedbackForPR(local.id, {
+              phase: "watcher",
+            });
+          } catch (error) {
+            await this.storage.addLog(local.id, "warn", `Could not sync GitHub feedback while automation is paused: ${summarizeUnknownError(error)}`, {
+              phase: "watcher",
+            });
+          }
           continue;
         }
 
