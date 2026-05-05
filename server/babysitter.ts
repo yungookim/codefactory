@@ -1684,12 +1684,14 @@ export class PRBabysitter {
       ...(await this.storage.getPRs()),
       ...(await this.storage.getArchivedPRs()),
     ].filter(hasMissingReviewThreadMetadata);
+    const syncedFeedbackPrIds = new Set<string>();
 
     for (const pr of repairCandidates) {
       try {
         await this.syncFeedbackForPR(pr.id, {
           phase: "repair",
         });
+        syncedFeedbackPrIds.add(pr.id);
       } catch (error) {
         await this.storage.addLog(pr.id, "warn", `Could not repair missing GitHub review-thread metadata: ${summarizeUnknownError(error)}`, {
           phase: "repair",
@@ -1938,15 +1940,20 @@ export class PRBabysitter {
           continue;
         }
 
-        if (!local.watchEnabled) {
+        if (local.watchEnabled === false) {
           continue;
         }
 
         if (automationBlocked) {
+          if (syncedFeedbackPrIds.has(local.id)) {
+            continue;
+          }
+
           try {
             await this.syncFeedbackForPR(local.id, {
               phase: "watcher",
             });
+            syncedFeedbackPrIds.add(local.id);
           } catch (error) {
             await this.storage.addLog(local.id, "warn", `Could not sync GitHub feedback while automation is paused: ${summarizeUnknownError(error)}`, {
               phase: "watcher",
