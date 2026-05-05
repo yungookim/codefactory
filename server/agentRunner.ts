@@ -26,13 +26,26 @@ const AGENTS: CodingAgent[] = ["codex", "claude"];
 
 export type AgentUnavailabilityKind = "auth" | "cli_missing" | "unknown_agent";
 
+const AGENT_SESSION_AUTH_PATTERNS = [
+  "cannot access session files",
+  "permission denied",
+  "failed to create session",
+];
+
 const AGENT_AUTH_PATTERNS = [
   "failed to authenticate",
   "authentication failed",
   "authentication_error",
   "invalid authentication credentials",
   "api error: 401",
-  "cannot access session files",
+  ...AGENT_SESSION_AUTH_PATTERNS,
+];
+
+const AGENT_HEALTH_ACTIONABLE_PATTERNS = [
+  ...AGENT_SESSION_AUTH_PATTERNS,
+  "timed out",
+  "failed",
+  "error:",
 ];
 
 const AGENT_CLI_MISSING_PATTERNS = [
@@ -45,10 +58,10 @@ export function detectAgentUnavailability(message: string): AgentUnavailabilityK
   if (lower.includes("unknown coding agent")) {
     return "unknown_agent";
   }
-  if (AGENT_AUTH_PATTERNS.some((needle) => lower.includes(needle))) {
+  if (includesAnyPattern(lower, AGENT_AUTH_PATTERNS)) {
     return "auth";
   }
-  if (AGENT_CLI_MISSING_PATTERNS.some((needle) => lower.includes(needle))) {
+  if (includesAnyPattern(lower, AGENT_CLI_MISSING_PATTERNS)) {
     return "cli_missing";
   }
   return null;
@@ -338,11 +351,15 @@ function summarizeHealthFailure(result: CommandResult): string {
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
   const actionable = lines.findLast((line) =>
-    /cannot access session files|permission denied|failed to create session|timed out|failed|error:/i.test(line)
+    includesAnyPattern(line.toLowerCase(), AGENT_HEALTH_ACTIONABLE_PATTERNS)
       && !/^reading additional input from stdin/i.test(line)
   );
   const raw = actionable ?? lines[0] ?? "no output";
   return raw.length > 220 ? `${raw.slice(0, 217).trimEnd()}...` : raw;
+}
+
+function includesAnyPattern(message: string, patterns: readonly string[]): boolean {
+  return patterns.some((needle) => message.includes(needle));
 }
 
 export async function runCommand(

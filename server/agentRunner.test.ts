@@ -3,7 +3,7 @@ import { chmod, copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promi
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { applyFixesWithAgent, checkAgentHealth, evaluateFixNecessityWithAgent, resolveAgent, resolveCommandPath, runCommand } from "./agentRunner";
+import { applyFixesWithAgent, checkAgentHealth, detectAgentUnavailability, evaluateFixNecessityWithAgent, resolveAgent, resolveCommandPath, runCommand } from "./agentRunner";
 
 test("runCommand reports a timeout even when the child exits 0 after SIGTERM", async () => {
   const result = await runCommand(
@@ -74,6 +74,17 @@ test("evaluateFixNecessityWithAgent throws a clear error when codex writes no ou
     process.env.PATH = originalPath;
     await rm(tempRoot, { recursive: true, force: true });
   }
+});
+
+test("detectAgentUnavailability classifies session permission failures as auth failures", () => {
+  assert.equal(
+    detectAgentUnavailability("codex health check failed: Error: thread/start: Permission denied"),
+    "auth",
+  );
+  assert.equal(
+    detectAgentUnavailability("claude health check failed: ERROR: Failed to create session: Operation not permitted"),
+    "auth",
+  );
 });
 
 test("checkAgentHealth surfaces actionable codex session permission errors", async () => {
