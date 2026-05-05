@@ -24,10 +24,11 @@ export type AgentHealthResult =
 
 const AGENTS: CodingAgent[] = ["codex", "claude"];
 
-export type AgentUnavailabilityKind = "auth" | "cli_missing";
+export type AgentUnavailabilityKind = "auth" | "cli_missing" | "unknown_agent";
 
 const AGENT_AUTH_PATTERNS = [
   "failed to authenticate",
+  "authentication failed",
   "authentication_error",
   "invalid authentication credentials",
   "api error: 401",
@@ -41,6 +42,9 @@ const AGENT_CLI_MISSING_PATTERNS = [
 
 export function detectAgentUnavailability(message: string): AgentUnavailabilityKind | null {
   const lower = message.toLowerCase();
+  if (lower.includes("unknown coding agent")) {
+    return "unknown_agent";
+  }
   if (AGENT_AUTH_PATTERNS.some((needle) => lower.includes(needle))) {
     return "auth";
   }

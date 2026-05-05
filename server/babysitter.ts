@@ -6,6 +6,7 @@ import type { IStorage } from "./storage";
 import {
   applyFixesWithAgent,
   checkAgentHealth,
+  detectAgentUnavailability,
   evaluateFixNecessityWithAgent,
   isAgentUnavailableError,
   resolveAgent,
@@ -1405,8 +1406,17 @@ export class PRBabysitter {
       return;
     }
 
-    await this.pauseAutomationForAgentFailure(agent, health.reason, prIds);
-    throw new Error(`Agent health check failed for ${agent}: ${health.reason}`);
+    const message = `Agent health check failed for ${agent}: ${health.reason}`;
+    if (detectAgentUnavailability(health.reason) !== null) {
+      await this.pauseAutomationForAgentFailure(agent, health.reason, prIds);
+    } else {
+      await Promise.all(prIds.map(async (prId) => {
+        await this.storage.addLog(prId, "warn", `Automation skipped: ${message}`, {
+          phase: "agent.health",
+        });
+      }));
+    }
+    throw new Error(message);
   }
 
   private async supersedeActiveHealingSessionsForArchivedPr(prId: string): Promise<void> {

@@ -1433,6 +1433,73 @@ test("syncAndBabysitTrackedRepos pauses automation when the selected agent is un
   assert.ok(logs.some((log) => log.message.includes("Automation paused")));
 });
 
+test("syncAndBabysitTrackedRepos does not enter drain mode for transient agent health timeouts", async () => {
+  const storage = new MemStorage();
+  const queuedItem = makeFeedbackItem({
+    id: "gh-review-comment-queued",
+    auditToken: "codefactory-feedback:gh-review-comment-queued",
+    decision: "accept",
+    status: "queued",
+    statusReason: "Queued",
+  });
+  const inProgressItem = makeFeedbackItem({
+    id: "gh-review-comment-running",
+    auditToken: "codefactory-feedback:gh-review-comment-running",
+    decision: "accept",
+    status: "in_progress",
+    statusReason: "Running",
+  });
+  const pr = await storage.addPR({
+    number: 42,
+    title: "Needs watching",
+    repo: "octo/example",
+    branch: "feature/example",
+    author: "octocat",
+    url: "https://github.com/octo/example/pull/42",
+    status: "watching",
+    feedbackItems: [queuedItem, inProgressItem],
+    accepted: 2,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+  });
+  await storage.updateConfig({ watchedRepos: ["octo/example"], codingAgent: "codex" });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    makeWatcherGitHubService({
+      listOpenPullsForRepo: async () => {
+        throw new Error("watcher should skip this cycle when agent health times out");
+      },
+    }) as never,
+    {
+      resolveAgent: async () => "codex",
+      checkAgentHealth: async () => ({
+        ok: false,
+        reason: "codex health check failed: Command timed out after 30000ms",
+      }),
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+    },
+  );
+
+  await babysitter.syncAndBabysitTrackedRepos();
+
+  const runtimeState = await storage.getRuntimeState();
+  const logs = await storage.getLogs(pr.id);
+  const updated = await storage.getPR(pr.id);
+  assert.equal(runtimeState.drainMode, false);
+  assert.equal(runtimeState.drainReason, null);
+  assert.equal(updated?.feedbackItems[0]?.status, "queued");
+  assert.equal(updated?.feedbackItems[1]?.status, "in_progress");
+  assert.ok(logs.some((log) => log.message.includes("Automation skipped")));
+  assert.ok(logs.some((log) => log.message.includes("Command timed out after 30000ms")));
+  assert.ok(logs.every((log) => !log.message.includes("Automation paused")));
+});
+
 test("syncAndBabysitTrackedRepos does not queue release evaluation for closed-unmerged PRs", async () => {
   const storage = new MemStorage();
   const queued: Array<Record<string, string | number>> = [];
