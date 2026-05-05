@@ -636,6 +636,156 @@ test("syncAndBabysitTrackedRepos refreshes repository status during drain withou
   assert.ok(logs.some((log) => log.message.includes("archived")));
 });
 
+test("syncAndBabysitTrackedRepos syncs feedback during drain without queueing babysits", async () => {
+  const storage = new MemStorage();
+  const backgroundJobQueue = new BackgroundJobQueue(storage);
+  const incomingItem = makeFeedbackItem();
+  await storage.updateRuntimeState({
+    drainMode: true,
+    drainRequestedAt: "2026-05-04T12:42:38.857Z",
+    drainReason: "Agent health check failed for codex",
+  });
+
+  const pr = await storage.addPR({
+    number: 42,
+    title: "Example PR",
+    repo: "octo/example",
+    branch: "feature/example",
+    author: "octocat",
+    url: "https://github.com/octo/example/pull/42",
+    status: "watching",
+    feedbackItems: [],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+    watchEnabled: true,
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    makeWatcherGitHubService({
+      fetchFeedbackItemsForPR: async () => [incomingItem],
+      listOpenPullsForRepo: async () => [{
+        number: 42,
+        title: "Example PR",
+        branch: "feature/example",
+        author: "octocat",
+        url: "https://github.com/octo/example/pull/42",
+        headSha: "head123",
+        baseRef: "main",
+        baseSha: "base123",
+      }],
+    }),
+    {
+      resolveAgent: async () => "codex",
+      checkAgentHealth: async () => {
+        throw new Error("drained feedback sync should not check agent health");
+      },
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+    },
+    undefined,
+    async (...args) => backgroundJobQueue.enqueue(...args),
+  );
+
+  await babysitter.syncAndBabysitTrackedRepos();
+
+  const updated = await storage.getPR(pr.id);
+  const logs = await storage.getLogs(pr.id);
+  const jobs = await storage.listBackgroundJobs({
+    kind: "babysit_pr",
+    targetId: pr.id,
+  });
+  assert.equal(updated?.feedbackItems.length, 1);
+  assert.equal(updated?.feedbackItems[0]?.id, incomingItem.id);
+  assert.equal(updated?.lastChecked !== null, true);
+  assert.equal(jobs.length, 0);
+  assert.ok(logs.some((log) => log.message === "GitHub sync complete: 1 feedback item (1 new)"));
+});
+
+test("syncAndBabysitTrackedRepos does not duplicate drain sync after metadata repair", async () => {
+  const storage = new MemStorage();
+  const backgroundJobQueue = new BackgroundJobQueue(storage);
+  let feedbackFetches = 0;
+  await storage.updateRuntimeState({
+    drainMode: true,
+    drainRequestedAt: "2026-05-04T12:42:38.857Z",
+    drainReason: "Agent health check failed for codex",
+  });
+
+  const pr = await storage.addPR({
+    number: 42,
+    title: "Example PR",
+    repo: "octo/example",
+    branch: "feature/example",
+    author: "octocat",
+    url: "https://github.com/octo/example/pull/42",
+    status: "watching",
+    feedbackItems: [
+      makeFeedbackItem({
+        threadId: null,
+        threadResolved: null,
+      }),
+    ],
+    accepted: 0,
+    rejected: 0,
+    flagged: 0,
+    testsPassed: null,
+    lintPassed: null,
+    lastChecked: null,
+    watchEnabled: true,
+  });
+
+  const babysitter = new PRBabysitter(
+    storage,
+    makeWatcherGitHubService({
+      fetchFeedbackItemsForPR: async () => {
+        feedbackFetches += 1;
+        return [makeFeedbackItem({ threadId: "THREAD_node_1", threadResolved: false })];
+      },
+      listOpenPullsForRepo: async () => [{
+        number: 42,
+        title: "Example PR",
+        branch: "feature/example",
+        author: "octocat",
+        url: "https://github.com/octo/example/pull/42",
+        headSha: "head123",
+        baseRef: "main",
+        baseSha: "base123",
+      }],
+    }),
+    {
+      resolveAgent: async () => "codex",
+      checkAgentHealth: async () => {
+        throw new Error("drained feedback sync should not check agent health");
+      },
+      ciPollIntervalMs: 0,
+      evaluateFixNecessityWithAgent: async () => ({ needsFix: false, reason: "unused" }),
+      applyFixesWithAgent: async () => ({ code: 0, stdout: "", stderr: "" }),
+      runCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+    },
+    undefined,
+    async (...args) => backgroundJobQueue.enqueue(...args),
+  );
+
+  await babysitter.syncAndBabysitTrackedRepos();
+
+  const updated = await storage.getPR(pr.id);
+  const jobs = await storage.listBackgroundJobs({
+    kind: "babysit_pr",
+    targetId: pr.id,
+  });
+  assert.equal(feedbackFetches, 1);
+  assert.equal(updated?.feedbackItems[0]?.threadId, "THREAD_node_1");
+  assert.equal(updated?.feedbackItems[0]?.threadResolved, false);
+  assert.equal(jobs.length, 0);
+});
+
 test("syncAndBabysitTrackedRepos skips same-head dependency preflight failures", async () => {
   const storage = new MemStorage();
   const backgroundJobQueue = new BackgroundJobQueue(storage);
