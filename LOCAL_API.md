@@ -735,6 +735,12 @@ can refresh. Other queued rows remain intact in SQLite. Already-running
 handlers are allowed to finish, and `waitForIdle` also waits on any started
 babysitter or release work before reporting success.
 
+oh-my-pr may also enable drain mode automatically when an agent health check
+reports deterministic unavailability, such as a missing CLI, auth failure, or
+unsupported agent setting. Transient health-check failures, including command
+timeouts, skip the affected automation cycle with an `Automation skipped` log
+instead of setting `drainMode`.
+
 Manual agent-triggering endpoints return `409` instead of storing new work
 while drain mode is active. This includes dashboard **Run now**
 (`POST /api/prs/:id/apply`), `POST /api/prs/:id/babysit`, feedback retry,
